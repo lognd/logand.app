@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { listInvoices } from "../../../api/invoices";
+import { LINK_CLASS } from "../../../styles/a11y";
 
 export function CustomerInvoices() {
   const {
@@ -13,39 +14,51 @@ export function CustomerInvoices() {
   });
 
   return (
-    <main>
-      <h1>Your invoices</h1>
-      {isLoading && <p>Loading...</p>}
-      {isError && <p role="alert">Failed to load invoices.</p>}
+    <main className="mx-auto w-full max-w-4xl px-4 py-8">
+      <h1 className="mb-6 text-2xl text-fg-primary">Your invoices</h1>
+      {isLoading && <p className="text-base text-fg-muted">Loading...</p>}
+      {isError && (
+        <p role="alert" className="text-base text-accent-red">
+          Failed to load invoices.
+        </p>
+      )}
       {invoices && (
-        <table>
-          <thead>
-            <tr>
-              <th>Status</th>
-              <th>Amount</th>
-              <th>Due</th>
-              <th>Action</th>
-            </tr>
-          </thead>
-          <tbody>
-            {invoices.map((invoice) => (
-              <tr key={invoice.id}>
-                <td>{invoice.status}</td>
-                <td>
-                  {invoice.amountTotal} {invoice.currency}
-                </td>
-                <td>{invoice.dueDate ?? "-"}</td>
-                <td>
-                  {invoice.status === "sent" || invoice.status === "overdue" ? (
-                    <Link to={`/invoices/${invoice.id}/pay`}>Pay now</Link>
-                  ) : (
-                    "-"
-                  )}
-                </td>
+        <div className="w-full overflow-x-auto">
+          <table className="w-full min-w-[480px] text-base text-fg-primary">
+            <thead>
+              <tr className="border-b border-border text-left">
+                <th className="p-2">Status</th>
+                <th className="p-2">Amount</th>
+                <th className="p-2">Due</th>
+                <th className="p-2">Action</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {invoices.map((invoice) => (
+                <tr key={invoice.id} className="border-b border-border">
+                  <td className="p-2">{invoice.status}</td>
+                  <td className="p-2">
+                    {invoice.amountTotal} {invoice.currency}
+                  </td>
+                  <td className="p-2">{invoice.dueDate ?? "-"}</td>
+                  <td className="p-2">
+                    {invoice.status === "sent" || invoice.status === "overdue" ? (
+                      <Link
+                        to={`/invoices/${invoice.id}/pay`}
+                        className={LINK_CLASS}
+                        aria-label={`Pay invoice ${invoice.id}`}
+                      >
+                        Pay now
+                      </Link>
+                    ) : (
+                      "-"
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </main>
   );

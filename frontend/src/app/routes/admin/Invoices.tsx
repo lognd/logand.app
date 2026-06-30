@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { listAdminInvoices, sendInvoice, voidInvoice } from "../../../api/invoices";
+import { BUTTON_CLASS } from "../../../styles/a11y";
 
 // TODO(logan): create-invoice form (React Hook Form + zod) is still missing --
 // this wires up list/send/void against real endpoints first since that's the
@@ -21,50 +22,63 @@ export function AdminInvoices() {
   const voidMutation = useMutation({ mutationFn: voidInvoice, onSuccess: invalidate });
 
   return (
-    <main>
-      <h1>Invoices (admin)</h1>
-      {isLoading && <p>Loading...</p>}
-      {isError && <p role="alert">Failed to load invoices.</p>}
+    <main className="mx-auto w-full max-w-4xl px-4 py-8">
+      <h1 className="mb-6 text-2xl text-fg-primary">Invoices (admin)</h1>
+      {isLoading && <p className="text-base text-fg-muted">Loading...</p>}
+      {isError && (
+        <p role="alert" className="text-base text-accent-red">
+          Failed to load invoices.
+        </p>
+      )}
       {invoices && (
-        <table>
-          <thead>
-            <tr>
-              <th>Status</th>
-              <th>Amount</th>
-              <th>Due</th>
-              <th>Memo</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {invoices.map((invoice) => (
-              <tr key={invoice.id}>
-                <td>{invoice.status}</td>
-                <td>
-                  {invoice.amountTotal} {invoice.currency}
-                </td>
-                <td>{invoice.dueDate ?? "-"}</td>
-                <td>{invoice.memo ?? "-"}</td>
-                <td>
-                  <button
-                    type="button"
-                    disabled={invoice.status !== "draft"}
-                    onClick={() => sendMutation.mutate(invoice.id)}
-                  >
-                    Send
-                  </button>
-                  <button
-                    type="button"
-                    disabled={invoice.status === "void"}
-                    onClick={() => voidMutation.mutate(invoice.id)}
-                  >
-                    Void
-                  </button>
-                </td>
+        // Horizontal scroll wrapper, not a fixed-width table, so this stays
+        // usable on a 375px-wide mobile viewport instead of overflowing or
+        // forcing a tiny unreadable font.
+        <div className="w-full overflow-x-auto">
+          <table className="w-full min-w-[640px] text-base text-fg-primary">
+            <thead>
+              <tr className="border-b border-border text-left">
+                <th className="p-2">Status</th>
+                <th className="p-2">Amount</th>
+                <th className="p-2">Due</th>
+                <th className="p-2">Memo</th>
+                <th className="p-2">Actions</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {invoices.map((invoice) => (
+                <tr key={invoice.id} className="border-b border-border">
+                  <td className="p-2">{invoice.status}</td>
+                  <td className="p-2">
+                    {invoice.amountTotal} {invoice.currency}
+                  </td>
+                  <td className="p-2">{invoice.dueDate ?? "-"}</td>
+                  <td className="p-2">{invoice.memo ?? "-"}</td>
+                  <td className="flex flex-wrap gap-2 p-2">
+                    <button
+                      type="button"
+                      disabled={invoice.status !== "draft"}
+                      onClick={() => sendMutation.mutate(invoice.id)}
+                      aria-label={`Send invoice ${invoice.id}`}
+                      className={BUTTON_CLASS}
+                    >
+                      Send
+                    </button>
+                    <button
+                      type="button"
+                      disabled={invoice.status === "void"}
+                      onClick={() => voidMutation.mutate(invoice.id)}
+                      aria-label={`Void invoice ${invoice.id}`}
+                      className={BUTTON_CLASS}
+                    >
+                      Void
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </main>
   );

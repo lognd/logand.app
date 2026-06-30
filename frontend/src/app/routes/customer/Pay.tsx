@@ -2,6 +2,7 @@ import { useMutation } from "@tanstack/react-query";
 import { useParams } from "react-router-dom";
 import { RateLimitedError } from "../../../api/client";
 import { payInvoice } from "../../../api/invoices";
+import { BUTTON_CLASS } from "../../../styles/a11y";
 
 // TODO(logan): swap the raw client_secret display for an actual Stripe
 // Elements/Checkout mount once @stripe/stripe-js + @stripe/react-stripe-js
@@ -18,27 +19,30 @@ export function CustomerPay() {
   });
 
   return (
-    <main>
-      <h1>Pay invoice</h1>
+    <main className="mx-auto w-full max-w-md px-4 py-8">
+      <h1 className="mb-6 text-2xl text-fg-primary">Pay invoice</h1>
       <button
         type="button"
         disabled={mutation.isPending}
         onClick={() => mutation.mutate()}
+        className={BUTTON_CLASS}
       >
         {mutation.isPending ? "Starting payment..." : "Start payment"}
       </button>
 
       {mutation.isError &&
         (mutation.error instanceof RateLimitedError ? (
-          <p role="alert">
+          <p role="alert" className="mt-4 text-base text-accent-red">
             Too many attempts -- try again in {mutation.error.retryAfterSeconds}s.
           </p>
         ) : (
-          <p role="alert">Could not start payment. Try again shortly.</p>
+          <p role="alert" className="mt-4 text-base text-accent-red">
+            Could not start payment. Try again shortly.
+          </p>
         ))}
 
       {mutation.data && (
-        <p>
+        <p className="mt-4 text-base text-fg-primary">
           Payment intent ready (client_secret received) -- Stripe Elements mount
           pending.
         </p>
