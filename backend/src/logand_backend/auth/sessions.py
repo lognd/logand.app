@@ -16,7 +16,7 @@ from logand_backend.errors import AuthError
 _CUSTOMER_IDLE_TIMEOUT = timedelta(minutes=30)
 _ADMIN_IDLE_TIMEOUT = timedelta(hours=12)
 _ABSOLUTE_MAX_LIFETIME = timedelta(days=7)
-_COOKIE_NAME = "__Host-session"
+SESSION_COOKIE_NAME = "__Host-session"
 
 
 class SessionInfo(BaseModel):
@@ -72,7 +72,7 @@ async def revoke_all_sessions(db: AsyncSession, user_id: UUID) -> Result[None, A
 async def _get_session_from_cookie(
     request: Request,
     db: AsyncSession = Depends(get_db),
-    session_token: str | None = Cookie(default=None, alias=_COOKIE_NAME),
+    session_token: str | None = Cookie(default=None, alias=SESSION_COOKIE_NAME),
 ) -> SessionInfo:
     # NOTE: dependencies raise HTTPException directly (401) rather than going
     # through api/errors.py's to_http_exception -- that mapping is for
