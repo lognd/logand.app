@@ -1,0 +1,15 @@
+[Unit]
+Description=Polls GitHub for new logand.app releases and redeploys
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/srv/logand-app/backend/.env
+WorkingDirectory=/srv/logand-app/ops/release_watch
+ExecStart=/usr/local/bin/uv run release-watch watch
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target
