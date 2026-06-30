@@ -149,7 +149,13 @@ describe("ambient streams", () => {
       // Either it respawned at the top (delta can be anything) or it
       // stepped down by a whole multiple of the cell size.
       if (after[i].y >= before[i]) {
-        expect(delta % 18).toBeCloseTo(0, 5);
+        // delta should be a whole multiple of 18 -- check distance to the
+        // nearest multiple rather than `delta % 18` directly, since for a
+        // delta just under one cell-size (e.g. 17.9999999999997 from
+        // float drift across repeated additions) the naive modulo is
+        // itself ~18, not ~0.
+        const nearestMultiple = Math.round(delta / 18) * 18;
+        expect(Math.abs(delta - nearestMultiple)).toBeLessThan(1e-6);
       }
     }
   });

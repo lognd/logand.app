@@ -323,10 +323,11 @@ export function stepStreams(
         chars = chars.slice();
         mutated = true;
       }
-      // Mutate one or two characters per step -- enough to read as a
-      // glitching trail, not so much it looks like noise.
-      chars[Math.floor(Math.random() * chars.length)] = randomGlyph();
-      if (Math.random() < 0.4) {
+      // Mutate several characters per step (bumped up per feedback that
+      // it "needs to mutate more") -- enough to read as a properly
+      // glitching trail rather than a quiet flicker.
+      const mutationCount = 2 + Math.floor(Math.random() * 3); // 2-4 per step
+      for (let m = 0; m < mutationCount; m++) {
         chars[Math.floor(Math.random() * chars.length)] = randomGlyph();
       }
     }

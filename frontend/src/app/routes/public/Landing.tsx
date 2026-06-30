@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { BackgroundPicker, type BackgroundOption } from "../../../ascii/BackgroundPicker";
 import { MatrixRain } from "../../../ascii/MatrixRain";
+import { ParticleLayer } from "../../../ascii/ParticleLayer";
 import { SpinningShape } from "../../../ascii/SpinningShape";
 import { randomShapeKind } from "../../../ascii/shapes";
 import { LINK_CLASS } from "../../../styles/a11y";
@@ -18,6 +19,12 @@ import { LINK_CLASS } from "../../../styles/a11y";
 // content (z-10 by default), and is itself non-interactive for assistive
 // tech (aria-hidden) since it's pure decoration -- the actual navigation
 // lives in the real <nav> below, never inside the shape/rain.
+//
+// ParticleLayer (the click/drag trail + explosion interaction) is mounted
+// unconditionally, on top of whichever background is selected -- it used
+// to live inside MatrixRain only, but per feedback ("I don't see the
+// trail and explosion on the donut and cube and globe") it now works
+// regardless of which background is showing.
 export function Landing() {
   const [background, setBackground] = useState<BackgroundOption>(() => randomShapeKind());
 
@@ -53,20 +60,26 @@ export function Landing() {
           className="pointer-events-auto absolute inset-0 -z-[5] flex items-center justify-center overflow-hidden opacity-30"
         />
       )}
-      <div className="relative mx-auto w-full max-w-2xl px-4 py-12">
-        <h1 className="mb-4 text-3xl text-fg-primary">Logan Dapp</h1>
-        <p className="mb-6 text-base text-fg-primary">
-          Personal and professional site of Logan Dapp -- software engineer, builder of
-          logand.app.
-        </p>
-        <nav aria-label="primary" className="flex flex-wrap gap-4">
-          <a href="/projects" className={LINK_CLASS}>
-            Projects
-          </a>
-          <a href="/contact" className={LINK_CLASS}>
-            Contact
-          </a>
-        </nav>
+      <ParticleLayer className="pointer-events-none absolute inset-0 -z-[4]" />
+      {/* flex-1 + items-center/justify-center centers the heading block
+          vertically within the available space (between header and
+          footer) instead of pinning it to the top. */}
+      <div className="relative z-10 flex flex-1 items-center justify-center px-4 py-12">
+        <div className="w-full max-w-2xl">
+          <h1 className="mb-4 text-3xl text-fg-primary">Logan Dapp</h1>
+          <p className="mb-6 text-base text-fg-primary">
+            Personal and professional site of Logan Dapp -- software engineer, builder of
+            logand.app.
+          </p>
+          <nav aria-label="primary" className="flex flex-wrap gap-4">
+            <a href="/projects" className={LINK_CLASS}>
+              Projects
+            </a>
+            <a href="/contact" className={LINK_CLASS}>
+              Contact
+            </a>
+          </nav>
+        </div>
       </div>
       {/* fixed + bottom-0, not mt-auto -- locked to the actual viewport
           bottom edge regardless of content height (an mt-auto footer

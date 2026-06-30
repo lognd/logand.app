@@ -33,13 +33,29 @@ const VELOCITY_DAMPING_PER_SEC = 2.2; // higher = stops sooner
 const MIN_COASTING_VELOCITY = 0.02; // below this, snap to 0 and resume idle auto-rotate
 
 // Hover-reactive tilt ("I want the object to react without clicking"): the
-// shape leans slightly toward the cursor even when the user isn't
-// dragging. HOVER_LERP controls how quickly the lean eases toward its
-// target each frame (and back to neutral when the pointer leaves) -- this
-// is the "smoothing between moving the mouse and idle" the easing
-// addresses: the tilt blends continuously rather than snapping.
-const HOVER_MAX_TILT = 0.25; // radians
-const HOVER_LERP = 4; // higher = snaps faster to the target tilt
+// shape leans toward the cursor even when the user isn't dragging.
+// HOVER_LERP controls how quickly the lean tracks its target each frame --
+// fast, since this should feel responsive while actively moving, not lazy.
+// FOLLOW_MAX_TILT is deliberately large ("the amount it moves when the
+// mouse moves needs to be greatly increased") -- a dramatic lean, not a
+// subtle one.
+const FOLLOW_MAX_TILT = 1.4; // radians (~80 degrees)
+const HOVER_LERP = 10;
+
+// Mouse-follow vs. idle-auto-rotate state machine ("not idle when the
+// mouse is moving... ramp smoothly (cubically) back to idle rotation"):
+// a pointermove within the shape's area marks "moving" for IDLE_GRACE_MS;
+// once that grace period lapses with no further movement, a cubic-eased
+// crossfade runs over IDLE_RAMP_MS, fading the follow-tilt's influence
+// out (1 -> 0) while fading auto-rotation's speed in (0 -> 1) in lockstep,
+// so the handoff is smooth rather than an abrupt mode switch.
+const IDLE_GRACE_MS = 150;
+const IDLE_RAMP_MS = 1200;
+
+function easeInOutCubic(t: number): number {
+  const c = Math.max(0, Math.min(1, t));
+  return c < 0.5 ? 4 * c * c * c : 1 - Math.pow(-2 * c + 2, 3) / 2;
+}
 
 const WORLD_X: { x: number; y: number; z: number } = { x: 1, y: 0, z: 0 };
 const WORLD_Y: { x: number; y: number; z: number } = { x: 0, y: 1, z: 0 };
@@ -82,10 +98,16 @@ export function SpinningShape({
   const dragCapturedRef = useRef(false);
   const lastPointerRef = useRef({ x: 0, y: 0, t: 0 });
   const reducedMotionRef = useRef(false);
-  // Current and target hover-tilt offset (rad around world X/Y), eased
+  // Current and target follow-tilt offset (rad around world X/Y), eased
   // toward the target each frame -- see HOVER_LERP above.
   const hoverTiltRef = useRef({ x: 0, y: 0 });
   const hoverTargetRef = useRef({ x: 0, y: 0 });
+  // Timestamp of the last qualifying pointermove -- drives the
+  // moving-vs-idle state machine (see IDLE_GRACE_MS/IDLE_RAMP_MS above).
+  const lastMoveAtRef = useRef(0);
+  // Timestamp the idle ramp began, or null while still actively moving /
+  // before any movement has happened.
+  const idleRampStartRef = useRef<number | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -106,12 +128,35 @@ export function SpinningShape({
       const dtSeconds = (now - lastTime) / 1000;
       lastTime = now;
 
+      // Moving-vs-idle crossfade: while a qualifying pointermove happened
+      // within IDLE_GRACE_MS, the shape is "following" the mouse at full
+      // strength and auto-rotation is fully suppressed ("not idle when
+      // the mouse is moving"). Once that grace period lapses, a cubic-
+      // eased ramp over IDLE_RAMP_MS crossfades follow-strength down to 0
+      // and auto-rotate-strength up to 1.
+      const idleFor = now - lastMoveAtRef.current;
+      let followBlend: number;
+      let autoBlend: number;
+      if (idleFor < IDLE_GRACE_MS) {
+        followBlend = 1;
+        autoBlend = 0;
+        idleRampStartRef.current = null;
+      } else {
+        if (idleRampStartRef.current === null) idleRampStartRef.current = now;
+        const t = (now - idleRampStartRef.current) / IDLE_RAMP_MS;
+        const eased = easeInOutCubic(t);
+        followBlend = 1 - eased;
+        autoBlend = eased;
+      }
+
       if (!draggingRef.current) {
         const v = velocityRef.current;
         const coasting = Math.hypot(v.x, v.y) > MIN_COASTING_VELOCITY;
         if (coasting) {
           // Momentum: keep spinning at the velocity the drag left behind,
-          // exponentially decaying toward zero.
+          // exponentially decaying toward zero. Independent of the
+          // follow/idle crossfade -- a released drag's momentum always
+          // plays out.
           const incr = quatMultiply(
             quatFromAxisAngle(WORLD_X, v.x * dtSeconds),
             quatFromAxisAngle(WORLD_Y, v.y * dtSeconds),
@@ -120,27 +165,29 @@ export function SpinningShape({
           const decay = Math.exp(-VELOCITY_DAMPING_PER_SEC * dtSeconds);
           velocityRef.current = { x: v.x * decay, y: v.y * decay };
         } else if (!reducedMotionRef.current) {
-          velocityRef.current = { x: 0, y: 0 };
+          // Auto-rotation speed is scaled by autoBlend -- zero while
+          // actively following the mouse, cubically ramping back to full
+          // speed once the pointer has been idle for a while.
           const incr = quatMultiply(
-            quatFromAxisAngle(WORLD_X, AUTO_SPEED_X * dtSeconds),
-            quatFromAxisAngle(WORLD_Y, AUTO_SPEED_Y * dtSeconds),
+            quatFromAxisAngle(WORLD_X, AUTO_SPEED_X * autoBlend * dtSeconds),
+            quatFromAxisAngle(WORLD_Y, AUTO_SPEED_Y * autoBlend * dtSeconds),
           );
           orientationRef.current = quatNormalize(quatMultiply(incr, orientationRef.current));
         }
       }
 
-      // Hover-reactive tilt: ease the current tilt toward the target
-      // (which pointermove below updates continuously, and which decays
-      // back to {0,0} once the pointer leaves) and fold it in as one more
-      // small world-axis rotation on top of whatever spin/drag is
-      // happening. This is on every frame regardless of drag state, so it
-      // keeps responding even while idle or coasting.
+      // Follow tilt: ease the current tilt toward (raw mouse target *
+      // followBlend) each frame -- the target itself shrinks toward
+      // neutral as the idle ramp progresses, so the shape settles back to
+      // center in step with auto-rotation taking back over, rather than
+      // auto-rotation starting from wherever the tilt happened to be.
+      const rawTarget = hoverTargetRef.current;
+      const scaledTarget = { x: rawTarget.x * followBlend, y: rawTarget.y * followBlend };
       const tilt = hoverTiltRef.current;
-      const target = hoverTargetRef.current;
       const lerpAmount = 1 - Math.exp(-HOVER_LERP * dtSeconds);
       const nextTilt = {
-        x: tilt.x + (target.x - tilt.x) * lerpAmount,
-        y: tilt.y + (target.y - tilt.y) * lerpAmount,
+        x: tilt.x + (scaledTarget.x - tilt.x) * lerpAmount,
+        y: tilt.y + (scaledTarget.y - tilt.y) * lerpAmount,
       };
       const tiltDelta = { x: nextTilt.x - tilt.x, y: nextTilt.y - tilt.y };
       hoverTiltRef.current = nextTilt;
@@ -205,21 +252,29 @@ export function SpinningShape({
     const onWindowPointerMove = (e: PointerEvent) => {
       const rect = container.getBoundingClientRect();
       if (isWithinContainer(e.clientX, e.clientY)) {
-        // Hover-tilt target tracks the pointer position within the
+        // Follow-tilt target tracks the pointer position within the
         // container any time it's over the shape's area, drag or not --
         // "I want the object to react without clicking". Normalized to
         // [-1, 1] across the container's bounds, then scaled to
-        // HOVER_MAX_TILT radians.
+        // FOLLOW_MAX_TILT radians (large, "greatly increased").
         const nx = ((e.clientX - rect.left) / rect.width) * 2 - 1;
         const ny = ((e.clientY - rect.top) / rect.height) * 2 - 1;
+        // Negated on both axes -- the un-negated mapping span the shape
+        // spinning opposite the cursor's motion (reported: "it spins the
+        // wrong direction"). This matches the same sign convention as the
+        // drag handler below (cursor moving right -> shape's near side
+        // turns right, not left).
         hoverTargetRef.current = {
-          x: Math.max(-1, Math.min(1, ny)) * HOVER_MAX_TILT,
-          y: Math.max(-1, Math.min(1, nx)) * HOVER_MAX_TILT,
+          x: -Math.max(-1, Math.min(1, ny)) * FOLLOW_MAX_TILT,
+          y: -Math.max(-1, Math.min(1, nx)) * FOLLOW_MAX_TILT,
         };
+        // Marks "moving" for the idle/follow crossfade in the render loop
+        // -- auto-rotation is suppressed for IDLE_GRACE_MS after this,
+        // then cubically ramps back in once movement actually stops.
+        lastMoveAtRef.current = performance.now();
       } else {
-        // Pointer left the shape's area entirely -- ease back to neutral
-        // via the same HOVER_LERP smoothing used to ease toward a target,
-        // rather than snapping back instantly.
+        // Pointer left the shape's area entirely -- the render loop's
+        // idle ramp eases the tilt back to neutral, rather than snapping.
         hoverTargetRef.current = { x: 0, y: 0 };
       }
 
