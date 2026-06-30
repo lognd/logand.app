@@ -1,31 +1,42 @@
 #!/usr/bin/env python3
 """Renders candidate glyphs with a real font rasterizer and measures their
-actual ink coverage and directional "lean" (where their mass sits within the
-cell), instead of hand-guessing a brightness ramp and a fixed edge-character
-set by eye.
+actual ink coverage and shape, instead of hand-guessing a brightness ramp
+and a fixed edge-character set by eye.
 
-Two things come out of this and get baked into
+Three things come out of this and get baked into
 frontend/src/ascii/generatedGlyphs.ts (checked into source, not regenerated
 at build time -- run this script by hand and commit the output when the
 candidate glyph set changes):
 
 1. A brightness ramp with more graduations than the hand-picked
    " .'`,:;~-+=*#%&8@$", built from measured % ink coverage (mean pixel
-   intensity over the glyph's render) rather than guessed visual density --
-   this also pulls in non-ASCII block/shade glyphs for finer steps than the
-   ASCII repertoire alone provides.
+   intensity over the glyph's render). Candidates are restricted to glyphs
+   "typically found in text" (printable ASCII, no Unicode block/shade
+   elements) -- selected via even binning across the measured coverage
+   range so the ramp doesn't cluster around a few characters whose coverage
+   happens to be close together while leaving gaps elsewhere ("some
+   characters saturate sections").
 
-2. A contour table: for 8 compass directions, the glyph (from a smaller
-   "edge-ish" candidate set: lines, slashes, corners, partial blocks) whose
-   own rendered mass leans most strongly in that direction. SpinningShape's
-   silhouette/edge rendering picks from this instead of a hardcoded
-   {-, /, |, \\} set, so an edge glyph's actual printed shape -- not just an
-   arbitrary label -- approximates the local surface tangent.
+2. CONTOUR_GLYPHS_TEXT: a per-orientation table of ordinary text glyphs for
+   silhouette/edge rendering. For each candidate, this computes the
+   glyph's own principal axis -- the single straight line through its
+   center of mass that best captures its overall "lean" (the same
+   PCA/second-moment technique used to find a shape's major axis in image
+   processing) -- then groups candidates by that axis's orientation so a
+   silhouette point can be matched to whichever ordinary character's own
+   ink most resembles a boundary running in that direction.
+
+3. CONTOUR_GLYPHS_BLOCK: the same idea but restricted to Unicode half/
+   quadrant block glyphs, kept as a separate, explicitly-opted-into table
+   for the globe specifically (its lighting model already treats it
+   differently -- see shapes.ts) rather than removed outright.
 
 Usage: python3 scripts/generate_ascii_ramp.py
 """
 
 import json
+import math
+import string
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
@@ -35,8 +46,7 @@ OUTPUT_TS = REPO_ROOT / "frontend" / "src" / "ascii" / "generatedGlyphs.ts"
 OUTPUT_RS = REPO_ROOT / "wasm-ascii" / "src" / "ramp.rs"
 
 # DejaVu Sans Mono ships on essentially every Linux box (it's the Matplotlib
-# fallback font too) and has solid coverage of the Unicode block/shade
-# ranges used below, so the rendering this script measures is what the
+# fallback font too), so the rendering this script measures is what the
 # eventual GitHub Actions/CI environment would also produce if this were
 # ever re-run there -- no dependency on a font that's only on one dev
 # machine.
@@ -45,41 +55,43 @@ FONT_SIZE = 44
 # Canvas deliberately larger than the font size (not just big enough to fit
 # the tallest glyph) -- a canvas sized exactly to one glyph's bbox leaves
 # zero centering margin for glyphs whose own bbox height equals the canvas,
-# which clips part of the glyph off one edge and skews the measured
-# centroid toward the opposite edge (e.g. "|" rendered as a uniform full-
+# which clips part of the glyph off one edge and skews the measured mass
+# position toward the opposite edge (e.g. "|" rendered as a uniform full-
 # height bar measured as leaning hard toward the top, simply because the
 # bottom got clipped rather than because the glyph is actually top-heavy).
 CELL = 80
 
-# Candidates for the brightness ramp: classic ASCII density progression plus
-# the Unicode block-element / shade ranges, which fill in graduations ASCII
-# alone is too coarse for.
-RAMP_CANDIDATES = list(
-    " .'`^\",:;Il!i><~+_-?][}{1)(|\\/tfjrxnuvczXYUJCLQ0OZmwqpdbkhao*#MW&8%B@$"
-    "░▒▓█"  # light/medium/dark shade, full block
-    "▀▄"  # upper half block, lower half block
-    "▌▐"  # left half block, right half block
-    "▖▗▘▝"  # quadrant blocks
-    "▪▫■□"  # small/large squares
-    "·•"  # middle dot, bullet
-)
+# "All characters should be typically found in text including symbols" --
+# every printable ASCII character (letters, digits, standard punctuation/
+# symbols), explicitly NOT Unicode block/shade elements, for both the
+# brightness ramp and the (text) contour table.
+TEXT_CANDIDATES = [c for c in (string.digits + string.ascii_letters + string.punctuation)]
 
-# Directional contour table, keyed by Unicode half/quadrant block glyphs --
-# unlike the brightness ramp, these glyphs' *direction* is unambiguous from
-# their own Unicode names (U+2580 UPPER HALF BLOCK, U+259D QUADRANT UPPER
-# RIGHT, etc.), so it's hand-assigned here rather than re-derived from a
-# measured pixel centroid. A centroid-lean measurement was tried first (see
-# git history) but DejaVu Sans Mono's actual glyph metrics for "|", "/",
-# "\\" etc. aren't vertically centered within their own advance box the way
-# a naive measurement assumes, which produced systematically wrong
-# directions for line glyphs -- block-element glyphs don't have that
-# ambiguity since each one's filled region literally *is* the named
-# direction. coverage() below is still used to confirm the installed font
-# actually renders each glyph as non-blank (catching a missing-glyph tofu
-# box) rather than to derive direction.
-COMPASS_DIRECTIONS = 8  # N, NE, E, SE, S, SW, W, NW
-CONTOUR_BY_DIRECTION = ["▀", "▝", "▐", "▗", "▄", "▖", "▌", "▘"]
-CONTOUR_FALLBACK_BY_DIRECTION = ["-", "/", "|", "\\", "-", "/", "|", "\\"]
+RAMP_GRADUATIONS = 32
+
+# Kept as an explicit, separate table per "actually, keep the box
+# characters for the globe" -- the sphere/globe still uses its own
+# already-distinctive view-facing lighting (see shapes.ts), and unlike a
+# flat-faced cube or a donut, the globe's silhouette is densely curved in
+# every direction, where a block glyph's unambiguous named direction reads
+# better than a thin text-glyph line at the latitude/longitude ring density
+# it renders at.
+BLOCK_CONTOUR_DIRECTIONS = 8  # N, NE, E, SE, S, SW, W, NW
+BLOCK_CONTOUR_BY_DIRECTION = ["▀", "▝", "▐", "▗", "▄", "▖", "▌", "▘"]
+BLOCK_CONTOUR_FALLBACK = ["-", "/", "|", "\\", "-", "/", "|", "\\"]
+
+# Orientation is only meaningful mod 180 degrees (a line and its reverse
+# describe the same boundary direction), so the text-contour table buckets
+# across a half-turn, not a full turn.
+TEXT_CONTOUR_BUCKETS = 8
+
+# Below this eccentricity (ratio of the principal-axis spread to the
+# perpendicular spread), a glyph's mass distribution is too close to round/
+# isotropic for any single line to "most accurately capture" it -- e.g. "o"
+# or "8" don't have a real dominant axis the way "/" or "l" do, so they're
+# excluded from the contour candidate pool entirely rather than forced into
+# a bucket they don't actually represent well.
+MIN_ECCENTRICITY = 0.25
 
 
 def render_glyph(font: ImageFont.FreeTypeFont, ch: str) -> Image.Image:
@@ -98,36 +110,129 @@ def coverage(img: Image.Image) -> float:
     return sum(pixels) / (255.0 * len(pixels))
 
 
+def principal_axis(img: Image.Image) -> tuple[float, float] | None:
+    """Returns (angle_radians, eccentricity) of the glyph's principal axis
+    -- the line through its center of mass it's most "elongated" along --
+    computed from the second-order moments of its pixel mass distribution,
+    or None if the glyph has no ink at all.
+
+    This is "the line across the glyph that most accurately captures [its]
+    boundary": for an asymmetric glyph like "/" the major axis runs along
+    the visible stroke; for a glyph like "|" it runs vertically even though
+    the center of mass itself sits dead-center (centroid position alone
+    can't distinguish "|" from "o" -- the *spread* of mass around that
+    centroid is what does).
+    """
+    w, h = img.size
+    total = 0.0
+    sx = sy = 0.0
+    for yy in range(h):
+        for xx in range(w):
+            v = img.getpixel((xx, yy))
+            if v <= 0:
+                continue
+            total += v
+            sx += v * xx
+            sy += v * yy
+    if total == 0:
+        return None
+    cx, cy = sx / total, sy / total
+
+    mu_xx = mu_yy = mu_xy = 0.0
+    for yy in range(h):
+        for xx in range(w):
+            v = img.getpixel((xx, yy))
+            if v <= 0:
+                continue
+            dx, dy = xx - cx, yy - cy
+            mu_xx += v * dx * dx
+            mu_yy += v * dy * dy
+            mu_xy += v * dx * dy
+    mu_xx /= total
+    mu_yy /= total
+    mu_xy /= total
+
+    angle = 0.5 * math.atan2(2 * mu_xy, mu_xx - mu_yy)
+    # Eigenvalues of the 2x2 moment matrix -- their ratio is how elongated
+    # vs. round the mass distribution is.
+    common = math.sqrt((mu_xx - mu_yy) ** 2 + 4 * mu_xy * mu_xy)
+    lambda1 = (mu_xx + mu_yy + common) / 2
+    lambda2 = (mu_xx + mu_yy - common) / 2
+    if lambda1 <= 1e-9:
+        return None
+    eccentricity = 1.0 - (lambda2 / lambda1)
+    return angle, eccentricity
+
+
 def build_ramp(font: ImageFont.FreeTypeFont) -> str:
-    scored = []
-    for ch in dict.fromkeys(RAMP_CANDIDATES):  # de-dupe, keep order
-        if ch == " ":
-            scored.append((0.0, ch))
-            continue
+    scored = [(0.0, " ")]
+    for ch in dict.fromkeys(TEXT_CANDIDATES):
         scored.append((coverage(render_glyph(font, ch)), ch))
     scored.sort(key=lambda pair: pair[0])
-    # Collapse near-duplicate coverage levels (within 0.15%) to keep the
-    # ramp's graduations meaningfully distinct rather than padded with
-    # glyphs that render almost identically, while still being noticeably
-    # finer-grained than the old 19-character hand-picked ramp.
+
+    # Even binning across the full measured coverage range, not a fixed
+    # "skip if too close to the last pick" gap -- a fixed gap still lets
+    # multiple picks cluster in a dense region of the candidate pool (many
+    # punctuation marks render within a hair of each other) while leaving
+    # a visible jump elsewhere ("some characters saturate sections, [I
+    # want] a good distribution"). Binning guarantees one representative
+    # roughly every 1/RAMP_GRADUATIONS of the actual range.
+    lo, hi = scored[0][0], scored[-1][0]
+    span = hi - lo or 1.0
+    used_chars: set[str] = set()
     ramp: list[str] = []
-    last_cov = -1.0
-    for cov, ch in scored:
-        if cov - last_cov < 0.0015 and ramp:
-            continue
-        ramp.append(ch)
-        last_cov = cov
+    for i in range(RAMP_GRADUATIONS):
+        target = lo + (i / (RAMP_GRADUATIONS - 1)) * span
+        best_ch, best_dist = None, math.inf
+        for cov, ch in scored:
+            if ch in used_chars:
+                continue
+            dist = abs(cov - target)
+            if dist < best_dist:
+                best_ch, best_dist = ch, dist
+        if best_ch is not None:
+            used_chars.add(best_ch)
+            ramp.append(best_ch)
+    ramp.sort(key=lambda ch: next(cov for cov, c in scored if c == ch))
     return "".join(ramp)
 
 
-def build_contour_table(font: ImageFont.FreeTypeFont) -> list[str]:
+def build_text_contour_table(font: ImageFont.FreeTypeFont) -> list[str]:
+    candidates: list[tuple[str, float, float]] = []  # (char, angle, eccentricity)
+    for ch in dict.fromkeys(TEXT_CANDIDATES):
+        result = principal_axis(render_glyph(font, ch))
+        if result is None:
+            continue
+        angle, eccentricity = result
+        if eccentricity < MIN_ECCENTRICITY:
+            continue
+        candidates.append((ch, angle % math.pi, eccentricity))
+
     table = []
-    for i in range(COMPASS_DIRECTIONS):
-        block_ch = CONTOUR_BY_DIRECTION[i]
+    for i in range(TEXT_CONTOUR_BUCKETS):
+        bucket_angle = (i / TEXT_CONTOUR_BUCKETS) * math.pi
+        best_ch, best_score = "-", -math.inf
+        for ch, angle, eccentricity in candidates:
+            # Angular distance on a half-turn (mod pi) circle.
+            diff = abs(angle - bucket_angle)
+            diff = min(diff, math.pi - diff)
+            # Prefer a close angle match; break ties toward more strongly
+            # elongated (more unambiguously "line-shaped") glyphs.
+            score = -diff * 4 + eccentricity
+            if score > best_score:
+                best_ch, best_score = ch, score
+        table.append(best_ch)
+    return table
+
+
+def build_block_contour_table(font: ImageFont.FreeTypeFont) -> list[str]:
+    table = []
+    for i in range(BLOCK_CONTOUR_DIRECTIONS):
+        block_ch = BLOCK_CONTOUR_BY_DIRECTION[i]
         if coverage(render_glyph(font, block_ch)) > 0.01:
             table.append(block_ch)
         else:
-            table.append(CONTOUR_FALLBACK_BY_DIRECTION[i])
+            table.append(BLOCK_CONTOUR_FALLBACK[i])
     return table
 
 
@@ -139,7 +244,8 @@ def ts_string_literal(s: str) -> str:
 def main() -> None:
     font = ImageFont.truetype(FONT_PATH, FONT_SIZE)
     ramp = build_ramp(font)
-    contour_table = build_contour_table(font)
+    text_contour = build_text_contour_table(font)
+    block_contour = build_block_contour_table(font)
 
     ts_lines = [
         "// GENERATED by scripts/generate_ascii_ramp.py -- do not hand-edit.",
@@ -148,11 +254,16 @@ def main() -> None:
         "",
         f"export const GENERATED_RAMP: string = {ts_string_literal(ramp)};",
         "",
-        "// Indexed by an 8-way compass bucket (0 = up/north, going clockwise),",
-        "// matching the bucketing in shapes.ts's silhouetteChar().",
-        "export const CONTOUR_GLYPHS: string[] = "
-        + json.dumps(contour_table)
-        + ";",
+        "// Indexed by an 8-way bucket across a half-turn (0 = horizontal,",
+        "// going toward vertical and back) -- matching shapes.ts's",
+        "// silhouetteChar(). Ordinary text glyphs, picked by which one's own",
+        "// principal mass-axis most closely matches that bucket's boundary",
+        "// orientation.",
+        "export const CONTOUR_GLYPHS_TEXT: string[] = " + json.dumps(text_contour) + ";",
+        "",
+        "// Same idea, restricted to Unicode half/quadrant block glyphs --",
+        "// reserved for the sphere/globe shape specifically (see shapes.ts).",
+        "export const CONTOUR_GLYPHS_BLOCK: string[] = " + json.dumps(block_contour) + ";",
         "",
     ]
     OUTPUT_TS.write_text("\n".join(ts_lines))

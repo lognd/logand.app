@@ -6,7 +6,7 @@
 // mounting React.
 
 import { charForBrightness, DEFAULT_RAMP } from "./fallback";
-import { CONTOUR_GLYPHS } from "./generatedGlyphs";
+import { CONTOUR_GLYPHS_BLOCK, CONTOUR_GLYPHS_TEXT } from "./generatedGlyphs";
 
 // DEFAULT_RAMP's darkest character is a literal space -- correct for
 // AsciiCanvas's noise layer (an unlit cell SHOULD be invisible there), but
@@ -366,28 +366,45 @@ const VIEW_DIR: Point3 = { x: 0, y: 0, z: -1 };
 // Points whose rotated normal is within this far from perpendicular to the
 // view direction are near the visual silhouette/edge of the shape -- "the
 // characters chosen for exposed edges should be a function of the shape's
-// local geometry, not just brightness, using the contour of each character
-// itself" (a hand-rolled, much cheaper cousin of marching-cubes' edge-case
-// lookup: rather than resolving an exact boundary contour, just check
-// whether this sample is close enough to grazing to count, then pick from
-// CONTOUR_GLYPHS -- Unicode half/quadrant block glyphs whose own printed
-// shape literally occupies the matching half/corner of the cell, baked by
-// scripts/generate_ascii_ramp.py -- rather than an arbitrary {-,/,|,\\}
-// label with no real visual relationship to the surface's local lean).
-const SILHOUETTE_DOT_THRESHOLD = 0.16;
+// local geometry, not just brightness" (a hand-rolled, much cheaper cousin
+// of marching-cubes' edge-case lookup: rather than resolving an exact
+// boundary contour, just check whether this sample is close enough to
+// grazing to count, then pick a glyph by orientation).
+//
+// The band deliberately EXCLUDES a thin slice right at the exact
+// silhouette (|viewDot| <= SILHOUETTE_DOT_INNER) -- per feedback ("I want
+// the silhouette to look anti-aliased"), a hard line of identical
+// directional glyphs running exactly along the rim read as a harsh, jagged
+// ring. Leaving the precise rim itself on the ordinary brightness ramp
+// (which fades smoothly via AMBIENT_FLOOR/shadeFromDot) gives that edge a
+// soft falloff, while the directional glyphs still appear just inside it
+// to suggest the boundary's local direction.
+const SILHOUETTE_DOT_OUTER = 0.16;
+const SILHOUETTE_DOT_INNER = 0.05;
 
-function silhouetteChar(rotatedNormal: Point3): string {
-  // CONTOUR_GLYPHS is bucketed by compass direction (0 = up/north, going
-  // clockwise) -- the normal's own screen-space (x, y) projection IS that
-  // direction: the in-plane component of a silhouette point's normal points
-  // from the shape's interior out toward its exterior, i.e. toward whichever
-  // side of the cell should visually read as "more filled."
-  const angle = Math.atan2(rotatedNormal.x, -rotatedNormal.y); // 0 = up, clockwise
-  const bucket =
-    ((Math.round((angle / (2 * Math.PI)) * CONTOUR_GLYPHS.length) % CONTOUR_GLYPHS.length) +
-      CONTOUR_GLYPHS.length) %
-    CONTOUR_GLYPHS.length;
-  return CONTOUR_GLYPHS[bucket];
+function silhouetteChar(rotatedNormal: Point3, useBlockGlyphs: boolean): string {
+  const table = useBlockGlyphs ? CONTOUR_GLYPHS_BLOCK : CONTOUR_GLYPHS_TEXT;
+  if (useBlockGlyphs) {
+    // Block table is keyed by full-circle compass direction (0 = up,
+    // clockwise) -- each glyph's filled region is a literal named
+    // direction (e.g. "quadrant upper right"), so the in-plane normal's
+    // own direction (interior -> exterior) maps directly onto it.
+    const angle = Math.atan2(rotatedNormal.x, -rotatedNormal.y);
+    const bucket =
+      ((Math.round((angle / (2 * Math.PI)) * table.length) % table.length) + table.length) %
+      table.length;
+    return table[bucket];
+  }
+  // Text table is keyed by boundary-LINE orientation, which only has
+  // meaning mod a half turn (a line and its reverse are the same line) --
+  // the boundary runs perpendicular to the in-plane normal.
+  const tangentAngle = Math.atan2(rotatedNormal.y, rotatedNormal.x) + Math.PI / 2;
+  const normalizedAngle = ((tangentAngle % Math.PI) + Math.PI) % Math.PI;
+  const bucket = Math.min(
+    table.length - 1,
+    Math.floor((normalizedAngle / Math.PI) * table.length),
+  );
+  return table[bucket];
 }
 
 /**
@@ -460,10 +477,11 @@ export function rasterizeShape(
     if (occlusion) luminance *= 1 - DONUT_INNER_OCCLUSION * occlusion;
     brightnessGrid[idx] = luminance;
 
-    charGrid[idx] =
-      Math.abs(viewDot) < SILHOUETTE_DOT_THRESHOLD
-        ? silhouetteChar(rotatedNormal)
-        : charForBrightness(luminance, ramp);
+    const absViewDot = Math.abs(viewDot);
+    const inContourBand = absViewDot < SILHOUETTE_DOT_OUTER && absViewDot > SILHOUETTE_DOT_INNER;
+    charGrid[idx] = inContourBand
+      ? silhouetteChar(rotatedNormal, viewFacingLight)
+      : charForBrightness(luminance, ramp);
   }
 
   const grid: ShapeCell[][] = [];

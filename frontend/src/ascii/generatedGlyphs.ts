@@ -2,8 +2,15 @@
 // Re-run the script and commit this file if the candidate glyph sets
 // in that script change.
 
-export const GENERATED_RAMP: string = " `-,:\";!*r(|izJYIoaXd&#8BM▒▌▓█";
+export const GENERATED_RAMP: string = " `.-',:\"^!*r\\|l=f{ny5hE$m&HRQBW@";
 
-// Indexed by an 8-way compass bucket (0 = up/north, going clockwise),
-// matching the bucketing in shapes.ts's silhouetteChar().
-export const CONTOUR_GLYPHS: string[] = ["\u2580", "\u259d", "\u2590", "\u2597", "\u2584", "\u2596", "\u258c", "\u2598"];
+// Indexed by an 8-way bucket across a half-turn (0 = horizontal,
+// going toward vertical and back) -- matching shapes.ts's
+// silhouetteChar(). Ordinary text glyphs, picked by which one's own
+// principal mass-axis most closely matches that bucket's boundary
+// orientation.
+export const CONTOUR_GLYPHS_TEXT: string[] = ["_", "~", "`", "\\", "|", "/", "/", "_"];
+
+// Same idea, restricted to Unicode half/quadrant block glyphs --
+// reserved for the sphere/globe shape specifically (see shapes.ts).
+export const CONTOUR_GLYPHS_BLOCK: string[] = ["\u2580", "\u259d", "\u2590", "\u2597", "\u2584", "\u2596", "\u258c", "\u2598"];
