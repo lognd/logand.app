@@ -76,7 +76,17 @@ function shadeFromDot(dot: number): number {
 // lot perceptually (0.08 -> ~0.22) -- a back plateau of 0.08 still rendered
 // as a light-to-mid ramp character, not the near-black this is meant to
 // produce. 0.01 actually lands near the ramp's dark end after that curve.
-const SPHERE_FRONT_BRIGHTNESS = 0.95;
+// Capped well short of 1.0 ("reduce the max color SPECIFICALLY on globe
+// and globe only") -- colorForBrightness's hottest/most saturated yellow
+// sits at the very top of the brightness range, and because the globe is
+// a wireframe (not a filled surface), as it rotates individual ring
+// points sweep across the front plateau's full brightness range in a
+// thin, isolated line rather than a broad shaded area -- against the
+// surrounding mid-tones that reads as a jarring, isolated flash of hot
+// color rather than a smooth highlight. This constant is read ONLY by
+// sphereViewShade below, so capping it doesn't touch any other shape's
+// colorForBrightness range.
+const SPHERE_FRONT_BRIGHTNESS = 0.62;
 const SPHERE_BACK_BRIGHTNESS = 0.01;
 const SPHERE_TRANSITION_WIDTH = 0.22; // dot range the blend happens over, centered on the terminator
 
@@ -171,6 +181,26 @@ export function quatMultiply(a: Quaternion, b: Quaternion): Quaternion {
 export function quatNormalize(q: Quaternion): Quaternion {
   const len = Math.sqrt(q.w * q.w + q.x * q.x + q.y * q.y + q.z * q.z) || 1;
   return { w: q.w / len, x: q.x / len, y: q.y / len, z: q.z / len };
+}
+
+// Uniformly-random unit quaternion (Shoemake's subgroup algorithm) -- used
+// to give each spinning shape a random starting orientation on load
+// ("randomize their rotation on load") instead of every page load starting
+// from the exact same identity pose. Picking a random axis + random angle
+// instead would bias toward rotations near the poles of that axis; this
+// method samples uniformly over the full rotation group SO(3).
+export function randomQuaternion(): Quaternion {
+  const u1 = Math.random();
+  const u2 = Math.random();
+  const u3 = Math.random();
+  const sqrt1u1 = Math.sqrt(1 - u1);
+  const sqrtu1 = Math.sqrt(u1);
+  return {
+    w: sqrtu1 * Math.cos(2 * Math.PI * u3),
+    x: sqrt1u1 * Math.sin(2 * Math.PI * u2),
+    y: sqrt1u1 * Math.cos(2 * Math.PI * u2),
+    z: sqrtu1 * Math.sin(2 * Math.PI * u3),
+  };
 }
 
 // Builds a single rotation quaternion from a combined (vx, vy) angular

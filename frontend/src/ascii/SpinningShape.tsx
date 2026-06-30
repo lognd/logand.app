@@ -3,9 +3,9 @@ import { colorForBrightness } from "./fallback";
 import {
   generateShape,
   quatFromAngularVelocity,
-  quatIdentity,
   quatMultiply,
   quatNormalize,
+  randomQuaternion,
   randomShapeKind,
   rasterizeShape,
   type Quaternion,
@@ -98,7 +98,9 @@ export function SpinningShape({
   // accumulated orientation (orientation = increment * orientation), which
   // keeps "drag right" meaning the same visual thing regardless of how
   // much the shape has already turned.
-  const orientationRef = useRef<Quaternion>(quatIdentity());
+  // Random, not quatIdentity() -- "randomize their rotation on load" so
+  // every page load doesn't start from the exact same pose.
+  const orientationRef = useRef<Quaternion>(randomQuaternion());
   // Angular velocity (rad/s) carried from the drag, decayed each frame --
   // this is what gives released drags momentum instead of stopping dead.
   const velocityRef = useRef({ x: 0, y: 0 });
@@ -110,6 +112,11 @@ export function SpinningShape({
   // toward the target each frame -- see HOVER_LERP above.
   const hoverTiltRef = useRef({ x: 0, y: 0 });
   const hoverTargetRef = useRef({ x: 0, y: 0 });
+  // Whether the pointer was inside the container as of the last move event
+  // -- detects the OUTSIDE -> INSIDE transition so the very first move
+  // after entering can snap hoverTiltRef straight to the target instead of
+  // lerping to it (see the entry check below).
+  const wasPointerInsideRef = useRef(false);
   // Timestamp of the last qualifying pointermove -- drives the
   // moving-vs-idle state machine (see IDLE_GRACE_MS/IDLE_RAMP_MS above).
   const lastMoveAtRef = useRef(0);
@@ -271,7 +278,8 @@ export function SpinningShape({
 
     const onWindowPointerMove = (e: PointerEvent) => {
       const rect = container.getBoundingClientRect();
-      if (isWithinContainer(e.clientX, e.clientY)) {
+      const isWithin = isWithinContainer(e.clientX, e.clientY);
+      if (isWithin) {
         // Follow-tilt target tracks the pointer position within the
         // container any time it's over the shape's area, drag or not --
         // "I want the object to react without clicking". Normalized to
@@ -284,16 +292,34 @@ export function SpinningShape({
         // wrong direction"). This matches the same sign convention as the
         // drag handler below (cursor moving right -> shape's near side
         // turns right, not left).
-        hoverTargetRef.current = {
+        const target = {
           x: -Math.max(-1, Math.min(1, ny)) * FOLLOW_MAX_TILT,
           y: -Math.max(-1, Math.min(1, nx)) * FOLLOW_MAX_TILT,
         };
+        hoverTargetRef.current = target;
+        // First move after the pointer was outside the container --
+        // without this, hoverTiltRef starts wherever it last was (often
+        // {0,0} or the opposite side of a fast mouse re-entry) and the
+        // render loop's HOVER_LERP, while fast, still visibly animates the
+        // jump to the new target in a single burst, reading as a jarring
+        // "snap" the instant the cursor crosses the boundary ("stop the
+        // jarring snap when the mouse enters frame"). Snapping the CURRENT
+        // tilt to match the target immediately on entry means there's no
+        // catch-up motion to see at all -- tracking starts exactly where
+        // the cursor already is, and the lerp only kicks in for movement
+        // from that point onward.
+        if (!wasPointerInsideRef.current) {
+          hoverTiltRef.current = target;
+        }
+        wasPointerInsideRef.current = true;
         // Marks "moving" for the idle/follow crossfade in the render loop
         // -- auto-rotation is suppressed for IDLE_GRACE_MS after this,
         // then cubically ramps back in once movement actually stops.
         lastMoveAtRef.current = performance.now();
+      } else {
+        wasPointerInsideRef.current = false;
       }
-      // No `else` branch resetting the target to {0,0} when the pointer
+      // No further branch resetting the target to {0,0} when the pointer
       // leaves the shape's area -- that was the other source of the
       // "snapping back" complaint (it forced the tilt to actively reverse
       // toward neutral the instant the cursor left, before the idle timer
