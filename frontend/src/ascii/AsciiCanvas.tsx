@@ -1,8 +1,17 @@
 import { useEffect, useRef, useState } from "react";
-import { DEFAULT_RAMP, rasterizeFallback, type AsciiCell } from "./fallback";
+import {
+  charForBrightness,
+  colorForBrightness,
+  DEFAULT_RAMP,
+  type AsciiCell,
+} from "./fallback";
+import { useFitFontSize } from "./useFitFontSize";
 
-const COLS = 80;
-const ROWS = 40;
+// Coarser than the original 80x40 -- a dense grid of independently random
+// cells read as visual static ("distracting"); fewer, larger cells let
+// individual characters stay legible as a calm texture instead of a blur.
+const COLS = 56;
+const ROWS = 28;
 
 // Mirrors wasm-ascii/src/lib.rs's rasterize(): packed pairs of
 // (char_code: u8, brightness: u8), row-major, cols*rows pairs total.
@@ -63,21 +72,62 @@ async function loadWasmRasterize(): Promise<
   }
 }
 
-function generateNoiseFrame(width: number, height: number): Uint8ClampedArray {
-  const buf = new Uint8ClampedArray(width * height * 4);
-  for (let i = 0; i < buf.length; i += 4) {
-    const v = Math.floor(Math.random() * 255);
-    buf[i] = v;
-    buf[i + 1] = v;
-    buf[i + 2] = v;
-    buf[i + 3] = 255;
+// --- Temporally-smooth ambient noise -----------------------------------
+//
+// The original implementation generated one frame of fully independent
+// random luminance per cell and never updated it again (effectively
+// static). A naive "animate" fix -- re-randomizing every cell every frame
+// -- is exactly what produces a distracting flicker/flash: each cell's
+// character can jump from ' ' to '@' and back with zero continuity between
+// frames. Instead each cell eases toward a slowly, independently-changing
+// target brightness, so the texture drifts calmly rather than flickering.
+//
+// Brightness targets are biased toward the low end (see BIAS_EXPONENT)
+// with occasional brighter "speckle" cells, so the layer reads as a quiet
+// atmosphere, not solid static, even before applying opacity.
+const CELL_COUNT = COLS * ROWS;
+const EASE_PER_TICK = 0.08;
+const TICK_INTERVAL_MS = 90; // ~11fps -- a slow drift, not a 60fps animation
+const BIAS_EXPONENT = 2.2; // skews Math.random() toward 0
+
+function randomTargetBrightness(): number {
+  const spike = Math.random() < 0.05;
+  const base = Math.pow(Math.random(), BIAS_EXPONENT);
+  return spike ? 0.35 + base * 0.4 : base * 0.3;
+}
+
+function randomChangeDelayMs(): number {
+  // Staggered per-cell so cells don't all retarget in lockstep (that would
+  // just be a slower version of the same flicker problem).
+  return 1500 + Math.random() * 4500;
+}
+
+interface NoiseState {
+  current: Float32Array;
+  target: Float32Array;
+  nextChangeAt: Float64Array;
+}
+
+function createNoiseState(): NoiseState {
+  const current = new Float32Array(CELL_COUNT);
+  const target = new Float32Array(CELL_COUNT);
+  const nextChangeAt = new Float64Array(CELL_COUNT);
+  for (let i = 0; i < CELL_COUNT; i++) {
+    const b = randomTargetBrightness();
+    current[i] = b;
+    target[i] = b;
+    // Stagger initial retarget times across the full delay range so the
+    // very first few seconds aren't suspiciously synchronized either.
+    nextChangeAt[i] = Math.random() * 4500;
   }
-  return buf;
+  return { current, target, nextChangeAt };
 }
 
 export function AsciiCanvas({ className }: { className?: string }) {
-  const [grid, setGrid] = useState<AsciiCell[][]>([]);
+  const [rows, setRows] = useState<{ text: string; color: string }[]>([]);
   const rasterizeRef = useRef<Awaited<ReturnType<typeof loadWasmRasterize>>>(null);
+  const noiseRef = useRef<NoiseState | null>(null);
+  const fontSize = useFitFontSize(COLS, ROWS);
 
   useEffect(() => {
     let cancelled = false;
@@ -90,28 +140,72 @@ export function AsciiCanvas({ className }: { className?: string }) {
   }, []);
 
   useEffect(() => {
-    const width = 160;
-    const height = 80;
-    const frame = generateNoiseFrame(width, height);
+    // NOTE: the WASM path (rasterizeRef) operates on RGBA pixel buffers,
+    // not the per-cell brightness model used here -- it isn't wired into
+    // this animated-noise rendering. It's also unreachable in practice
+    // until wasm-ascii/pkg/ is built (see loadWasmRasterize's comment), so
+    // this isn't a regression: the TS path was already what actually
+    // renders in any checkout that hasn't run `make build`.
+    noiseRef.current = createNoiseState();
+    let raf = 0;
+    let elapsedSinceTick = 0;
+    let lastTime = performance.now();
 
-    if (rasterizeRef.current) {
-      const packed = rasterizeRef.current(
-        new Uint8Array(frame.buffer, frame.byteOffset, frame.byteLength),
-        width,
-        height,
-        COLS,
-        ROWS,
-        DEFAULT_RAMP,
-      );
-      setGrid(decodeWasmGrid(packed, COLS, ROWS));
-    } else {
-      setGrid(rasterizeFallback(frame, width, height, COLS, ROWS, DEFAULT_RAMP));
-    }
+    const render = (now: number) => {
+      const dt = now - lastTime;
+      lastTime = now;
+      elapsedSinceTick += dt;
+
+      if (elapsedSinceTick >= TICK_INTERVAL_MS) {
+        elapsedSinceTick = 0;
+        const state = noiseRef.current;
+        if (state) {
+          const { current, target, nextChangeAt } = state;
+          for (let i = 0; i < CELL_COUNT; i++) {
+            if (now >= nextChangeAt[i]) {
+              target[i] = randomTargetBrightness();
+              nextChangeAt[i] = now + randomChangeDelayMs();
+            }
+            current[i] += (target[i] - current[i]) * EASE_PER_TICK;
+          }
+
+          const nextRows: { text: string; color: string }[] = [];
+          for (let r = 0; r < ROWS; r++) {
+            let text = "";
+            let sum = 0;
+            for (let c = 0; c < COLS; c++) {
+              const b = current[r * COLS + c];
+              text += charForBrightness(b, DEFAULT_RAMP);
+              sum += b;
+            }
+            nextRows.push({ text, color: colorForBrightness(sum / COLS) });
+          }
+          setRows(nextRows);
+        }
+      }
+
+      raf = requestAnimationFrame(render);
+    };
+
+    raf = requestAnimationFrame(render);
+    return () => cancelAnimationFrame(raf);
   }, []);
 
   return (
-    <pre className={className} aria-hidden="true">
-      {grid.map((row) => row.map((cell) => cell.char).join("")).join("\n")}
+    <pre
+      className={className}
+      aria-hidden="true"
+      style={{ fontSize: `${fontSize}px`, lineHeight: `${fontSize}px` }}
+    >
+      {rows.map((row, i) => (
+        // One span per row (not per character): coloring every individual
+        // character would mean ~1500+ DOM nodes re-rendered on every tick,
+        // which isn't worth it for a blurred-out atmosphere layer -- a
+        // per-row average color still reads as a smooth vertical gradient.
+        <div key={i} style={{ color: row.color }}>
+          {row.text}
+        </div>
+      ))}
     </pre>
   );
 }

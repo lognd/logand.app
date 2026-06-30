@@ -21,8 +21,16 @@ export function Landing() {
     // but ANY ancestor up the tree painting a background after this point
     // in z-order would hide SpinningShape; isolating here makes this
     // component's stacking self-contained regardless of what wraps it.
-    <main className="relative isolate">
-      <SpinningShape className="pointer-events-auto absolute inset-0 -z-[5] flex items-center justify-center overflow-hidden text-[8px] leading-[8px] text-[var(--accent-aqua)] opacity-40 sm:text-xs sm:leading-3" />
+    //
+    // `min-h-screen` -- without an explicit height, <main> only sizes to
+    // its content (a few hundred px of heading/text), so SpinningShape's
+    // `absolute inset-0` was clipped well before filling the viewport
+    // ("the animation in the background is cut off"). SpinningShape now
+    // computes its own font-size to fit whatever box it's given (see
+    // useFitFontSize), so the only fix needed here is giving it a full
+    // viewport-height box to fit *into*.
+    <main className="relative isolate min-h-screen">
+      <SpinningShape className="pointer-events-auto absolute inset-0 -z-[5] flex items-center justify-center overflow-hidden opacity-50" />
       <div className="relative mx-auto w-full max-w-2xl px-4 py-12">
         <h1 className="mb-4 text-3xl text-fg-primary">Logan Dapp</h1>
         <p className="mb-6 text-base text-fg-primary">

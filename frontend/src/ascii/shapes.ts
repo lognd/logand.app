@@ -5,7 +5,7 @@
 // Kept separate from SpinningShape.tsx so the math is unit-testable without
 // mounting React.
 
-import { DEFAULT_RAMP } from "./fallback";
+import { charForBrightness, DEFAULT_RAMP } from "./fallback";
 
 export type ShapeKind = "donut" | "cube" | "sphere";
 
@@ -68,16 +68,27 @@ function generateDonut(majorRadius = 1.5, minorRadius = 0.7): SurfacePoint[] {
   return points;
 }
 
+// A densely-sampled filled sphere shades as a smooth, featureless blob under
+// simple diffuse lighting -- a sphere's normal varies continuously in every
+// direction, so there's no edge, hole, or corner for the eye to lock onto
+// the way there is with the donut's hole or the cube's corners ("the sphere
+// doesn't make sense" -- it just reads as a fuzzy circle, not recognizably
+// a sphere). Rendering it as an explicit latitude/longitude wireframe (like
+// a globe) gives it real structure instead: only points near `RING_COUNT`
+// latitude circles and `RING_COUNT * 1.5` longitude circles are emitted, so
+// the rasterizer's z-buffer naturally produces visible ring lines.
 function generateSphere(radius = 1.6): SurfacePoint[] {
   const points: SurfacePoint[] = [];
-  const latSteps = 60;
-  const lonSteps = 120;
-  for (let i = 0; i <= latSteps; i++) {
-    const lat = (i / latSteps) * Math.PI; // 0..pi
+  const latRings = 9;
+  const lonRings = 14;
+  const pointsPerRing = 220;
+
+  for (let i = 1; i < latRings; i++) {
+    const lat = (i / latRings) * Math.PI;
     const sinLat = Math.sin(lat);
     const cosLat = Math.cos(lat);
-    for (let j = 0; j < lonSteps; j++) {
-      const lon = (j / lonSteps) * 2 * Math.PI;
+    for (let j = 0; j < pointsPerRing; j++) {
+      const lon = (j / pointsPerRing) * 2 * Math.PI;
       const normal: Point3 = {
         x: sinLat * Math.cos(lon),
         y: cosLat,
@@ -89,6 +100,27 @@ function generateSphere(radius = 1.6): SurfacePoint[] {
       });
     }
   }
+
+  for (let i = 0; i < lonRings; i++) {
+    const lon = (i / lonRings) * 2 * Math.PI;
+    const cosLon = Math.cos(lon);
+    const sinLon = Math.sin(lon);
+    for (let j = 0; j < pointsPerRing; j++) {
+      const lat = (j / pointsPerRing) * Math.PI;
+      const sinLat = Math.sin(lat);
+      const cosLat = Math.cos(lat);
+      const normal: Point3 = {
+        x: sinLat * cosLon,
+        y: cosLat,
+        z: sinLat * sinLon,
+      };
+      points.push({
+        position: { x: normal.x * radius, y: normal.y * radius, z: normal.z * radius },
+        normal,
+      });
+    }
+  }
+
   return points;
 }
 
@@ -218,11 +250,7 @@ export function rasterizeShape(
         rotatedNormal.z * LIGHT_DIR.z,
     );
     brightnessGrid[idx] = luminance;
-    const charIndex = Math.min(
-      ramp.length - 1,
-      Math.max(0, Math.floor(luminance * (ramp.length - 1))),
-    );
-    charGrid[idx] = ramp[charIndex];
+    charGrid[idx] = charForBrightness(luminance, ramp);
   }
 
   const grid: ShapeCell[][] = [];

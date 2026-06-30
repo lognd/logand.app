@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { colorForBrightness } from "./fallback";
 import {
   generateShape,
   randomShapeKind,
   rasterizeShape,
   type ShapeKind,
 } from "./shapes";
+import { useFitFontSize } from "./useFitFontSize";
 
 const COLS = 100;
 const ROWS = 50;
@@ -18,10 +20,16 @@ const AUTO_SPEED_Y = 0.45;
 // gesture, not a rotate gesture -- see the mobile-scroll note below.
 const DRAG_THRESHOLD_PX = 6;
 
+interface ShapeRow {
+  text: string;
+  color: string;
+}
+
 export function SpinningShape({ className }: { className?: string }) {
   const [kind] = useState<ShapeKind>(() => randomShapeKind());
   const points = useMemo(() => generateShape(kind), [kind]);
-  const [text, setText] = useState("");
+  const [rows, setRows] = useState<ShapeRow[]>([]);
+  const fontSize = useFitFontSize(COLS, ROWS);
 
   const angleRef = useRef({ x: 0.4, y: 0 });
   const draggingRef = useRef(false);
@@ -65,7 +73,21 @@ export function SpinningShape({ className }: { className?: string }) {
         COLS,
         ROWS,
       );
-      setText(grid.map((row) => row.map((cell) => cell.char).join("")).join("\n"));
+      // One colored <span> per row rather than per character -- per-character
+      // coloring would mean ~5000 styled DOM nodes re-rendered at up to
+      // 60fps, which isn't worth it here; a per-row average brightness
+      // still reads as a smooth light-to-dark gradient across the shape.
+      setRows(
+        grid.map((row) => {
+          let text = "";
+          let sum = 0;
+          for (const cell of row) {
+            text += cell.char;
+            sum += cell.brightness;
+          }
+          return { text, color: colorForBrightness(sum / row.length) };
+        }),
+      );
 
       raf = requestAnimationFrame(render);
     };
@@ -116,22 +138,41 @@ export function SpinningShape({ className }: { className?: string }) {
   };
 
   return (
-    <pre
-      className={className}
-      aria-hidden="true"
-      // touchAction: "pan-y" deliberately leaves vertical touch scrolling to
-      // the browser natively (so a thumb landing on the shape never traps
-      // page scroll, per docs/design/09's mobile bar) while still letting
-      // our pointermove handler see horizontal movement to drive rotation.
-      // The threshold-gated capture above is the other half of that
-      // guarantee for the horizontal axis.
-      style={{ touchAction: "pan-y", cursor: "grab" }}
-      onPointerDown={onPointerDown}
-      onPointerMove={onPointerMove}
-      onPointerUp={endDrag}
-      onPointerCancel={endDrag}
-    >
-      {text}
-    </pre>
+    // `className` (from Landing.tsx) carries flex-centering classes meant to
+    // center the whole shape block within its positioned container -- it
+    // must NOT land on the <pre> itself now that the <pre> has 50 row <div>
+    // children instead of one text node: `display:flex` (default
+    // flex-direction:row) would lay those 50 rows out *horizontally* as
+    // individual flex items instead of stacking them, squashing the shape
+    // into a single visible line. Centering happens on this wrapper; the
+    // <pre> below stays a plain block so its row divs stack normally.
+    <div className={className}>
+      <pre
+        aria-hidden="true"
+        // touchAction: "pan-y" deliberately leaves vertical touch scrolling
+        // to the browser natively (so a thumb landing on the shape never
+        // traps page scroll, per docs/design/09's mobile bar) while still
+        // letting our pointermove handler see horizontal movement to drive
+        // rotation. The threshold-gated capture above is the other half of
+        // that guarantee for the horizontal axis.
+        style={{
+          touchAction: "pan-y",
+          cursor: "grab",
+          fontSize: `${fontSize}px`,
+          lineHeight: `${fontSize}px`,
+          display: "block",
+        }}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={endDrag}
+        onPointerCancel={endDrag}
+      >
+        {rows.map((row, i) => (
+          <div key={i} style={{ color: row.color }}>
+            {row.text}
+          </div>
+        ))}
+      </pre>
+    </div>
   );
 }

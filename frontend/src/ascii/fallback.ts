@@ -4,7 +4,10 @@
 // just at lower resolution/frame rate, so the two are kept numerically
 // in sync (same luminance formula, same default ramp).
 
-export const DEFAULT_RAMP = " .:-=+*#%@";
+// Lengthened from the original 10-character ramp -- the short ramp produced
+// visibly banded/blocky brightness transitions ("more gradual gradient"
+// feedback). 19 characters, monotonically increasing perceived ink density.
+export const DEFAULT_RAMP = " .'`,:;~-+=*#%&8@$";
 
 export interface AsciiCell {
   char: string;
@@ -15,12 +18,37 @@ function luminance(r: number, g: number, b: number): number {
   return (0.299 * r + 0.587 * g + 0.114 * b) / 255;
 }
 
-function charForBrightness(brightness: number, ramp: string): string {
+// Gamma-correct the linear brightness before mapping to a ramp index --
+// human perceived brightness isn't linear, so without this the ramp spends
+// too many levels on the bright end and crushes the dark end into banding.
+// 0.6 approximates the inverse of the usual ~2.2 display gamma closely
+// enough for a decorative effect (not aiming for color-managed accuracy).
+const GAMMA = 0.6;
+
+export function charForBrightness(brightness: number, ramp: string): string {
+  const perceptual = Math.pow(Math.max(0, Math.min(1, brightness)), GAMMA);
   const index = Math.min(
     ramp.length - 1,
-    Math.max(0, Math.floor(brightness * (ramp.length - 1))),
+    Math.max(0, Math.floor(perceptual * (ramp.length - 1))),
   );
   return ramp[index];
+}
+
+// Duotone brightness->color mapping per the user's color-theory request:
+// brighter cells skew yellow-green (warm, higher lightness), darker cells
+// skew purple-green (cool, lower lightness) -- implemented as an HSL lerp
+// so the hue sweeps *through* pure green in the middle rather than muddying
+// like a naive RGB lerp would. Hue 75 = yellow-green (Gruvbox-adjacent,
+// near --accent-green #b8bb26's hue), hue 200 = blue-violet-green, picked to
+// read as "purple-tinted" while staying in the green family per the brief
+// ("purpler-green", not violet). Mirrors the classic warm-highlight /
+// cool-shadow color-grading convention.
+export function colorForBrightness(brightness: number): string {
+  const b = Math.max(0, Math.min(1, brightness));
+  const hue = 200 - b * 125;
+  const sat = 35 + b * 30;
+  const light = 26 + b * 44;
+  return `hsl(${hue.toFixed(0)} ${sat.toFixed(0)}% ${light.toFixed(0)}%)`;
 }
 
 /**
