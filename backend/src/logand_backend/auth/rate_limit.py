@@ -12,6 +12,12 @@ CUSTOMER_PAY = (20, 60)
 GENERAL_AUTHENTICATED = (120, 60)
 ADMIN = (300, 60)
 PUBLIC = (60, 60)
+# Self-registration isn't in the original design doc (added later at the
+# user's request) -- same threshold as LOGIN. Mass account creation is the
+# concrete abuse case (spam/credential-stuffing setup), and registration is
+# rarer than login in legitimate use, so LOGIN's 5/15min is tight enough
+# without needing its own number to tune independently yet.
+REGISTER = LOGIN
 
 
 class RateLimiter:

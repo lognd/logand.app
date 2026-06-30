@@ -13,11 +13,12 @@ from logand_backend.logging import get_logger
 _log = get_logger(__name__)
 
 # Routes exempt from the CSRF double-submit check in _csrf_middleware:
-# - /api/auth/login: no session cookie exists yet to carry a CSRF secret.
+# - /api/auth/login, /api/auth/register: no session cookie exists yet to
+#   carry a CSRF secret -- there's nothing to double-submit against.
 # - /api/webhooks/*: authenticated by Stripe signature verification instead
 #   (see api/webhooks.py), a browser-originated cookie/header pair is never
 #   present on a server-to-server webhook call.
-_CSRF_EXEMPT_PATHS = frozenset({"/api/auth/login"})
+_CSRF_EXEMPT_PATHS = frozenset({"/api/auth/login", "/api/auth/register"})
 _CSRF_EXEMPT_PREFIXES = ("/api/webhooks",)
 
 

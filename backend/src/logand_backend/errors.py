@@ -7,6 +7,7 @@ class AuthError(ErrorSet):
     InvalidCredentials = "email or password is incorrect"
     SessionExpired = "session has expired and must be re-authenticated"
     SessionNotFound = "session token does not match any known session"
+    EmailAlreadyRegistered = "an account with this email already exists"
 
 
 class InvoiceError(ErrorSet):
