@@ -1,0 +1,83 @@
+# Production topology -- single VPS, see docs/design/11-deployment.md.
+# NOTE(logan): caddy serves the prerendered frontend/dist directly (see docs/design/10) --
+# there is no separate frontend container in prod, only a build artifact mounted into caddy.
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./frontend/dist:/srv/frontend:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - backend
+
+  backend:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  migrate:
+    build:
+      context: ./backend
+    command: ["uv", "run", "alembic", "upgrade", "head"]
+    env_file:
+      - ./backend/.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    profiles: ["migrate"]   # run explicitly: docker compose --profile migrate run migrate
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: logand
+      POSTGRES_DB: logand
+      # POSTGRES_PASSWORD is read from backend/.env via env_file below -- NOT inlined here.
+    env_file:
+      - ./backend/.env
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U logand"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+
+  backup:
+    build:
+      context: ./ops
+      dockerfile: backup.Dockerfile
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    volumes:
+      - postgres_data:/var/lib/postgresql/data:ro
+      - budget_evidence:/evidence:ro
+      - backup_staging:/backup
+
+volumes:
+  postgres_data:
+  redis_data:
+  caddy_data:
+  caddy_config:
+  budget_evidence:
+  backup_staging:
