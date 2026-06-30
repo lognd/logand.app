@@ -95,7 +95,7 @@ export function Landing() {
           is explicit (not just the absence of a class) so it never
           accidentally inherits an opaque background and blocks the
           rain/shape layer from showing through behind it. */}
-      <footer className="fixed inset-x-0 bottom-0 z-10 bg-transparent px-4 py-4">
+      <footer className="fixed inset-x-0 bottom-0 z-10 border-t border-border bg-transparent px-4 py-4">
         <BackgroundPicker value={background} onChange={setBackground} />
       </footer>
     </main>

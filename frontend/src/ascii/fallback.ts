@@ -4,10 +4,14 @@
 // just at lower resolution/frame rate, so the two are kept numerically
 // in sync (same luminance formula, same default ramp).
 
-// Lengthened from the original 10-character ramp -- the short ramp produced
-// visibly banded/blocky brightness transitions ("more gradual gradient"
-// feedback). 19 characters, monotonically increasing perceived ink density.
-export const DEFAULT_RAMP = " .'`,:;~-+=*#%&8@$";
+import { GENERATED_RAMP } from "./generatedGlyphs";
+
+// GENERATED_RAMP (scripts/generate_ascii_ramp.py) replaces an earlier
+// hand-picked 19-character ramp -- "more graduations in the character set,
+// dip into utf-8 if needed" -- with one built from each glyph's actually
+// rendered ink coverage %, including Unicode block/shade glyphs the ASCII
+// repertoire alone doesn't have room for.
+export const DEFAULT_RAMP = GENERATED_RAMP;
 
 export interface AsciiCell {
   char: string;

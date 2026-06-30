@@ -6,6 +6,7 @@
 // mounting React.
 
 import { charForBrightness, DEFAULT_RAMP } from "./fallback";
+import { CONTOUR_GLYPHS } from "./generatedGlyphs";
 
 // DEFAULT_RAMP's darkest character is a literal space -- correct for
 // AsciiCanvas's noise layer (an unlit cell SHOULD be invisible there), but
@@ -21,7 +22,10 @@ const SHAPE_RAMP = DEFAULT_RAMP.slice(1);
 // not vanish into near-zero brightness -- a small ambient floor (on top of
 // SHAPE_RAMP already excluding space) keeps every face visibly part of the
 // object rather than just technically non-space-but-imperceptible.
-const AMBIENT_FLOOR = 0.16;
+// Raised from an earlier 0.16 -- the away-facing side was reading as
+// "almost disappearing" against the backdrop. Still clearly darker than
+// the lit side, just no longer near-invisible.
+const AMBIENT_FLOOR = 0.3;
 
 // normal-dot-light ranges over [-1, 1] (1 = facing the light directly, -1 =
 // facing directly away). A first pass clamped negative dot products to a
@@ -129,6 +133,27 @@ export function quatMultiply(a: Quaternion, b: Quaternion): Quaternion {
 export function quatNormalize(q: Quaternion): Quaternion {
   const len = Math.sqrt(q.w * q.w + q.x * q.x + q.y * q.y + q.z * q.z) || 1;
   return { w: q.w / len, x: q.x / len, y: q.y / len, z: q.z / len };
+}
+
+// Builds a single rotation quaternion from a combined (vx, vy) angular
+// velocity around the world X/Y axes over `dt` seconds, instead of composing
+// two separate single-axis quaternions in sequence (quatMultiply(fromX,
+// fromY)). Sequential composition is itself a hidden Euler-angle-style
+// dependency: rotating by X-then-Y is a DIFFERENT net rotation than Y-then-X
+// whenever both are nonzero (quaternion multiplication doesn't commute), so
+// which one came "first" silently biases the resulting axis away from the
+// direction the user actually moved the pointer in. Treating (vx, vy) as a
+// single angular-velocity vector and building one quaternion around its
+// normalized axis is the textbook small-rotation composition (valid because
+// WORLD_X=(1,0,0) and WORLD_Y=(0,1,0) are already an orthonormal basis, so
+// the combined axis is just (vx, vy, 0) normalized) and has no ordering bias
+// -- this is what makes "resume spinning in the same direction the user
+// flicked it" actually hold, including diagonal flicks.
+export function quatFromAngularVelocity(vx: number, vy: number, dt: number): Quaternion {
+  const magnitude = Math.hypot(vx, vy);
+  if (magnitude === 0) return quatIdentity();
+  const axis: Point3 = { x: vx / magnitude, y: vy / magnitude, z: 0 };
+  return quatFromAxisAngle(axis, magnitude * dt);
 }
 
 /** Rotates vector `p` by quaternion `q` (q must be unit-length). */
@@ -341,25 +366,28 @@ const VIEW_DIR: Point3 = { x: 0, y: 0, z: -1 };
 // Points whose rotated normal is within this far from perpendicular to the
 // view direction are near the visual silhouette/edge of the shape -- "the
 // characters chosen for exposed edges should be a function of the shape's
-// local geometry, not just brightness" (a hand-rolled, much cheaper cousin
-// of marching-cubes' edge-case lookup: rather than resolving an exact
-// boundary contour, just check whether this sample is close enough to
-// grazing to count, then pick a directional glyph from its local geometry).
+// local geometry, not just brightness, using the contour of each character
+// itself" (a hand-rolled, much cheaper cousin of marching-cubes' edge-case
+// lookup: rather than resolving an exact boundary contour, just check
+// whether this sample is close enough to grazing to count, then pick from
+// CONTOUR_GLYPHS -- Unicode half/quadrant block glyphs whose own printed
+// shape literally occupies the matching half/corner of the cell, baked by
+// scripts/generate_ascii_ramp.py -- rather than an arbitrary {-,/,|,\\}
+// label with no real visual relationship to the surface's local lean).
 const SILHOUETTE_DOT_THRESHOLD = 0.16;
-const SILHOUETTE_CHARS = ["-", "/", "|", "\\"];
 
 function silhouetteChar(rotatedNormal: Point3): string {
-  // The silhouette edge runs perpendicular (in screen space) to the
-  // normal's own screen-space projection -- e.g. a normal pointing
-  // straight right/left in screen space means the surface is curving away
-  // top-to-bottom at that point, so the edge there reads as a vertical
-  // line, not a horizontal one.
-  const tangentAngle = Math.atan2(rotatedNormal.y, rotatedNormal.x) + Math.PI / 2;
-  const deg = (((tangentAngle * 180) / Math.PI) % 180 + 180) % 180;
-  if (deg < 22.5 || deg >= 157.5) return SILHOUETTE_CHARS[0]; // "-"
-  if (deg < 67.5) return SILHOUETTE_CHARS[1]; // "/"
-  if (deg < 112.5) return SILHOUETTE_CHARS[2]; // "|"
-  return SILHOUETTE_CHARS[3]; // "\"
+  // CONTOUR_GLYPHS is bucketed by compass direction (0 = up/north, going
+  // clockwise) -- the normal's own screen-space (x, y) projection IS that
+  // direction: the in-plane component of a silhouette point's normal points
+  // from the shape's interior out toward its exterior, i.e. toward whichever
+  // side of the cell should visually read as "more filled."
+  const angle = Math.atan2(rotatedNormal.x, -rotatedNormal.y); // 0 = up, clockwise
+  const bucket =
+    ((Math.round((angle / (2 * Math.PI)) * CONTOUR_GLYPHS.length) % CONTOUR_GLYPHS.length) +
+      CONTOUR_GLYPHS.length) %
+    CONTOUR_GLYPHS.length;
+  return CONTOUR_GLYPHS[bucket];
 }
 
 /**

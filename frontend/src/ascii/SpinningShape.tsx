@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { colorForBrightness } from "./fallback";
 import {
   generateShape,
-  quatFromAxisAngle,
+  quatFromAngularVelocity,
   quatIdentity,
   quatMultiply,
   quatNormalize,
@@ -22,6 +22,13 @@ const ROWS = 50;
 // itself, which the user liked.
 const AUTO_SPEED_X = 0.25;
 const AUTO_SPEED_Y = 0.45;
+// Combined rate + default axis for idle auto-rotation, expressed the same
+// way a flick's angular velocity is (see quatFromAngularVelocity in
+// shapes.ts) -- this is what lets "resume in the same direction as the
+// flick" and "the original default direction" share one code path instead
+// of auto-rotation being a special case applied separately per axis.
+const AUTO_SPEED_MAGNITUDE = Math.hypot(AUTO_SPEED_X, AUTO_SPEED_Y);
+const DEFAULT_AUTO_AXIS = { x: AUTO_SPEED_X / AUTO_SPEED_MAGNITUDE, y: AUTO_SPEED_Y / AUTO_SPEED_MAGNITUDE };
 
 // Below this drag distance (px) a pointerdown+move is treated as a scroll
 // gesture, not a rotate gesture -- see the mobile-scroll note below.
@@ -60,9 +67,6 @@ function easeInOutCubic(t: number): number {
   const c = Math.max(0, Math.min(1, t));
   return c < 0.5 ? 4 * c * c * c : 1 - Math.pow(-2 * c + 2, 3) / 2;
 }
-
-const WORLD_X: { x: number; y: number; z: number } = { x: 1, y: 0, z: 0 };
-const WORLD_Y: { x: number; y: number; z: number } = { x: 0, y: 1, z: 0 };
 
 interface ShapeRow {
   text: string;
@@ -113,12 +117,12 @@ export function SpinningShape({
   // before any movement has happened.
   const idleRampStartRef = useRef<number | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
-  // Sign of the auto-rotation axes once idle resumes ("start the idle
-  // animation in the same direction as the user flicked it") -- captured
-  // from the drag's final angular velocity at release, not the fixed
-  // AUTO_SPEED_X/Y sign. Defaults to the original positive direction so a
-  // page load with no drag yet still spins the way it always has.
-  const autoDirRef = useRef({ x: 1, y: 1 });
+  // Normalized (vx, vy) axis the idle auto-rotation spins around once it
+  // resumes ("start the idle animation in the same direction as the user
+  // flicked it") -- captured from the drag's final angular velocity at
+  // release. Defaults to AUTO_SPEED_X/Y's own direction so a page load
+  // with no drag yet still spins the way it always has.
+  const autoAxisRef = useRef(DEFAULT_AUTO_AXIS);
 
   useEffect(() => {
     const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -167,10 +171,7 @@ export function SpinningShape({
           // exponentially decaying toward zero. Independent of the
           // follow/idle crossfade -- a released drag's momentum always
           // plays out.
-          const incr = quatMultiply(
-            quatFromAxisAngle(WORLD_X, v.x * dtSeconds),
-            quatFromAxisAngle(WORLD_Y, v.y * dtSeconds),
-          );
+          const incr = quatFromAngularVelocity(v.x, v.y, dtSeconds);
           orientationRef.current = quatNormalize(quatMultiply(incr, orientationRef.current));
           const decay = Math.exp(-VELOCITY_DAMPING_PER_SEC * dtSeconds);
           velocityRef.current = { x: v.x * decay, y: v.y * decay };
@@ -178,10 +179,11 @@ export function SpinningShape({
           // Auto-rotation speed is scaled by autoBlend -- zero while
           // actively following the mouse, cubically ramping back to full
           // speed once the pointer has been idle for a while.
-          const dir = autoDirRef.current;
-          const incr = quatMultiply(
-            quatFromAxisAngle(WORLD_X, AUTO_SPEED_X * dir.x * autoBlend * dtSeconds),
-            quatFromAxisAngle(WORLD_Y, AUTO_SPEED_Y * dir.y * autoBlend * dtSeconds),
+          const axis = autoAxisRef.current;
+          const incr = quatFromAngularVelocity(
+            axis.x * AUTO_SPEED_MAGNITUDE,
+            axis.y * AUTO_SPEED_MAGNITUDE,
+            autoBlend * dtSeconds,
           );
           orientationRef.current = quatNormalize(quatMultiply(incr, orientationRef.current));
         }
@@ -209,10 +211,10 @@ export function SpinningShape({
         const tiltDelta = { x: nextTilt.x - tilt.x, y: nextTilt.y - tilt.y };
         hoverTiltRef.current = nextTilt;
         if (tiltDelta.x !== 0 || tiltDelta.y !== 0) {
-          const tiltIncr = quatMultiply(
-            quatFromAxisAngle(WORLD_X, tiltDelta.x),
-            quatFromAxisAngle(WORLD_Y, tiltDelta.y),
-          );
+          // dt=1: tiltDelta is already a one-shot angle delta for this
+          // frame, not a rate, so quatFromAngularVelocity's magnitude*dt
+          // should just be |tiltDelta|.
+          const tiltIncr = quatFromAngularVelocity(tiltDelta.x, tiltDelta.y, 1);
           orientationRef.current = quatNormalize(
             quatMultiply(tiltIncr, orientationRef.current),
           );
@@ -323,10 +325,11 @@ export function SpinningShape({
       // shape is currently oriented (see orientationRef's doc comment).
       const dAngleX = -dy * 0.01;
       const dAngleY = -dx * 0.01;
-      const incr = quatMultiply(
-        quatFromAxisAngle(WORLD_X, dAngleX),
-        quatFromAxisAngle(WORLD_Y, dAngleY),
-      );
+      // dt=1: dAngleX/dAngleY are already this frame's one-shot angle delta,
+      // not a rate -- see quatFromAngularVelocity's doc comment for why a
+      // single combined-axis quaternion replaces the old sequential
+      // X-then-Y composition.
+      const incr = quatFromAngularVelocity(dAngleX, dAngleY, 1);
       orientationRef.current = quatNormalize(quatMultiply(incr, orientationRef.current));
       // Track angular velocity from this move so a release can carry
       // momentum (see VELOCITY_DAMPING_PER_SEC above).
@@ -343,19 +346,18 @@ export function SpinningShape({
     };
 
     const endDrag = () => {
-      // Capture the flick's direction before momentum decay (or the
-      // coasting-velocity-below-threshold branch in the render loop) zeroes
-      // velocityRef out -- this is what "start the idle animation in the
-      // same direction as the user flicked it" reads from once auto-
-      // rotation resumes. Math.sign(0) is 0, which would zero that axis'
-      // rotation out entirely rather than just keep its prior direction, so
-      // a near-zero release velocity on an axis leaves that axis' direction
-      // unchanged instead.
+      // Capture the flick's direction (as a normalized axis, same
+      // representation quatFromAngularVelocity uses internally) before
+      // momentum decay zeroes velocityRef out -- this is what "start the
+      // idle animation in the same direction as the user flicked it" reads
+      // from once auto-rotation resumes. A near-zero release velocity
+      // leaves the previous axis unchanged rather than collapsing to a
+      // degenerate zero-length axis.
       const v = velocityRef.current;
-      autoDirRef.current = {
-        x: Math.sign(v.x) || autoDirRef.current.x,
-        y: Math.sign(v.y) || autoDirRef.current.y,
-      };
+      const magnitude = Math.hypot(v.x, v.y);
+      if (magnitude > 1e-6) {
+        autoAxisRef.current = { x: v.x / magnitude, y: v.y / magnitude };
+      }
       draggingRef.current = false;
       dragCapturedRef.current = false;
     };
