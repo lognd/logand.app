@@ -15,33 +15,34 @@
     "types": "openapi-typescript ../backend/openapi.json -o src/types/api.generated.ts"
   },
   "dependencies": {
+    "@tanstack/react-query": "^5.59.0",
+    "motion": "^11.11.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "react-router-dom": "^6.27.0",
-    "@tanstack/react-query": "^5.59.0",
     "react-hook-form": "^7.53.0",
-    "zod": "^3.23.8",
-    "motion": "^11.11.0"
+    "react-router-dom": "^6.27.0",
+    "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@eslint/js": "^9.12.0",
     "@playwright/test": "^1.48.0",
-    "@testing-library/react": "^16.0.1",
     "@testing-library/jest-dom": "^6.5.0",
+    "@testing-library/react": "^16.0.1",
+    "@types/node": "^26.0.1",
     "@types/react": "^18.3.11",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.2",
-    "@eslint/js": "^9.12.0",
     "autoprefixer": "^10.4.20",
     "eslint": "^9.12.0",
     "eslint-plugin-react": "^7.37.1",
-    "eslint-plugin-react-hooks": "^4.6.2",
-    "typescript-eslint": "^8.8.1",
+    "eslint-plugin-react-hooks": "^5.0.0",
     "jsdom": "^25.0.1",
     "openapi-typescript": "^7.4.1",
     "postcss": "^8.4.47",
     "prettier": "^3.3.3",
     "tailwindcss": "^3.4.13",
     "typescript": "^5.6.3",
+    "typescript-eslint": "^8.8.1",
     "vite": "^5.4.8",
     "vitest": "^2.1.2"
   }

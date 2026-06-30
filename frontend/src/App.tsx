@@ -5,6 +5,7 @@ import { CustomerGuard } from "./app/layout/CustomerGuard";
 import { Landing } from "./app/routes/public/Landing";
 import { Projects } from "./app/routes/public/Projects";
 import { Contact } from "./app/routes/public/Contact";
+import { Login } from "./app/routes/public/Login";
 import { AdminInvoices } from "./app/routes/admin/Invoices";
 import { AdminBudget } from "./app/routes/admin/Budget";
 import { AdminInventory } from "./app/routes/admin/Inventory";
@@ -18,6 +19,7 @@ export function App() {
         <Route path="/" element={<Landing />} />
         <Route path="/projects" element={<Projects />} />
         <Route path="/contact" element={<Contact />} />
+        <Route path="/login" element={<Login />} />
 
         <Route
           path="/admin/invoices"

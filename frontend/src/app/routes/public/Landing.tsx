@@ -6,8 +6,8 @@ export function Landing() {
     <main>
       <h1>Logan Dapp</h1>
       <p>
-        Personal and professional site of Logan Dapp -- software engineer,
-        builder of logand.app.
+        Personal and professional site of Logan Dapp -- software engineer, builder of
+        logand.app.
       </p>
       <nav aria-label="primary">
         <a href="/projects">Projects</a>
