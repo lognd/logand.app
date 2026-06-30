@@ -27,6 +27,7 @@ FROBLEMS.md
 
 # Secrets
 .env
+.env.local
 backend/.env
 
 # Editor / OS
