@@ -1,0 +1,34 @@
+# Build artifacts
+build/
+dist/
+*.egg-info/
+target/
+pkg/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Node
+node_modules/
+frontend/dist/
+
+# Rust
+wasm-ascii/target/
+wasm-ascii/pkg/
+
+# frob local state
+.frob/
+FROBLEMS.md
+
+# Secrets
+.env
+backend/.env
+
+# Editor / OS
+.idea/
+.DS_Store
