@@ -16,10 +16,11 @@ import { useFitFontSize } from "./useFitFontSize";
 const COLS = 100;
 const ROWS = 50;
 
-// Degrees/sec auto-rotation when idle. Picked to read as a calm, deliberate
-// spin rather than a distracting blur.
-const AUTO_SPEED_X = 0.25;
-const AUTO_SPEED_Y = 0.45;
+// Radians/sec auto-rotation when idle. Slowed down from an earlier
+// 0.25/0.45 per feedback that it "goes a little fast" -- still meant to
+// read as a calm, deliberate spin, not a distracting blur.
+const AUTO_SPEED_X = 0.15;
+const AUTO_SPEED_Y = 0.28;
 
 // Below this drag distance (px) a pointerdown+move is treated as a scroll
 // gesture, not a rotate gesture -- see the mobile-scroll note below.
@@ -109,6 +110,12 @@ export function SpinningShape({
   // before any movement has happened.
   const idleRampStartRef = useRef<number | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  // Sign of the auto-rotation axes once idle resumes ("start the idle
+  // animation in the same direction as the user flicked it") -- captured
+  // from the drag's final angular velocity at release, not the fixed
+  // AUTO_SPEED_X/Y sign. Defaults to the original positive direction so a
+  // page load with no drag yet still spins the way it always has.
+  const autoDirRef = useRef({ x: 1, y: 1 });
 
   useEffect(() => {
     const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -168,37 +175,45 @@ export function SpinningShape({
           // Auto-rotation speed is scaled by autoBlend -- zero while
           // actively following the mouse, cubically ramping back to full
           // speed once the pointer has been idle for a while.
+          const dir = autoDirRef.current;
           const incr = quatMultiply(
-            quatFromAxisAngle(WORLD_X, AUTO_SPEED_X * autoBlend * dtSeconds),
-            quatFromAxisAngle(WORLD_Y, AUTO_SPEED_Y * autoBlend * dtSeconds),
+            quatFromAxisAngle(WORLD_X, AUTO_SPEED_X * dir.x * autoBlend * dtSeconds),
+            quatFromAxisAngle(WORLD_Y, AUTO_SPEED_Y * dir.y * autoBlend * dtSeconds),
           );
           orientationRef.current = quatNormalize(quatMultiply(incr, orientationRef.current));
         }
       }
 
-      // Follow tilt: ease the current tilt toward (raw mouse target *
-      // followBlend) each frame -- the target itself shrinks toward
-      // neutral as the idle ramp progresses, so the shape settles back to
-      // center in step with auto-rotation taking back over, rather than
-      // auto-rotation starting from wherever the tilt happened to be.
-      const rawTarget = hoverTargetRef.current;
-      const scaledTarget = { x: rawTarget.x * followBlend, y: rawTarget.y * followBlend };
-      const tilt = hoverTiltRef.current;
-      const lerpAmount = 1 - Math.exp(-HOVER_LERP * dtSeconds);
-      const nextTilt = {
-        x: tilt.x + (scaledTarget.x - tilt.x) * lerpAmount,
-        y: tilt.y + (scaledTarget.y - tilt.y) * lerpAmount,
-      };
-      const tiltDelta = { x: nextTilt.x - tilt.x, y: nextTilt.y - tilt.y };
-      hoverTiltRef.current = nextTilt;
-      if (tiltDelta.x !== 0 || tiltDelta.y !== 0) {
-        const tiltIncr = quatMultiply(
-          quatFromAxisAngle(WORLD_X, tiltDelta.x),
-          quatFromAxisAngle(WORLD_Y, tiltDelta.y),
-        );
-        orientationRef.current = quatNormalize(
-          quatMultiply(tiltIncr, orientationRef.current),
-        );
+      // Follow tilt: only applied while actually following (followBlend >
+      // 0). Critically, the target is NEVER scaled back toward zero as
+      // the idle ramp progresses -- doing that earlier is exactly what
+      // caused the "snapping back" complaint: scaling the target down
+      // forced the tilt to actively reverse itself, fighting auto-
+      // rotation rather than handing off to it. Once idle (followBlend
+      // hits 0), this block is skipped entirely, so whatever tilt was
+      // last applied stays permanently baked into orientationRef and
+      // auto-rotation just continues accumulating on top of it --
+      // "continue from where the user left off rather than snapping
+      // back."
+      if (followBlend > 0) {
+        const target = hoverTargetRef.current;
+        const tilt = hoverTiltRef.current;
+        const lerpAmount = 1 - Math.exp(-HOVER_LERP * dtSeconds);
+        const nextTilt = {
+          x: tilt.x + (target.x - tilt.x) * lerpAmount,
+          y: tilt.y + (target.y - tilt.y) * lerpAmount,
+        };
+        const tiltDelta = { x: nextTilt.x - tilt.x, y: nextTilt.y - tilt.y };
+        hoverTiltRef.current = nextTilt;
+        if (tiltDelta.x !== 0 || tiltDelta.y !== 0) {
+          const tiltIncr = quatMultiply(
+            quatFromAxisAngle(WORLD_X, tiltDelta.x),
+            quatFromAxisAngle(WORLD_Y, tiltDelta.y),
+          );
+          orientationRef.current = quatNormalize(
+            quatMultiply(tiltIncr, orientationRef.current),
+          );
+        }
       }
 
       const grid = rasterizeShape(points, orientationRef.current, COLS, ROWS);
@@ -272,11 +287,15 @@ export function SpinningShape({
         // -- auto-rotation is suppressed for IDLE_GRACE_MS after this,
         // then cubically ramps back in once movement actually stops.
         lastMoveAtRef.current = performance.now();
-      } else {
-        // Pointer left the shape's area entirely -- the render loop's
-        // idle ramp eases the tilt back to neutral, rather than snapping.
-        hoverTargetRef.current = { x: 0, y: 0 };
       }
+      // No `else` branch resetting the target to {0,0} when the pointer
+      // leaves the shape's area -- that was the other source of the
+      // "snapping back" complaint (it forced the tilt to actively reverse
+      // toward neutral the instant the cursor left, before the idle timer
+      // even started). The target just stays frozen at wherever the
+      // pointer last was inside the area; lastMoveAtRef not being
+      // refreshed here means the idle/follow crossfade in the render loop
+      // still kicks in on its own normal schedule.
 
       if (!draggingRef.current) return;
       const dx = e.clientX - lastPointerRef.current.x;
@@ -321,6 +340,19 @@ export function SpinningShape({
     };
 
     const endDrag = () => {
+      // Capture the flick's direction before momentum decay (or the
+      // coasting-velocity-below-threshold branch in the render loop) zeroes
+      // velocityRef out -- this is what "start the idle animation in the
+      // same direction as the user flicked it" reads from once auto-
+      // rotation resumes. Math.sign(0) is 0, which would zero that axis'
+      // rotation out entirely rather than just keep its prior direction, so
+      // a near-zero release velocity on an axis leaves that axis' direction
+      // unchanged instead.
+      const v = velocityRef.current;
+      autoDirRef.current = {
+        x: Math.sign(v.x) || autoDirRef.current.x,
+        y: Math.sign(v.y) || autoDirRef.current.y,
+      };
       draggingRef.current = false;
       dragCapturedRef.current = false;
     };
