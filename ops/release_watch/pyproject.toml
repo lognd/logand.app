@@ -7,6 +7,7 @@ dependencies = [
     "pydantic>=2.9",
     "httpx>=0.27",
     "python-dotenv>=1.0",
+    "typani",
 ]
 
 [project.scripts]
@@ -19,9 +20,20 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/release_watch"]
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
 [tool.ruff]
 line-length = 88
-src = ["src"]
+src = ["src", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-xdist>=3.6",
+    "ruff>=0.7",
+    "ty>=0.0.1a1",
+]

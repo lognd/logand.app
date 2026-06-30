@@ -18,7 +18,9 @@ def _build_parser() -> argparse.ArgumentParser:
         description="Checks GitHub for a new tagged release and redeploys if found.",
     )
     sub = parser.add_subparsers(dest="command", required=True)
-    sub.add_parser("check", help="check once, redeploy if a new tag is found, then exit")
+    sub.add_parser(
+        "check", help="check once, redeploy if a new tag is found, then exit"
+    )
     sub.add_parser("watch", help="poll forever at the configured interval")
     return parser
 
@@ -37,7 +39,9 @@ def _check_once(cfg: Config) -> bool:
         print(f"release-watch: already on {latest.tag_name}, nothing to do")
         return False
 
-    print(f"release-watch: new release {latest.tag_name} ({latest.html_url}), deploying")
+    print(
+        f"release-watch: new release {latest.tag_name} ({latest.html_url}), deploying"
+    )
     deploy_result = redeploy(cfg.compose_dir)
     if deploy_result.is_err:
         print(f"release-watch: deploy failed: {deploy_result.danger_err}")

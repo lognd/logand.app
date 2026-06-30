@@ -19,8 +19,9 @@ class Config(BaseModel):
     compose_dir: Path = Path("/srv/logand-app")
 
     # Optional GitHub token to raise the unauthenticated rate limit (60/hr -> 5000/hr).
-    # NOTE(logan): if set via env var, this is read through os.environ by from_external,
-    # never by reading a .env file directly -- see ~/.claude/refs and docs/design/00-overview.md.
+    # NOTE(logan): if set via env var, this is read through os.environ by
+    # from_external, never by reading a .env file directly -- see
+    # ~/.claude/refs and docs/design/00-overview.md.
     github_token: str | None = None
 
     poll_interval_seconds: int = 300
@@ -40,4 +41,6 @@ class Config(BaseModel):
             merged["poll_interval_seconds"] = int(
                 env["RELEASE_WATCH_POLL_INTERVAL_SECONDS"]
             )
-        return cls(**merged)
+        # model_validate (not cls(**merged)) because merged is a dynamically
+        # built dict[str, object].
+        return cls.model_validate(merged)

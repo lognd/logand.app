@@ -16,10 +16,11 @@ class DeployError(ErrorSet):
 def redeploy(compose_dir: Path) -> Result[None, DeployError]:
     """Pulls new images, runs the one-shot migration, then restarts backend + caddy.
 
-    NOTE(logan): this is the pull-based counterpart to .github/workflows/deploy.yml's
-    push-based deploy. Run this as a systemd timer / cron job on the VPS as a fallback
-    reconciliation path -- if a push deploy fails partway (e.g. SSH action times out),
-    this catches the drift on its next poll instead of leaving the VPS stuck on an old tag.
+    NOTE(logan): this is the pull-based counterpart to
+    .github/workflows/deploy.yml's push-based deploy. Run this as a systemd
+    timer / cron job on the VPS as a fallback reconciliation path -- if a
+    push deploy fails partway (e.g. SSH action times out), this catches the
+    drift on its next poll instead of leaving the VPS stuck on an old tag.
     """
     pull = subprocess.run(
         ["docker", "compose", "pull", "backend"], cwd=compose_dir, capture_output=True
