@@ -1,7 +1,7 @@
 // Integration layer for this crate is the WASM boundary itself -- run via
 // `wasm-pack test --headless --chrome` (see docs/design/08 and 12).
-use wasm_bindgen_test::*;
 use wasm_ascii::rasterize;
+use wasm_bindgen_test::*;
 
 wasm_bindgen_test_configure!(run_in_browser);
 

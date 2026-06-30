@@ -65,7 +65,9 @@ mod tests {
 
     #[test]
     fn white_pixel_maps_to_brightest_char() {
-        let pixels = [255u8, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255];
+        let pixels = [
+            255u8, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+        ];
         let grid = rasterize_grid(&pixels, 2, 2, 1, 1, " .:-=+*#%@");
         assert_eq!(grid[0].0, '@');
     }
