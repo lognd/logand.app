@@ -16,7 +16,12 @@ import { LINK_CLASS } from "../../../styles/a11y";
 // navigation lives in the real <nav> below, never inside the shape.
 export function Landing() {
   return (
-    <main className="relative">
+    // `isolate` for the same reason as Shell.tsx's root div -- without its
+    // own stacking context, this <main> being transparent doesn't matter,
+    // but ANY ancestor up the tree painting a background after this point
+    // in z-order would hide SpinningShape; isolating here makes this
+    // component's stacking self-contained regardless of what wraps it.
+    <main className="relative isolate">
       <SpinningShape className="pointer-events-auto absolute inset-0 -z-[5] flex items-center justify-center overflow-hidden text-[8px] leading-[8px] text-[var(--accent-aqua)] opacity-40 sm:text-xs sm:leading-3" />
       <div className="relative mx-auto w-full max-w-2xl px-4 py-12">
         <h1 className="mb-4 text-3xl text-fg-primary">Logan Dapp</h1>

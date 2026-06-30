@@ -33,7 +33,25 @@ import type { BudgetEntry } from "../api/budget";
 import type { InventoryItem } from "../api/inventory";
 
 type Role = "admin" | "customer" | null;
-let currentRole: Role = null;
+
+// MSW v2's browser handlers run in the page's own JS context (the generated
+// mockServiceWorker.js is a thin postMessage proxy, not where handler code
+// executes) -- so a plain module variable here is wiped by any full page
+// reload. The real backend persists sessions via an HttpOnly cookie that
+// survives reloads; sessionStorage is the closest mock-mode equivalent so a
+// manual browser refresh during preview doesn't surprise-logout the user.
+function readCurrentRole(): Role {
+  const stored = sessionStorage.getItem("mock-role");
+  return stored === "admin" || stored === "customer" ? stored : null;
+}
+
+function writeCurrentRole(role: Role): void {
+  if (role === null) {
+    sessionStorage.removeItem("mock-role");
+  } else {
+    sessionStorage.setItem("mock-role", role);
+  }
+}
 
 const MOCK_ADMIN_EMAIL = "admin@logand.app";
 const MOCK_CUSTOMER_EMAIL = "customer@example.com";
@@ -47,7 +65,7 @@ function clearMockCsrfCookie(): void {
 }
 
 function requireRole(role: Exclude<Role, null>): HttpResponse<DefaultBodyType> | null {
-  if (currentRole !== role) {
+  if (readCurrentRole() !== role) {
     return HttpResponse.json({ detail: "unauthenticated (mock)" }, { status: 401 });
   }
   return null;
@@ -63,9 +81,9 @@ export const handlers = [
   http.post("/api/auth/login", async ({ request }) => {
     const body = (await request.json()) as { email: string; password: string };
     if (body.email === MOCK_ADMIN_EMAIL) {
-      currentRole = "admin";
+      writeCurrentRole("admin");
     } else if (body.email === MOCK_CUSTOMER_EMAIL) {
-      currentRole = "customer";
+      writeCurrentRole("customer");
     } else {
       return HttpResponse.json({ detail: "invalid credentials" }, { status: 401 });
     }
@@ -74,12 +92,13 @@ export const handlers = [
   }),
 
   http.post("/api/auth/logout", () => {
-    currentRole = null;
+    writeCurrentRole(null);
     clearMockCsrfCookie();
     return HttpResponse.json({ status: "ok" });
   }),
 
   http.get("/api/me", () => {
+    const currentRole = readCurrentRole();
     if (currentRole === null) {
       return HttpResponse.json({ detail: "unauthenticated (mock)" }, { status: 401 });
     }

@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "react-router-dom";
 import { login } from "../../../api/auth";
 import { BUTTON_CLASS, INPUT_CLASS, LABEL_CLASS } from "../../../styles/a11y";
 
@@ -8,10 +9,18 @@ import { BUTTON_CLASS, INPUT_CLASS, LABEL_CLASS } from "../../../styles/a11y";
 export function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const mutation = useMutation({
     mutationFn: () => login(email, password),
-    onSuccess: () => {
-      window.location.assign("/");
+    onSuccess: async () => {
+      // SPA navigation, not window.location.assign -- a full reload here
+      // was needlessly jarring (flash of unstyled content, the whole bundle
+      // re-fetching). The ["me"] query result is now stale from the
+      // pre-login (401) state, so explicitly invalidate it rather than
+      // relying on a reload to implicitly refetch.
+      await queryClient.invalidateQueries({ queryKey: ["me"] });
+      navigate("/");
     },
   });
 

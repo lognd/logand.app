@@ -4,7 +4,13 @@ import { LINK_CLASS } from "../../styles/a11y";
 
 export function Shell({ children }: { children: ReactNode }) {
   return (
-    <div className="relative min-h-screen bg-bg-primary text-fg-primary">
+    <div className="relative isolate min-h-screen bg-bg-primary text-fg-primary">
+      {/* `isolate` is load-bearing, not decorative: without it this div doesn't
+          establish its own stacking context (position:relative + no z-index
+          doesn't), so its own bg-bg-primary paints OVER any negative-z-index
+          descendant anywhere in the subtree (including Landing's
+          SpinningShape) instead of below it -- the background layers were
+          fully invisible until this was added. */}
       {/* Atmosphere layer, see docs/design/09 -- low-opacity, never competes with content. */}
       <AsciiCanvas className="pointer-events-none fixed inset-0 -z-10 opacity-20" />
       <header className="border-b border-border p-4">

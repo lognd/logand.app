@@ -1,7 +1,8 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { MemoryRouter } from "react-router-dom";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { Login } from "../../src/app/routes/public/Login";
 import * as authApi from "../../src/api/auth";
 
@@ -9,19 +10,14 @@ function renderWithClient() {
   const queryClient = new QueryClient();
   return render(
     <QueryClientProvider client={queryClient}>
-      <Login />
+      <MemoryRouter>
+        <Login />
+      </MemoryRouter>
     </QueryClientProvider>,
   );
 }
 
 describe("Login", () => {
-  beforeEach(() => {
-    Object.defineProperty(window, "location", {
-      value: { ...window.location, assign: vi.fn() },
-      writable: true,
-    });
-  });
-
   afterEach(() => {
     vi.restoreAllMocks();
   });
