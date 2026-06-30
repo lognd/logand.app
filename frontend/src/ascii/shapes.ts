@@ -382,6 +382,17 @@ const VIEW_DIR: Point3 = { x: 0, y: 0, z: -1 };
 const SILHOUETTE_DOT_OUTER = 0.16;
 const SILHOUETTE_DOT_INNER = 0.05;
 
+// The globe's contour glyphs come from sparse latitude/longitude wireframe
+// rings (generateSphere), not a densely-sampled filled surface like the
+// cube/donut -- far fewer of its points land in a narrow grazing-angle
+// band purely by chance, so the cube/donut's band read as essentially
+// invisible on the globe ("the globe isn't using block characters", which
+// was true in practice even though a handful of cells technically
+// qualified). A wider band gives the sparse ring samples enough room to
+// actually register.
+const SILHOUETTE_DOT_OUTER_SPHERE = 0.4;
+const SILHOUETTE_DOT_INNER_SPHERE = 0.05;
+
 function silhouetteChar(rotatedNormal: Point3, useBlockGlyphs: boolean): string {
   const table = useBlockGlyphs ? CONTOUR_GLYPHS_BLOCK : CONTOUR_GLYPHS_TEXT;
   if (useBlockGlyphs) {
@@ -478,7 +489,9 @@ export function rasterizeShape(
     brightnessGrid[idx] = luminance;
 
     const absViewDot = Math.abs(viewDot);
-    const inContourBand = absViewDot < SILHOUETTE_DOT_OUTER && absViewDot > SILHOUETTE_DOT_INNER;
+    const outer = viewFacingLight ? SILHOUETTE_DOT_OUTER_SPHERE : SILHOUETTE_DOT_OUTER;
+    const inner = viewFacingLight ? SILHOUETTE_DOT_INNER_SPHERE : SILHOUETTE_DOT_INNER;
+    const inContourBand = absViewDot < outer && absViewDot > inner;
     charGrid[idx] = inContourBand
       ? silhouetteChar(rotatedNormal, viewFacingLight)
       : charForBrightness(luminance, ramp);

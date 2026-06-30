@@ -64,8 +64,14 @@ CELL = 80
 # "All characters should be typically found in text including symbols" --
 # every printable ASCII character (letters, digits, standard punctuation/
 # symbols), explicitly NOT Unicode block/shade elements, for both the
-# brightness ramp and the (text) contour table.
-TEXT_CANDIDATES = [c for c in (string.digits + string.ascii_letters + string.punctuation)]
+# brightness ramp and the (text) contour table. Filtered down to actually
+# fixed-width glyphs in build_text_candidates() below -- a monospace FONT
+# doesn't guarantee every GLYPH in it advances by the same width (some
+# symbol glyphs in practice render narrower/double, which would visibly
+# warp the character grid), so each candidate's measured advance width is
+# checked against a reference glyph and anything that doesn't match is
+# dropped rather than assumed.
+TEXT_CANDIDATE_POOL = [c for c in (string.digits + string.ascii_letters + string.punctuation)]
 
 RAMP_GRADUATIONS = 32
 
@@ -94,6 +100,23 @@ TEXT_CONTOUR_BUCKETS = 8
 MIN_ECCENTRICITY = 0.25
 
 
+def build_text_candidates(font: ImageFont.FreeTypeFont) -> list[str]:
+    """Filters TEXT_CANDIDATE_POOL down to glyphs whose measured advance
+    width actually matches a reference monospace glyph -- "make sure all
+    characters are the same width and kick out the ones that are not."
+    "0" is the reference (an unambiguous, always-present fixed-width digit
+    in any monospace font); anything whose advance width differs from it
+    at all is dropped rather than rendered into the grid, where a narrower
+    or wider glyph would visibly throw off the character-cell alignment.
+    """
+    reference_width = font.getlength("0")
+    kept = []
+    for ch in dict.fromkeys(TEXT_CANDIDATE_POOL):
+        if abs(font.getlength(ch) - reference_width) < 0.01:
+            kept.append(ch)
+    return kept
+
+
 def render_glyph(font: ImageFont.FreeTypeFont, ch: str) -> Image.Image:
     img = Image.new("L", (CELL, CELL), color=0)
     draw = ImageDraw.Draw(img)
@@ -111,21 +134,24 @@ def coverage(img: Image.Image) -> float:
 
 
 def principal_axis(img: Image.Image) -> tuple[float, float] | None:
-    """Returns (angle_radians, eccentricity) of the glyph's principal axis
-    -- the line through its center of mass it's most "elongated" along --
-    computed from the second-order moments of its pixel mass distribution,
-    or None if the glyph has no ink at all.
+    """Returns (angle_radians, eccentricity) of the line that most
+    accurately captures the glyph's boundary, or None if the glyph has no
+    ink at all.
 
-    This is "the line across the glyph that most accurately captures [its]
-    boundary": for an asymmetric glyph like "/" the major axis runs along
-    the visible stroke; for a glyph like "|" it runs vertically even though
-    the center of mass itself sits dead-center (centroid position alone
-    can't distinguish "|" from "o" -- the *spread* of mass around that
-    centroid is what does).
+    A pure second-moment fit (the line minimizing squared distance to ALL
+    ink, weighted equally) can get pulled toward a dense blob of mass near
+    the center even when the glyph's actual silhouette runs a different
+    direction -- e.g. a glyph with a heavy serif or bowl near its centroid
+    but a thin diagonal tail farther out should orient along that tail, not
+    get dragged toward the bowl. So instead: find the mass center first,
+    then fit the line through the ink pixels that sit FARTHEST from that
+    center -- the outer edge/silhouette -- not all the ink weighted
+    equally ("fit the line to the edge furthest from the mass").
     """
     w, h = img.size
     total = 0.0
     sx = sy = 0.0
+    ink: list[tuple[int, int, int]] = []  # (x, y, value)
     for yy in range(h):
         for xx in range(w):
             v = img.getpixel((xx, yy))
@@ -134,27 +160,31 @@ def principal_axis(img: Image.Image) -> tuple[float, float] | None:
             total += v
             sx += v * xx
             sy += v * yy
+            ink.append((xx, yy, v))
     if total == 0:
         return None
     cx, cy = sx / total, sy / total
 
+    # Only the half of the ink farthest from the mass center -- the outer
+    # edge -- contributes to the line fit below.
+    distances = sorted(ink, key=lambda p: -math.hypot(p[0] - cx, p[1] - cy))
+    edge = distances[: max(1, len(distances) // 2)]
+
     mu_xx = mu_yy = mu_xy = 0.0
-    for yy in range(h):
-        for xx in range(w):
-            v = img.getpixel((xx, yy))
-            if v <= 0:
-                continue
-            dx, dy = xx - cx, yy - cy
-            mu_xx += v * dx * dx
-            mu_yy += v * dy * dy
-            mu_xy += v * dx * dy
-    mu_xx /= total
-    mu_yy /= total
-    mu_xy /= total
+    edge_total = 0.0
+    for xx, yy, v in edge:
+        dx, dy = xx - cx, yy - cy
+        mu_xx += v * dx * dx
+        mu_yy += v * dy * dy
+        mu_xy += v * dx * dy
+        edge_total += v
+    mu_xx /= edge_total
+    mu_yy /= edge_total
+    mu_xy /= edge_total
 
     angle = 0.5 * math.atan2(2 * mu_xy, mu_xx - mu_yy)
-    # Eigenvalues of the 2x2 moment matrix -- their ratio is how elongated
-    # vs. round the mass distribution is.
+    # Eigenvalues of the 2x2 moment matrix (of the edge ink only) -- their
+    # ratio is how elongated vs. round that outer edge is.
     common = math.sqrt((mu_xx - mu_yy) ** 2 + 4 * mu_xy * mu_xy)
     lambda1 = (mu_xx + mu_yy + common) / 2
     lambda2 = (mu_xx + mu_yy - common) / 2
@@ -164,9 +194,9 @@ def principal_axis(img: Image.Image) -> tuple[float, float] | None:
     return angle, eccentricity
 
 
-def build_ramp(font: ImageFont.FreeTypeFont) -> str:
+def build_ramp(font: ImageFont.FreeTypeFont, candidates: list[str]) -> str:
     scored = [(0.0, " ")]
-    for ch in dict.fromkeys(TEXT_CANDIDATES):
+    for ch in candidates:
         scored.append((coverage(render_glyph(font, ch)), ch))
     scored.sort(key=lambda pair: pair[0])
 
@@ -197,9 +227,9 @@ def build_ramp(font: ImageFont.FreeTypeFont) -> str:
     return "".join(ramp)
 
 
-def build_text_contour_table(font: ImageFont.FreeTypeFont) -> list[str]:
+def build_text_contour_table(font: ImageFont.FreeTypeFont, candidates_pool: list[str]) -> list[str]:
     candidates: list[tuple[str, float, float]] = []  # (char, angle, eccentricity)
-    for ch in dict.fromkeys(TEXT_CANDIDATES):
+    for ch in candidates_pool:
         result = principal_axis(render_glyph(font, ch))
         if result is None:
             continue
@@ -243,8 +273,12 @@ def ts_string_literal(s: str) -> str:
 
 def main() -> None:
     font = ImageFont.truetype(FONT_PATH, FONT_SIZE)
-    ramp = build_ramp(font)
-    text_contour = build_text_contour_table(font)
+    candidates = build_text_candidates(font)
+    excluded = [c for c in dict.fromkeys(TEXT_CANDIDATE_POOL) if c not in candidates]
+    if excluded:
+        print(f"excluded {len(excluded)} non-fixed-width glyphs: {''.join(excluded)}")
+    ramp = build_ramp(font, candidates)
+    text_contour = build_text_contour_table(font, candidates)
     block_contour = build_block_contour_table(font)
 
     ts_lines = [
@@ -256,9 +290,10 @@ def main() -> None:
         "",
         "// Indexed by an 8-way bucket across a half-turn (0 = horizontal,",
         "// going toward vertical and back) -- matching shapes.ts's",
-        "// silhouetteChar(). Ordinary text glyphs, picked by which one's own",
-        "// principal mass-axis most closely matches that bucket's boundary",
-        "// orientation.",
+        "// silhouetteChar(). Ordinary text glyphs, picked by fitting a line",
+        "// through each glyph's own outer-edge ink (farthest from its mass",
+        "// center, not all of it equally) and matching that line's",
+        "// orientation to the bucket's boundary direction.",
         "export const CONTOUR_GLYPHS_TEXT: string[] = " + json.dumps(text_contour) + ";",
         "",
         "// Same idea, restricted to Unicode half/quadrant block glyphs --",

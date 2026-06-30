@@ -6,9 +6,10 @@ export const GENERATED_RAMP: string = " `.-',:\"^!*r\\|l=f{ny5hE$m&HRQBW@";
 
 // Indexed by an 8-way bucket across a half-turn (0 = horizontal,
 // going toward vertical and back) -- matching shapes.ts's
-// silhouetteChar(). Ordinary text glyphs, picked by which one's own
-// principal mass-axis most closely matches that bucket's boundary
-// orientation.
+// silhouetteChar(). Ordinary text glyphs, picked by fitting a line
+// through each glyph's own outer-edge ink (farthest from its mass
+// center, not all of it equally) and matching that line's
+// orientation to the bucket's boundary direction.
 export const CONTOUR_GLYPHS_TEXT: string[] = ["_", "~", "`", "\\", "|", "/", "/", "_"];
 
 // Same idea, restricted to Unicode half/quadrant block glyphs --
