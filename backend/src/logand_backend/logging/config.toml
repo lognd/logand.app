@@ -1,0 +1,31 @@
+version = 1
+disable_existing_loggers = false
+
+[formatters.plain]
+"()" = "logand_backend.logging.formatter.PlainLevelFormatter"
+
+[filters.below_warning]
+"()" = "logand_backend.logging.filter.BelowLevelFilter"
+below = "WARNING"
+
+[handlers.stdout]
+class = "logging.StreamHandler"
+formatter = "plain"
+filters = ["below_warning"]
+stream = "ext://sys.stdout"
+level = "DEBUG"
+
+[handlers.stderr]
+class = "logging.StreamHandler"
+formatter = "plain"
+stream = "ext://sys.stderr"
+level = "WARNING"
+
+[loggers.logand_backend]
+level = "INFO"
+handlers = ["stdout", "stderr"]
+propagate = false
+
+[root]
+level = "WARNING"
+handlers = ["stdout", "stderr"]

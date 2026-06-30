@@ -1,0 +1,89 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+# NOTE(logan): this only runs after CI's workflow_run completes successfully -- it does NOT
+# re-run the checks itself, so don't remove the `workflow_run` trigger thinking ci.yml's
+# `push: branches: [main]` job already gates this. They're separate workflow runs.
+jobs:
+  wait-for-ci:
+    runs-on: ubuntu-latest
+    steps:
+      - name: poll CI status for this SHA
+        # GitHub Actions doesn't have a clean "depends on a different workflow's run for the
+        # same SHA" primitive without workflow_run (which only fires on default branch and
+        # has its own subtleties around re-fetching the right SHA). Polling via gh api is the
+        # simplest correct option for a single-VPS, low-traffic deploy.
+        run: |
+          gh api repos/${{ github.repository }}/commits/${{ github.sha }}/check-runs \
+            --jq '.check_runs[] | select(.name | startswith("backend") or startswith("frontend") or startswith("wasm-ascii")) | .conclusion' \
+            > /tmp/conclusions.txt || true
+          if grep -qv "success" /tmp/conclusions.txt; then
+            echo "CI did not pass cleanly for this SHA, aborting deploy"
+            exit 1
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-and-push:
+    runs-on: ubuntu-latest
+    needs: wait-for-ci
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          push: true
+          tags: ghcr.io/${{ github.repository }}/backend:${{ github.sha }},ghcr.io/${{ github.repository }}/backend:latest
+      - name: build frontend static assets
+        working-directory: frontend
+        run: npm ci && npm run build
+      - name: build wasm-ascii
+        working-directory: wasm-ascii
+        run: |
+          curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+          make build
+      - name: rebuild frontend with wasm bundle included
+        working-directory: frontend
+        run: npm run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend-dist
+      - name: rsync frontend build to VPS
+        # NOTE(logan): requires VPS_HOST, VPS_USER, VPS_SSH_KEY secrets set in repo settings.
+        # Never echo or log these -- see docs/design/00-overview.md and 11-deployment.md.
+        uses: easingthemes/ssh-deploy@v5
+        with:
+          SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_KEY }}
+          REMOTE_HOST: ${{ secrets.VPS_HOST }}
+          REMOTE_USER: ${{ secrets.VPS_USER }}
+          SOURCE: "frontend-dist/"
+          TARGET: "/srv/logand-app/frontend/dist"
+      - name: pull + restart backend on VPS
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            cd /srv/logand-app
+            docker compose pull backend
+            docker compose --profile migrate run --rm migrate
+            docker compose up -d backend caddy

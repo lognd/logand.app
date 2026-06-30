@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - name: install
+        working-directory: backend
+        run: uv sync
+      - name: check
+        working-directory: backend
+        # NOTE(logan): `frob check` (part of `make check`) needs frob installed; CI installs it
+        # via uv's dev dependency group once frob is added to backend/pyproject.toml's dev group.
+        run: uv run ruff check src/ tests/ && uv run ruff format --check src/ tests/ && uv run ty check src/ && uv run pytest tests/unit tests/integration -n auto
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+      - name: install
+        working-directory: frontend
+        run: npm ci
+      - name: check
+        working-directory: frontend
+        run: npm run lint && npm run typecheck && npm run test
+
+  wasm-ascii:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - name: check
+        working-directory: wasm-ascii
+        run: cargo check && cargo clippy -- -D warnings && cargo fmt --check && cargo test
+
+  system-tests:
+    runs-on: ubuntu-latest
+    needs: [backend, frontend, wasm-ascii]
+    steps:
+      - uses: actions/checkout@v4
+      - name: bring up test stack
+        run: docker compose -f docker-compose.test.yml up -d --build
+      - name: wait for backend
+        # NOTE(logan): replace with a real healthcheck-based wait once api/health.py exists;
+        # a sleep is a placeholder, not a pattern to keep.
+        run: sleep 10
+      - uses: astral-sh/setup-uv@v3
+      - name: backend system tests
+        working-directory: backend
+        run: uv sync && uv run pytest tests/system -n auto
+        env:
+          API_BASE_URL: http://localhost:8000
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: frontend system tests
+        working-directory: frontend
+        run: npm ci && npx playwright install --with-deps && npm run test:system
+      - name: tear down
+        if: always()
+        run: docker compose -f docker-compose.test.yml down -v
