@@ -19,3 +19,10 @@ export function login(email: string, password: string): Promise<{ status: string
 export function logout(): Promise<{ status: string }> {
   return apiPost<{ status: string }>("/api/auth/logout");
 }
+
+export function register(
+  email: string,
+  password: string,
+): Promise<{ status: string }> {
+  return apiPost<{ status: string }>("/api/auth/register", { email, password });
+}

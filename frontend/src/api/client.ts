@@ -33,8 +33,18 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   });
 
   if (res.status === 401) {
-    // TODO(logan): wire to a real router navigation once auth flow exists.
-    window.location.assign("/login");
+    // /api/me is a passive "are you logged in?" check -- every page mounts
+    // it via useMe() (Shell's nav, AdminGuard, CustomerGuard) and a 401
+    // from it is the NORMAL, expected response for a logged-out visitor on
+    // a public page, not an error condition. Redirecting on it caused a
+    // hard reload loop: every page (including /login itself) mounts the
+    // nav, which calls /api/me, which 401s, which redirected to /login,
+    // which mounts the nav again, which 401s again... Real protected
+    // endpoints (admin/customer data fetches) still redirect on 401 --
+    // only this passive check is exempt.
+    if (path !== "/api/me") {
+      window.location.assign("/login");
+    }
     throw new Error("unauthenticated");
   }
 

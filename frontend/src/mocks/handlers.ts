@@ -55,6 +55,28 @@ function writeCurrentRole(role: Role): void {
 
 const MOCK_ADMIN_EMAIL = "admin@logand.app";
 const MOCK_CUSTOMER_EMAIL = "customer@example.com";
+const MIN_PASSWORD_LENGTH = 8;
+
+// Self-registered (mock) accounts, beyond the two seeded fixtures above.
+// sessionStorage-backed for the same reason readCurrentRole/writeCurrentRole
+// are -- registering then logging in again after a reload should work.
+function readRegisteredEmails(): string[] {
+  try {
+    return JSON.parse(sessionStorage.getItem("mock-registered-emails") ?? "[]");
+  } catch {
+    return [];
+  }
+}
+
+function addRegisteredEmail(email: string): void {
+  const emails = readRegisteredEmails();
+  emails.push(email.toLowerCase());
+  sessionStorage.setItem("mock-registered-emails", JSON.stringify(emails));
+}
+
+function isRegisteredEmail(email: string): boolean {
+  return readRegisteredEmails().includes(email.toLowerCase());
+}
 
 function setMockCsrfCookie(): void {
   document.cookie = "csrf_token=mock-csrf-token; path=/";
@@ -82,17 +104,36 @@ export const handlers = [
     const body = (await request.json()) as { email: string; password: string };
     if (body.email === MOCK_ADMIN_EMAIL) {
       writeCurrentRole("admin");
-    } else if (body.email === MOCK_CUSTOMER_EMAIL) {
+    } else if (body.email === MOCK_CUSTOMER_EMAIL || isRegisteredEmail(body.email)) {
       writeCurrentRole("customer");
     } else {
       return HttpResponse.json({ detail: "invalid credentials" }, { status: 401 });
     }
+    sessionStorage.setItem("mock-email", body.email.toLowerCase());
+    setMockCsrfCookie();
+    return HttpResponse.json({ status: "ok" });
+  }),
+
+  http.post("/api/auth/register", async ({ request }) => {
+    const body = (await request.json()) as { email: string; password: string };
+    if (body.email === MOCK_ADMIN_EMAIL || isRegisteredEmail(body.email)) {
+      return HttpResponse.json({ detail: "email already registered" }, { status: 409 });
+    }
+    if (body.password.length < MIN_PASSWORD_LENGTH) {
+      return HttpResponse.json({ detail: "password too short" }, { status: 422 });
+    }
+    // Self-registration always creates a customer-role account, same as the
+    // real backend's register() -- there is no path here to create an admin.
+    addRegisteredEmail(body.email);
+    writeCurrentRole("customer");
+    sessionStorage.setItem("mock-email", body.email.toLowerCase());
     setMockCsrfCookie();
     return HttpResponse.json({ status: "ok" });
   }),
 
   http.post("/api/auth/logout", () => {
     writeCurrentRole(null);
+    sessionStorage.removeItem("mock-email");
     clearMockCsrfCookie();
     return HttpResponse.json({ status: "ok" });
   }),
@@ -102,9 +143,12 @@ export const handlers = [
     if (currentRole === null) {
       return HttpResponse.json({ detail: "unauthenticated (mock)" }, { status: 401 });
     }
+    const email =
+      sessionStorage.getItem("mock-email") ??
+      (currentRole === "admin" ? MOCK_ADMIN_EMAIL : MOCK_CUSTOMER_EMAIL);
     return HttpResponse.json({
       id: currentRole === "admin" ? "mock-admin-id" : MOCK_CUSTOMER_ID,
-      email: currentRole === "admin" ? MOCK_ADMIN_EMAIL : MOCK_CUSTOMER_EMAIL,
+      email,
       role: currentRole,
     });
   }),

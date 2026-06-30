@@ -50,12 +50,26 @@ describe("api/client", () => {
     expect(headers.has("X-CSRF-Token")).toBe(false);
   });
 
-  it("redirects to /login on a 401 response", async () => {
+  it("redirects to /login on a 401 from a protected endpoint", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 401 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(apiGet("/api/admin/invoices")).rejects.toThrow("unauthenticated");
+    expect(window.location.assign).toHaveBeenCalledWith("/login");
+  });
+
+  it("does NOT redirect on a 401 from /api/me -- that's the passive logged-out check", async () => {
+    // Every page mounts useMe() (Shell's nav, the guards) to find out
+    // whether anyone's logged in; a 401 here is the normal answer for a
+    // logged-out visitor, not an error to redirect on. Redirecting on it
+    // previously caused a reload loop: every page (including /login
+    // itself) mounts the nav, which calls /api/me, which 401s, which
+    // redirected to /login, which mounts the nav again...
     const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 401 }));
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(apiGet("/api/me")).rejects.toThrow("unauthenticated");
-    expect(window.location.assign).toHaveBeenCalledWith("/login");
+    expect(window.location.assign).not.toHaveBeenCalled();
   });
 
   it("throws a RateLimitedError with the parsed Retry-After on a 429 response", async () => {
