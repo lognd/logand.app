@@ -1,0 +1,14 @@
+/* Gruvbox Dark palette -- see docs/design/09-design-system.md.
+   Light theme is deferred but the variable indirection keeps a
+   data-theme="light" override cheap to add later. */
+:root {
+  --bg-primary: #282828;
+  --bg-secondary: #3c3836;
+  --fg-primary: #ebdbb2;
+  --fg-muted: #a89984;
+  --accent-orange: #fe8019;
+  --accent-green: #b8bb26;
+  --accent-red: #fb4934;
+  --accent-aqua: #8ec07c;
+  --border: #504945;
+}
