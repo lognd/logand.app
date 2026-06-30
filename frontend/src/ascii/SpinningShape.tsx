@@ -401,6 +401,19 @@ export function SpinningShape({
           display: "block",
           userSelect: "none",
           WebkitUserSelect: "none",
+          // Explicit, not left to <pre>'s UA-default monospace -- the
+          // globe's Unicode block glyphs (CONTOUR_GLYPHS_BLOCK) aren't
+          // covered by every monospace font, and an unspecified default
+          // left the browser silently substituting a *different* fallback
+          // font for just those characters, at that font's own advance
+          // width instead of the grid's cell width ("the globe looks
+          // broken... characters aren't fixed width"). ui-monospace
+          // (resolves to the OS's own UI monospace font, e.g. SF Mono/
+          // Cascadia Mono) and DejaVu Sans Mono (this project's glyph-
+          // generation reference font, see scripts/generate_ascii_ramp.py)
+          // both have full box-drawing coverage, so falling back to either
+          // before the bare "monospace" generic keeps width consistent.
+          fontFamily: '"JetBrains Mono", ui-monospace, "DejaVu Sans Mono", monospace',
         }}
       >
         {rows.map((row, i) => (

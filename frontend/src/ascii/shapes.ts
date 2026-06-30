@@ -384,13 +384,15 @@ const SILHOUETTE_DOT_INNER = 0.05;
 
 // The globe's contour glyphs come from sparse latitude/longitude wireframe
 // rings (generateSphere), not a densely-sampled filled surface like the
-// cube/donut -- far fewer of its points land in a narrow grazing-angle
-// band purely by chance, so the cube/donut's band read as essentially
-// invisible on the globe ("the globe isn't using block characters", which
-// was true in practice even though a handful of cells technically
-// qualified). A wider band gives the sparse ring samples enough room to
-// actually register.
-const SILHOUETTE_DOT_OUTER_SPHERE = 0.4;
+// cube/donut -- a touch wider than the cube/donut's band so the sparser
+// ring samples still register at all, but NOT much wider: an earlier 0.4
+// pulled in points well short of the actual grazing rim, painting block
+// glyphs across a wide swath of the back hemisphere instead of a thin rim
+// line ("renarrow the band... far away needs to be thin and dark" -- the
+// far/back side should fall through to the ordinary dark, thin brightness-
+// ramp glyphs via its low view-facing luminance, not get swept into the
+// contour band).
+const SILHOUETTE_DOT_OUTER_SPHERE = 0.2;
 const SILHOUETTE_DOT_INNER_SPHERE = 0.05;
 
 function silhouetteChar(rotatedNormal: Point3, useBlockGlyphs: boolean): string {
