@@ -3,8 +3,8 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import ARRAY, DateTime, ForeignKey, Integer, Text, func
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import DateTime, ForeignKey, Integer, Text, func
+from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from logand_backend.db.base import Base
@@ -40,6 +40,10 @@ class InventoryItem(Base):
         ForeignKey("inventory_locations.id", ondelete="RESTRICT"),
         nullable=False,
     )
+    # NOTE: must be the postgresql-dialect ARRAY, not the generic
+    # sqlalchemy.ARRAY -- the generic one's .contains()/.any() raise
+    # NotImplementedError at query time (caught by a real integration test,
+    # see tests/integration/test_inventory_service.py).
     tags: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False, default=list)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

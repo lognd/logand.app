@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from logand_backend.api.errors import to_http_exception
 from logand_backend.auth.csrf import CSRF_COOKIE_NAME
+from logand_backend.auth.rate_limit import LOGIN, rate_limit
 from logand_backend.auth.sessions import (
     SESSION_COOKIE_NAME,
     SessionInfo,
@@ -27,7 +28,10 @@ class LoginRequest(BaseModel):
 
 @router.post("/login")
 async def login(
-    payload: LoginRequest, response: Response, db: AsyncSession = Depends(get_db)
+    payload: LoginRequest,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+    _rate_limit: None = Depends(rate_limit("login", *LOGIN)),
 ) -> dict[str, str]:
     result = await login_domain(db, payload.email, payload.password)
     if result.is_err:
