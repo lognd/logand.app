@@ -3,14 +3,18 @@ from __future__ import annotations
 import hashlib
 import secrets
 from datetime import datetime, timedelta, timezone
+from typing import cast
 from uuid import UUID
 
 from fastapi import Cookie, Depends, HTTPException, Request
 from pydantic import BaseModel
+from sqlalchemy import CursorResult, delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from typani.result import Result
+from typani.result import Err, Ok, Result
 
 from logand_backend.db.base import get_db
+from logand_backend.db.models.sessions import Session
+from logand_backend.db.models.users import User
 from logand_backend.errors import AuthError
 
 _CUSTOMER_IDLE_TIMEOUT = timedelta(minutes=30)
@@ -45,28 +49,91 @@ async def create_session(
     docs/design/02 (a DB leak alone must not let an attacker replay sessions).
     """
     raw_token = secrets.token_urlsafe(32)
-    raise NotImplementedError("insert Session row keyed on _hash_token(raw_token); needs db.models.sessions")
+    csrf_secret = secrets.token_urlsafe(32)
+    now = datetime.now(timezone.utc)
+    expires_at = min(now + _idle_timeout_for(role), now + _ABSOLUTE_MAX_LIFETIME)
+
+    row = Session(
+        user_id=user_id,
+        token_hash=_hash_token(raw_token),
+        csrf_secret=csrf_secret,
+        expires_at=expires_at,
+    )
+    db.add(row)
+    await db.flush()
+
+    info = SessionInfo(
+        id=row.id,
+        user_id=row.user_id,
+        role=role,
+        csrf_secret=row.csrf_secret,
+        expires_at=row.expires_at,
+    )
+    return Ok((raw_token, info))
 
 
 async def validate_session(
     db: AsyncSession, raw_token: str
 ) -> Result[SessionInfo, AuthError]:
     token_hash = _hash_token(raw_token)
-    raise NotImplementedError(
-        "look up Session by token_hash, check expires_at, slide expiry by "
-        "_idle_timeout_for(role) capped at _ABSOLUTE_MAX_LIFETIME from created_at; "
-        "needs db.models.sessions"
+
+    result = await db.execute(
+        select(Session, User.role)
+        .join(User, User.id == Session.user_id)
+        .where(Session.token_hash == token_hash)
+    )
+    row = result.first()
+    if row is None:
+        return Err(AuthError.SessionNotFound)
+
+    session_row, role = row
+    now = datetime.now(timezone.utc)
+    if session_row.expires_at <= now:
+        return Err(AuthError.SessionExpired)
+
+    # Slide the idle-timeout window forward, still capped by the absolute
+    # max lifetime measured from created_at (per docs/design/02).
+    created_at = session_row.created_at
+    absolute_cap = created_at + _ABSOLUTE_MAX_LIFETIME
+    session_row.expires_at = min(now + _idle_timeout_for(role), absolute_cap)
+    await db.flush()
+
+    return Ok(
+        SessionInfo(
+            id=session_row.id,
+            user_id=session_row.user_id,
+            role=role,
+            csrf_secret=session_row.csrf_secret,
+            expires_at=session_row.expires_at,
+        )
     )
 
 
 async def revoke_session(db: AsyncSession, session_id: UUID) -> Result[None, AuthError]:
-    raise NotImplementedError("delete Session row by id; needs db.models.sessions")
+    # NOTE: AsyncSession.execute() is typed to return the generic
+    # sqlalchemy.Result, which doesn't expose .rowcount -- it's only present
+    # on CursorResult, which is what a DELETE Core statement actually
+    # returns at runtime. Cast to match reality.
+    result = cast(
+        CursorResult, await db.execute(delete(Session).where(Session.id == session_id))
+    )
+    if result.rowcount == 0:
+        return Err(AuthError.SessionNotFound)
+    return Ok(None)
 
 
-async def revoke_all_sessions(db: AsyncSession, user_id: UUID) -> Result[None, AuthError]:
+async def revoke_all_sessions_for_user(
+    db: AsyncSession, user_id: UUID
+) -> Result[None, AuthError]:
+    await db.execute(delete(Session).where(Session.user_id == user_id))
+    return Ok(None)
+
+
+async def revoke_all_sessions_globally(db: AsyncSession) -> Result[None, AuthError]:
     """The admin 'kill all sessions' nuclear option -- deletes every session in
-    the table for this user, including the caller's own (docs/design/02)."""
-    raise NotImplementedError("delete all Session rows for user_id; needs db.models.sessions")
+    the table, including the caller's own (docs/design/02)."""
+    await db.execute(delete(Session))
+    return Ok(None)
 
 
 async def _get_session_from_cookie(
@@ -82,8 +149,8 @@ async def _get_session_from_cookie(
         raise HTTPException(status_code=401, detail=AuthError.SessionNotFound.value)
     result = await validate_session(db, session_token)
     if result.is_err:
-        raise HTTPException(status_code=401, detail=result.err.value)
-    return result.ok
+        raise HTTPException(status_code=401, detail=result.danger_err.value)
+    return result.danger_ok
 
 
 async def require_admin(

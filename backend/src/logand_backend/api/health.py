@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
+
+from logand_backend.auth.sessions import SessionInfo, _get_session_from_cookie
 
 router = APIRouter(tags=["health"])
 
@@ -25,11 +27,5 @@ async def health() -> HealthResponse:
 
 
 @router.get("/api/me")
-async def me() -> MeResponse:
-    # NOTE: deliberately not wired to a single Depends() yet -- /api/me needs
-    # to accept either an admin or a customer session and return whichever
-    # role is present, which require_admin/require_customer (each of which
-    # 401s on role mismatch) don't directly support. Real implementation:
-    # resolve the raw session via sessions._get_session_from_cookie and
-    # branch on .role, rather than depending on both guards.
-    raise NotImplementedError("resolve session role-agnostically; see note above")
+async def me(session: SessionInfo = Depends(_get_session_from_cookie)) -> MeResponse:
+    return MeResponse(user_id=str(session.user_id), role=session.role)

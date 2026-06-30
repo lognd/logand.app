@@ -27,7 +27,10 @@ class AppConfig(BaseModel):
         merged: dict[str, object] = {}
         merged.update(cls._env_overrides())
         merged.update(cls._args_to_dict(args))
-        return cls(**merged)
+        # model_validate (not cls(**merged)) because merged is a dynamically
+        # built dict[str, object] -- the field-by-field kwarg unpacking a
+        # type checker wants for cls(**merged) doesn't apply here.
+        return cls.model_validate(merged)
 
     @staticmethod
     def _env_overrides() -> dict[str, object]:

@@ -7,12 +7,11 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
-from logand_backend.db.base import Base
-
 # NOTE: this import is required even though nothing below references the
 # names directly -- it populates Base.metadata so autogenerate can see every
 # table. Do not remove it as "unused".
 import logand_backend.db.models  # noqa: F401
+from logand_backend.db.base import Base
 
 config = context.config
 
@@ -28,7 +27,9 @@ def _database_url() -> str:
     # .env (loaded by the caller) or from CI/CD secrets.
     url = os.environ.get("DATABASE_URL")
     if not url:
-        raise RuntimeError("DATABASE_URL must be set in the environment to run migrations")
+        raise RuntimeError(
+            "DATABASE_URL must be set in the environment to run migrations"
+        )
     return url
 
 

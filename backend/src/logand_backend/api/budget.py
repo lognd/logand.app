@@ -1,15 +1,20 @@
 from __future__ import annotations
 
+import csv
+import io
 from datetime import date
 from decimal import Decimal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
+from fastapi.responses import StreamingResponse
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from logand_backend.api.errors import to_http_exception
 from logand_backend.auth.sessions import SessionInfo, require_admin
 from logand_backend.db.base import get_db
+from logand_backend.db.models.budget import BudgetEntry
 from logand_backend.domain.budget.service import attach_evidence, create_entry
 
 router = APIRouter(prefix="/api/admin/budget", tags=["admin", "budget"])
@@ -27,8 +32,8 @@ async def create(
 ) -> dict[str, str]:
     result = await create_entry(db, amount, category, occurred_on, vendor, memo)
     if result.is_err:
-        raise to_http_exception(result.err)
-    return {"id": str(result.ok)}
+        raise to_http_exception(result.danger_err)
+    return {"id": str(result.danger_ok)}
 
 
 @router.post("/{entry_id}/evidence")
@@ -41,10 +46,23 @@ async def upload_evidence(
     if file.content_type not in {"application/pdf", "image/png", "image/jpeg"}:
         raise HTTPException(status_code=415, detail="evidence must be a PDF or image")
     contents = await file.read()
-    result = await attach_evidence(db, entry_id, contents, file_path=f"budget/{entry_id}/{file.filename}")
+    result = await attach_evidence(
+        db, entry_id, contents, file_path=f"budget/{entry_id}/{file.filename}"
+    )
     if result.is_err:
-        raise to_http_exception(result.err)
-    return {"id": str(result.ok)}
+        raise to_http_exception(result.danger_err)
+    return {"id": str(result.danger_ok)}
+
+
+def _entry_query(category: str | None, date_from: date | None, date_to: date | None):
+    query = select(BudgetEntry).where(BudgetEntry.deleted_at.is_(None))
+    if category is not None:
+        query = query.where(BudgetEntry.category == category)
+    if date_from is not None:
+        query = query.where(BudgetEntry.occurred_on >= date_from)
+    if date_to is not None:
+        query = query.where(BudgetEntry.occurred_on <= date_to)
+    return query.order_by(BudgetEntry.occurred_on.desc())
 
 
 @router.get("")
@@ -55,12 +73,68 @@ async def list_entries(
     _admin: SessionInfo = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ) -> list[dict]:
-    raise NotImplementedError("list/filter query; needs db.models.budget")
+    rows = (
+        (await db.execute(_entry_query(category, date_from, date_to))).scalars().all()
+    )
+    return [
+        {
+            "id": str(row.id),
+            "amount": str(row.amount),
+            "category": row.category,
+            "vendor": row.vendor,
+            "memo": row.memo,
+            "occurred_on": row.occurred_on.isoformat(),
+            "corrects_entry_id": str(row.corrects_entry_id)
+            if row.corrects_entry_id
+            else None,
+        }
+        for row in rows
+    ]
 
 
 @router.get("/export")
-async def export_csv(_admin: SessionInfo = Depends(require_admin), db: AsyncSession = Depends(get_db)):
-    # NOTE: this is the actual audit deliverable per docs/design/05 -- do not
-    # treat as an afterthought once db.models.budget exists. Should stream a
-    # StreamingResponse with text/csv, not buffer the whole export in memory.
-    raise NotImplementedError("CSV export; needs db.models.budget")
+async def export_csv(
+    category: str | None = None,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    _admin: SessionInfo = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+) -> StreamingResponse:
+    # NOTE: this is the actual audit deliverable per docs/design/05 -- streamed
+    # row-by-row rather than buffered, since this is meant to scale to a full
+    # year of expenses for tax prep / accountant handoff.
+    rows = (
+        (await db.execute(_entry_query(category, date_from, date_to))).scalars().all()
+    )
+
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(
+        [
+            "id",
+            "occurred_on",
+            "category",
+            "vendor",
+            "amount",
+            "memo",
+            "corrects_entry_id",
+        ]
+    )
+    for row in rows:
+        writer.writerow(
+            [
+                str(row.id),
+                row.occurred_on.isoformat(),
+                row.category,
+                row.vendor or "",
+                str(row.amount),
+                row.memo or "",
+                str(row.corrects_entry_id) if row.corrects_entry_id else "",
+            ]
+        )
+    buffer.seek(0)
+    return StreamingResponse(
+        buffer,
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=budget_export.csv"},
+    )

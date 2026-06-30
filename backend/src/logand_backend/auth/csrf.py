@@ -19,5 +19,9 @@ def verify_csrf(request: Request) -> None:
         return
     cookie_value = request.cookies.get(CSRF_COOKIE_NAME)
     header_value = request.headers.get(CSRF_HEADER_NAME)
-    if not cookie_value or not header_value or not hmac.compare_digest(cookie_value, header_value):
+    if (
+        not cookie_value
+        or not header_value
+        or not hmac.compare_digest(cookie_value, header_value)
+    ):
         raise HTTPException(status_code=403, detail="csrf token missing or mismatched")

@@ -13,7 +13,8 @@ _STATUS_MAP: dict[ErrorSet, int] = {
     AuthError.SessionExpired: 401,
     AuthError.SessionNotFound: 401,
     InvoiceError.NotFound: 404,
-    InvoiceError.NotOwned: 404,  # NOTE: 404 not 403 -- never confirm existence of another customer's invoice, see docs/design/04
+    InvoiceError.NotOwned: 404,  # NOTE: 404 not 403, never confirm another
+    # customer's invoice exists, see docs/design/04
     InvoiceError.InvalidState: 409,
     InvoiceError.AmountMismatch: 422,
     BudgetError.NotFound: 404,
@@ -34,7 +35,8 @@ def _verify_complete_mapping() -> None:
         for variant in error_set_cls:
             if variant not in _STATUS_MAP:
                 raise NotImplementedError(
-                    f"{error_set_cls.__name__}.{variant.name} has no HTTP status mapping in api/errors.py"
+                    f"{error_set_cls.__name__}.{variant.name} has no HTTP "
+                    "status mapping in api/errors.py"
                 )
 
 

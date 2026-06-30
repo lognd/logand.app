@@ -17,16 +17,33 @@ async def postgres_url() -> AsyncIterator[str]:
     except ImportError:
         pytest.skip("testcontainers not installed")
 
+    # NOTE: get_connection_url() defaults to the psycopg2 driver -- request
+    # asyncpg explicitly rather than string-replacing, since the default
+    # driver string isn't "postgresql://" (it's "postgresql+psycopg2://").
     with PostgresContainer("postgres:16") as pg:
-        yield pg.get_connection_url().replace("postgresql://", "postgresql+asyncpg://")
+        yield pg.get_connection_url(driver="asyncpg")
 
 
 @pytest_asyncio.fixture
-async def db_session(postgres_url: str):
-    # NOTE: depends on db.base.init_engine + alembic migrations being runnable
-    # against a fresh container -- wire this up once db/models/ and the
-    # alembic env exist. Left as a fixture stub other test files can import.
-    raise NotImplementedError("init_engine(postgres_url), run alembic upgrade head, yield AsyncSession")
+async def db_session(postgres_url: str) -> AsyncIterator:
+    # NOTE: creates tables directly from the ORM metadata rather than running
+    # Alembic migrations -- there's no initial migration yet (only the
+    # standalone inventory-FTS one, see db/migrations/versions/0001_*.py),
+    # so this is the pragmatic path until `alembic revision --autogenerate`
+    # has been run once against a real DB. Re-point this at `alembic upgrade
+    # head` once an initial migration exists.
+    import logand_backend.db.base as db_base
+    import logand_backend.db.models  # noqa: F401  -- populates Base.metadata
+    from logand_backend.db.base import Base
+
+    engine = db_base.init_engine(postgres_url)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    async with db_base._sessionmaker() as session:
+        yield session
+
+    await db_base.dispose_engine()
 
 
 @pytest_asyncio.fixture

@@ -2,9 +2,8 @@ from __future__ import annotations
 
 import logging
 import logging.config
-from pathlib import Path
-
 import tomllib
+from pathlib import Path
 
 _CONFIG_PATH = Path(__file__).parent / "config.toml"
 _initialized = False

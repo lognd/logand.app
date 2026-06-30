@@ -18,7 +18,9 @@ class InvoiceError(ErrorSet):
 
 class BudgetError(ErrorSet):
     NotFound = "budget entry was not found"
-    EvidenceRequired = "direct edit is not allowed once evidence is attached; use a correction"
+    EvidenceRequired = (
+        "direct edit is not allowed once evidence is attached; use a correction"
+    )
 
 
 class InventoryError(ErrorSet):
