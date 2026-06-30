@@ -16,6 +16,7 @@
     "types": "openapi-typescript ../backend/openapi.json -o src/types/api.generated.ts"
   },
   "dependencies": {
+    "@fontsource/jetbrains-mono": "^5.2.8",
     "@tanstack/react-query": "^5.59.0",
     "motion": "^11.11.0",
     "react": "^18.3.1",

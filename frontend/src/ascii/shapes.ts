@@ -48,6 +48,44 @@ function shadeFromDot(dot: number): number {
   return AMBIENT_FLOOR + (1 - AMBIENT_FLOOR) * brightened;
 }
 
+// Sphere/globe-only: "force the front to be bright and then ambient-
+// occlusion the back" -- rather than shadeFromDot's continuous gamma
+// remap, this pins the front hemisphere to a near-max brightness plateau
+// and the back to a near-black one, with only a narrow band actually
+// blending between them. Two things this fixes at once:
+//
+// 1. Front/back distinguishability: a continuous remap still leaves a
+//    wide swath of mid-brightness near the terminator where front and
+//    back read similarly. Plateaus make the two hemispheres
+//    unambiguous at a glance.
+//
+// 2. Rotation jitter: the globe is the one shape whose lighting uses the
+//    ROTATED normal against the camera (view-facing, see rasterizeShape's
+//    doc comment) rather than the object-fixed LIGHT_DIR every other
+//    shape uses -- so every point's brightness, and therefore its
+//    quantized ramp character, recomputes every single frame as the
+//    globe spins, instead of staying constant like the cube/donut's
+//    object-fixed lighting does. That continuous recomputation was
+//    reading as the whole surface visibly "jittering." Pinning most of
+//    the front and back to flat plateaus means most points' quantized
+//    brightness level stops changing as they rotate at all; only the
+//    points currently inside the narrow transition band keep
+//    recomputing, which is far less noticeable.
+// charForBrightness applies fallback.ts's GAMMA curve (x^0.6) on top of
+// whatever luminance comes out of here, which pulls dark values UP quite a
+// lot perceptually (0.08 -> ~0.22) -- a back plateau of 0.08 still rendered
+// as a light-to-mid ramp character, not the near-black this is meant to
+// produce. 0.01 actually lands near the ramp's dark end after that curve.
+const SPHERE_FRONT_BRIGHTNESS = 0.95;
+const SPHERE_BACK_BRIGHTNESS = 0.01;
+const SPHERE_TRANSITION_WIDTH = 0.22; // dot range the blend happens over, centered on the terminator
+
+function sphereViewShade(dot: number): number {
+  const t = Math.max(-1, Math.min(1, dot / SPHERE_TRANSITION_WIDTH));
+  const eased = (t + 1) / 2;
+  return SPHERE_BACK_BRIGHTNESS + (SPHERE_FRONT_BRIGHTNESS - SPHERE_BACK_BRIGHTNESS) * eased;
+}
+
 export type ShapeKind = "donut" | "cube" | "sphere";
 
 export interface Point3 {
@@ -482,11 +520,16 @@ export function rasterizeShape(
     // Local (unrotated) normal vs. the object-fixed light for everything
     // except the sphere (see doc comment above). shadeFromDot remaps the
     // full [-1, 1] dot product range so the gradient is visible across the
-    // whole surface, not just clamped flat on the away-facing half.
-    const dot = viewFacingLight
-      ? viewDot
-      : normal.x * LIGHT_DIR.x + normal.y * LIGHT_DIR.y + normal.z * LIGHT_DIR.z;
-    let luminance = Math.min(1, shadeFromDot(dot) + (edgeBoost ?? 0));
+    // whole surface, not just clamped flat on the away-facing half. The
+    // sphere uses sphereViewShade's bright-front/dark-back plateau curve
+    // instead (see its doc comment).
+    let luminance: number;
+    if (viewFacingLight) {
+      luminance = sphereViewShade(viewDot);
+    } else {
+      const dot = normal.x * LIGHT_DIR.x + normal.y * LIGHT_DIR.y + normal.z * LIGHT_DIR.z;
+      luminance = Math.min(1, shadeFromDot(dot) + (edgeBoost ?? 0));
+    }
     if (occlusion) luminance *= 1 - DONUT_INNER_OCCLUSION * occlusion;
     brightnessGrid[idx] = luminance;
 

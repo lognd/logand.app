@@ -2,7 +2,7 @@
 // Re-run the script and commit this file if the candidate glyph sets
 // in that script change.
 
-export const GENERATED_RAMP: string = " `.-',:\"^!*r\\|l=f{ny5hE$m&HRQBW@";
+export const GENERATED_RAMP: string = " `.'-_:;~!>+|LTtIZeXUG#&RQBMN$W@";
 
 // Indexed by an 8-way bucket across a half-turn (0 = horizontal,
 // going toward vertical and back) -- matching shapes.ts's
@@ -10,7 +10,7 @@ export const GENERATED_RAMP: string = " `.-',:\"^!*r\\|l=f{ny5hE$m&HRQBW@";
 // through each glyph's own outer-edge ink (farthest from its mass
 // center, not all of it equally) and matching that line's
 // orientation to the bucket's boundary direction.
-export const CONTOUR_GLYPHS_TEXT: string[] = ["_", "~", "`", "\\", "|", "/", "/", "_"];
+export const CONTOUR_GLYPHS_TEXT: string[] = ["_", "_", "`", "\\", "|", "/", "r", "~"];
 
 // Same idea, restricted to Unicode half/quadrant block glyphs --
 // reserved for the sphere/globe shape specifically (see shapes.ts).

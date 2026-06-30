@@ -31,27 +31,63 @@ candidate glyph set changes):
    for the globe specifically (its lighting model already treats it
    differently -- see shapes.ts) rather than removed outright.
 
-Usage: python3 scripts/generate_ascii_ramp.py
+Usage: cd frontend && npm install && python3 ../scripts/generate_ascii_ramp.py
+(requires the `fonttools` and `brotli` PyPI packages too, for the WOFF2 ->
+TTF conversion below)
 """
 
 import json
 import math
 import string
+import tempfile
 from pathlib import Path
 
+from fontTools.ttLib import TTFont
 from PIL import Image, ImageDraw, ImageFont
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 OUTPUT_TS = REPO_ROOT / "frontend" / "src" / "ascii" / "generatedGlyphs.ts"
 OUTPUT_RS = REPO_ROOT / "wasm-ascii" / "src" / "ramp.rs"
 
-# DejaVu Sans Mono ships on essentially every Linux box (it's the Matplotlib
-# fallback font too), so the rendering this script measures is what the
-# eventual GitHub Actions/CI environment would also produce if this were
-# ever re-run there -- no dependency on a font that's only on one dev
-# machine.
-FONT_PATH = "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"
+# The whole point of this script is that what it MEASURES matches what the
+# browser actually RENDERS -- an earlier version measured against whatever
+# DejaVu Sans Mono happened to be installed on the dev machine while the
+# site's CSS just listed "JetBrains Mono" and hoped the user's OS had it
+# too, which it usually doesn't; the browser would silently substitute
+# some other system font, and the ramp/contour tables baked from DejaVu's
+# glyph shapes no longer matched what was on screen at all (reported:
+# "the globe looks broken... font we used to generate isn't the same as
+# the rendering font"). Fixed by making the SAME font file the single
+# source of truth for both: frontend/package.json depends on
+# @fontsource/jetbrains-mono (an official, OFL-licensed, self-hosted
+# distribution -- see frontend/src/styles/tailwind.css's @import), so it
+# ships to every visitor regardless of what's installed on their system,
+# and this script measures that exact installed file, converting its
+# WOFF2 (no other format is published) to a Pillow-loadable TTF in memory.
+JETBRAINS_MONO_WOFF2 = (
+    REPO_ROOT
+    / "frontend"
+    / "node_modules"
+    / "@fontsource"
+    / "jetbrains-mono"
+    / "files"
+    / "jetbrains-mono-latin-400-normal.woff2"
+)
 FONT_SIZE = 44
+
+
+def load_font(size: int) -> ImageFont.FreeTypeFont:
+    if not JETBRAINS_MONO_WOFF2.exists():
+        raise SystemExit(
+            f"{JETBRAINS_MONO_WOFF2} not found -- run `npm install` in frontend/ first "
+            "(this script measures the exact font file the site ships, see the module "
+            "docstring)."
+        )
+    ttfont = TTFont(str(JETBRAINS_MONO_WOFF2))
+    ttfont.flavor = None
+    with tempfile.NamedTemporaryFile(suffix=".ttf", delete=False) as tmp:
+        ttfont.save(tmp.name)
+        return ImageFont.truetype(tmp.name, size)
 # Canvas deliberately larger than the font size (not just big enough to fit
 # the tallest glyph) -- a canvas sized exactly to one glyph's bbox leaves
 # zero centering margin for glyphs whose own bbox height equals the canvas,
@@ -272,7 +308,7 @@ def ts_string_literal(s: str) -> str:
 
 
 def main() -> None:
-    font = ImageFont.truetype(FONT_PATH, FONT_SIZE)
+    font = load_font(FONT_SIZE)
     candidates = build_text_candidates(font)
     excluded = [c for c in dict.fromkeys(TEXT_CANDIDATE_POOL) if c not in candidates]
     if excluded:

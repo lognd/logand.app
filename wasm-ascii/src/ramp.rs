@@ -2,7 +2,7 @@
 // scripts/generate_ascii_ramp.py from measured glyph ink coverage --
 // kept in sync with frontend/src/ascii/generatedGlyphs.ts's
 // GENERATED_RAMP by re-running that script, not by hand.
-pub const DEFAULT_RAMP: &str = " `.-',:\"^!*r\\|l=f{ny5hE$m&HRQBW@";
+pub const DEFAULT_RAMP: &str = " `.'-_:;~!>+|LTtIZeXUG#&RQBMN$W@";
 
 pub fn char_for_brightness(brightness: f32, ramp: &str) -> char {
     let ramp = if ramp.is_empty() { DEFAULT_RAMP } else { ramp };

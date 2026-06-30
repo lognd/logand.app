@@ -1,4 +1,14 @@
 @import "./tokens.css";
+/* Self-hosted, OFL-licensed -- ships to every visitor regardless of what's
+   installed on their system. The CSS font-family stacks elsewhere
+   ("JetBrains Mono", ui-monospace, ...) only actually resolve to JetBrains
+   Mono because of this import; without it, "JetBrains Mono" silently fell
+   through to whatever monospace font each visitor's OS happened to have,
+   which didn't match the glyphs scripts/generate_ascii_ramp.py measured
+   ("the globe looks broken... font used to generate isn't the same as the
+   rendering font") -- only weight 400 (regular) is imported since that's
+   the only weight actually used anywhere on the site. */
+@import "@fontsource/jetbrains-mono/400.css";
 
 @tailwind base;
 @tailwind components;

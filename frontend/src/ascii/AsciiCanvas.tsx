@@ -195,7 +195,16 @@ export function AsciiCanvas({ className }: { className?: string }) {
     <pre
       className={className}
       aria-hidden="true"
-      style={{ fontSize: `${fontSize}px`, lineHeight: `${fontSize}px` }}
+      // Explicit for the same reason as SpinningShape.tsx's <pre> -- keeps
+      // this layer's actual character widths consistent with what
+      // scripts/generate_ascii_ramp.py measured, now that
+      // @fontsource/jetbrains-mono guarantees "JetBrains Mono" resolves to
+      // the real thing for every visitor.
+      style={{
+        fontSize: `${fontSize}px`,
+        lineHeight: `${fontSize}px`,
+        fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+      }}
     >
       {rows.map((row, i) => (
         // One span per row (not per character): coloring every individual

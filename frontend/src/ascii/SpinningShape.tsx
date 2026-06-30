@@ -401,19 +401,21 @@ export function SpinningShape({
           display: "block",
           userSelect: "none",
           WebkitUserSelect: "none",
-          // Explicit, not left to <pre>'s UA-default monospace -- the
-          // globe's Unicode block glyphs (CONTOUR_GLYPHS_BLOCK) aren't
-          // covered by every monospace font, and an unspecified default
-          // left the browser silently substituting a *different* fallback
-          // font for just those characters, at that font's own advance
-          // width instead of the grid's cell width ("the globe looks
-          // broken... characters aren't fixed width"). ui-monospace
-          // (resolves to the OS's own UI monospace font, e.g. SF Mono/
-          // Cascadia Mono) and DejaVu Sans Mono (this project's glyph-
-          // generation reference font, see scripts/generate_ascii_ramp.py)
-          // both have full box-drawing coverage, so falling back to either
-          // before the bare "monospace" generic keeps width consistent.
-          fontFamily: '"JetBrains Mono", ui-monospace, "DejaVu Sans Mono", monospace',
+          // Explicit, not left to <pre>'s UA-default monospace. "JetBrains
+          // Mono" here actually resolves to JetBrains Mono for every
+          // visitor (not just ones with it installed) because
+          // tailwind.css @imports @fontsource/jetbrains-mono, a self-
+          // hosted copy of the exact font file
+          // scripts/generate_ascii_ramp.py measures glyph coverage/shape
+          // against -- previously this listed "JetBrains Mono" without
+          // ever actually shipping it, so most visitors silently got some
+          // other system monospace font substituted instead, including
+          // for the globe's Unicode block glyphs (CONTOUR_GLYPHS_BLOCK)
+          // which not every font covers ("the globe looks broken... font
+          // we used to generate isn't the same as the rendering font").
+          // ui-monospace/monospace remain only as a last-resort fallback
+          // if the webfont somehow fails to load.
+          fontFamily: '"JetBrains Mono", ui-monospace, monospace',
         }}
       >
         {rows.map((row, i) => (
