@@ -35,19 +35,21 @@ export function charForBrightness(brightness: number, ramp: string): string {
 }
 
 // Duotone brightness->color mapping per the user's color-theory request:
-// brighter cells skew yellow-green (warm, higher lightness), darker cells
-// skew purple-green (cool, lower lightness) -- implemented as an HSL lerp
-// so the hue sweeps *through* pure green in the middle rather than muddying
-// like a naive RGB lerp would. Hue 75 = yellow-green (Gruvbox-adjacent,
-// near --accent-green #b8bb26's hue), hue 200 = blue-violet-green, picked to
-// read as "purple-tinted" while staying in the green family per the brief
-// ("purpler-green", not violet). Mirrors the classic warm-highlight /
-// cool-shadow color-grading convention.
+// brighter cells skew yellow, darker cells skew purple -- implemented as an
+// HSL lerp so the hue sweeps *through* green in the middle rather than
+// muddying like a naive RGB lerp would (the classic warm-highlight /
+// cool-shadow color-grading convention). Revised after feedback that the
+// first pass ("yellow-green" / "purple-green") wasn't yellow or purple
+// enough: hue 285 (true violet-purple) for the darkest cells down to hue 55
+// (true yellow, just warm of pure yellow-green) for the brightest, still
+// sweeping through ~170 (teal-green) at the midpoint so it doesn't skip
+// past green entirely. Saturation bumped too so the endpoints read as
+// distinctly colored, not washed out.
 export function colorForBrightness(brightness: number): string {
   const b = Math.max(0, Math.min(1, brightness));
-  const hue = 200 - b * 125;
-  const sat = 35 + b * 30;
-  const light = 26 + b * 44;
+  const hue = 285 - b * 230;
+  const sat = 45 + b * 35;
+  const light = 28 + b * 42;
   return `hsl(${hue.toFixed(0)} ${sat.toFixed(0)}% ${light.toFixed(0)}%)`;
 }
 

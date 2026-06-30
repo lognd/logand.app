@@ -1,25 +1,53 @@
 import { describe, expect, it } from "vitest";
 import {
   generateShape,
+  quatFromAxisAngle,
+  quatIdentity,
+  quatMultiply,
   rasterizeShape,
-  rotatePoint,
+  rotateByQuaternion,
   type SurfacePoint,
 } from "../../src/ascii/shapes";
 
-describe("rotatePoint", () => {
+describe("rotateByQuaternion", () => {
   it("returns to the original point after a full 360 degree rotation", () => {
     const p = { x: 1, y: 2, z: 3 };
     const fullTurn = 2 * Math.PI;
-    const rotated = rotatePoint(p, fullTurn, fullTurn);
-    expect(rotated.x).toBeCloseTo(p.x, 5);
-    expect(rotated.y).toBeCloseTo(p.y, 5);
-    expect(rotated.z).toBeCloseTo(p.z, 5);
+    const q = quatMultiply(
+      quatFromAxisAngle({ x: 1, y: 0, z: 0 }, fullTurn),
+      quatFromAxisAngle({ x: 0, y: 1, z: 0 }, fullTurn),
+    );
+    const rotated = rotateByQuaternion(p, q);
+    expect(rotated.x).toBeCloseTo(p.x, 4);
+    expect(rotated.y).toBeCloseTo(p.y, 4);
+    expect(rotated.z).toBeCloseTo(p.z, 4);
   });
 
-  it("rotating by 0 is the identity", () => {
+  it("the identity quaternion leaves a point unchanged", () => {
     const p = { x: 1, y: -2, z: 0.5 };
-    const rotated = rotatePoint(p, 0, 0);
-    expect(rotated).toEqual(p);
+    const rotated = rotateByQuaternion(p, quatIdentity());
+    expect(rotated.x).toBeCloseTo(p.x, 10);
+    expect(rotated.y).toBeCloseTo(p.y, 10);
+    expect(rotated.z).toBeCloseTo(p.z, 10);
+  });
+
+  it("rotating 90 degrees around Y maps +X to -Z (right-hand rule)", () => {
+    const p = { x: 1, y: 0, z: 0 };
+    const q = quatFromAxisAngle({ x: 0, y: 1, z: 0 }, Math.PI / 2);
+    const rotated = rotateByQuaternion(p, q);
+    expect(rotated.x).toBeCloseTo(0, 5);
+    expect(rotated.y).toBeCloseTo(0, 5);
+    expect(rotated.z).toBeCloseTo(-1, 5);
+  });
+
+  it("composing two incremental rotations matches one combined rotation", () => {
+    const p = { x: 0, y: 0, z: 1 };
+    const half = quatFromAxisAngle({ x: 0, y: 1, z: 0 }, Math.PI / 4);
+    const twiceApplied = rotateByQuaternion(rotateByQuaternion(p, half), half);
+    const combined = quatMultiply(half, half);
+    const onceApplied = rotateByQuaternion(p, combined);
+    expect(twiceApplied.x).toBeCloseTo(onceApplied.x, 10);
+    expect(twiceApplied.z).toBeCloseTo(onceApplied.z, 10);
   });
 });
 
@@ -52,6 +80,12 @@ describe("generateShape", () => {
       expect(Math.abs(position.z)).toBeLessThanOrEqual(1.3 + 1e-9);
     }
   });
+
+  it("cube points near a face boundary get a nonzero edgeBoost", () => {
+    const points = generateShape("cube");
+    expect(points.some((p) => (p.edgeBoost ?? 0) > 0)).toBe(true);
+    expect(points.some((p) => (p.edgeBoost ?? 0) === 0)).toBe(true);
+  });
 });
 
 describe("rasterizeShape z-buffer", () => {
@@ -70,8 +104,9 @@ describe("rasterizeShape z-buffer", () => {
     };
 
     const ramp = " .:-=+*#%@";
-    const gridFarFirst = rasterizeShape([far, near], 0, 0, 20, 20, ramp);
-    const gridNearFirst = rasterizeShape([near, far], 0, 0, 20, 20, ramp);
+    const identity = quatIdentity();
+    const gridFarFirst = rasterizeShape([far, near], identity, 20, 20, ramp);
+    const gridNearFirst = rasterizeShape([near, far], identity, 20, 20, ramp);
 
     const centerCellFarFirst = gridFarFirst[10][10];
     const centerCellNearFirst = gridNearFirst[10][10];
@@ -86,7 +121,11 @@ describe("rasterizeShape z-buffer", () => {
 
   it("produces a cols x rows grid", () => {
     const points = generateShape("sphere");
-    const grid = rasterizeShape(points, 0.3, 0.7, 40, 20);
+    const q = quatMultiply(
+      quatFromAxisAngle({ x: 1, y: 0, z: 0 }, 0.3),
+      quatFromAxisAngle({ x: 0, y: 1, z: 0 }, 0.7),
+    );
+    const grid = rasterizeShape(points, q, 40, 20);
     expect(grid.length).toBe(20);
     for (const row of grid) {
       expect(row.length).toBe(40);

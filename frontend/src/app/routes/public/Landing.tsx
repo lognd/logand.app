@@ -1,36 +1,58 @@
+import { useState } from "react";
+import { BackgroundPicker, type BackgroundOption } from "../../../ascii/BackgroundPicker";
+import { MatrixRain } from "../../../ascii/MatrixRain";
 import { SpinningShape } from "../../../ascii/SpinningShape";
+import { randomShapeKind } from "../../../ascii/shapes";
 import { LINK_CLASS } from "../../../styles/a11y";
 
 // Public routes must render real semantic content -- crawlers and the
 // vite-ssg prerender pass (see docs/design/10) read this markup directly,
 // not a post-hydration DOM. Keep real text here even at stub stage.
 //
-// SpinningShape composes on top of Shell's faint AsciiCanvas noise layer
-// rather than replacing it: Shell's layer stays as the site-wide quiet
-// atmosphere (docs/design/09), while this page gets a second, more
-// prominent decorative layer befitting the landing page specifically
-// ("public-facing pages get a more prominent animated ASCII background"
-// per docs/design/09). It sits between the noise layer (-z-10) and the
-// real content (default stacking), and is itself non-interactive for
-// assistive tech (aria-hidden) since it's pure decoration -- the actual
-// navigation lives in the real <nav> below, never inside the shape.
+// The background is one of four mutually-exclusive options (donut/cube/
+// globe/rain) picked via BackgroundPicker, composing on top of Shell's
+// faint site-wide AsciiCanvas noise layer (docs/design/09's "public pages
+// get a more prominent animated background" -- this is that more
+// prominent layer; Shell's noise stays as the calm site-wide atmosphere
+// underneath it). It sits between the noise layer (-z-10) and the real
+// content (z-10 by default), and is itself non-interactive for assistive
+// tech (aria-hidden) since it's pure decoration -- the actual navigation
+// lives in the real <nav> below, never inside the shape/rain.
 export function Landing() {
+  const [background, setBackground] = useState<BackgroundOption>(() => randomShapeKind());
+
   return (
     // `isolate` for the same reason as Shell.tsx's root div -- without its
     // own stacking context, this <main> being transparent doesn't matter,
     // but ANY ancestor up the tree painting a background after this point
-    // in z-order would hide SpinningShape; isolating here makes this
-    // component's stacking self-contained regardless of what wraps it.
+    // in z-order would hide the selected background layer; isolating here
+    // makes this component's stacking self-contained regardless of what
+    // wraps it.
     //
-    // `min-h-screen` -- without an explicit height, <main> only sizes to
-    // its content (a few hundred px of heading/text), so SpinningShape's
-    // `absolute inset-0` was clipped well before filling the viewport
-    // ("the animation in the background is cut off"). SpinningShape now
-    // computes its own font-size to fit whatever box it's given (see
-    // useFitFontSize), so the only fix needed here is giving it a full
-    // viewport-height box to fit *into*.
-    <main className="relative isolate min-h-screen">
-      <SpinningShape className="pointer-events-auto absolute inset-0 -z-[5] flex items-center justify-center overflow-hidden opacity-50" />
+    // `h-full` (not `min-h-screen`): Shell's root is a flex column with
+    // this <main>'s wrapper set to flex-1, so "fill 100% of the remaining
+    // height after the header" is already exactly what h-full resolves to
+    // here. min-h-screen would ADD a full 100vh on top of that flex-1 box
+    // (header height + 100vh > 100vh), which is what caused the page to be
+    // taller than the viewport and produce a permanent vertical scrollbar.
+    <main className="relative isolate flex h-full min-h-[480px] flex-col">
+      {background === "rain" ? (
+        // No opacity wrapper here -- MatrixRain paints its own solid,
+        // stationary backdrop (see MatrixRain.tsx's BACKDROP_COLOR) rather
+        // than compositing over whatever's behind it, so it isn't faded
+        // the way the shapes are.
+        <MatrixRain className="absolute inset-0 -z-[5]" />
+      ) : (
+        // opacity-30, down from an earlier 50% -- feedback was that the
+        // combined background (this shape + Shell's ambient noise layer
+        // underneath) read as distracting at full strength; the shape is
+        // still clearly visible and draggable, just quieter as atmosphere
+        // rather than competing with the real heading/nav text.
+        <SpinningShape
+          kind={background}
+          className="pointer-events-auto absolute inset-0 -z-[5] flex items-center justify-center overflow-hidden opacity-30"
+        />
+      )}
       <div className="relative mx-auto w-full max-w-2xl px-4 py-12">
         <h1 className="mb-4 text-3xl text-fg-primary">Logan Dapp</h1>
         <p className="mb-6 text-base text-fg-primary">
@@ -46,6 +68,16 @@ export function Landing() {
           </a>
         </nav>
       </div>
+      {/* fixed + bottom-0, not mt-auto -- locked to the actual viewport
+          bottom edge regardless of content height (an mt-auto footer
+          inside the flex column could end up short of the true bottom on
+          a tall viewport, reading as an "abrupt cutoff"). bg-transparent
+          is explicit (not just the absence of a class) so it never
+          accidentally inherits an opaque background and blocks the
+          rain/shape layer from showing through behind it. */}
+      <footer className="fixed inset-x-0 bottom-0 z-10 bg-transparent px-4 py-4">
+        <BackgroundPicker value={background} onChange={setBackground} />
+      </footer>
     </main>
   );
 }

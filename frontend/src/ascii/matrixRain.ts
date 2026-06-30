@@ -16,25 +16,64 @@ export function randomGlyph(): string {
   return RAIN_GLYPHS[Math.floor(Math.random() * RAIN_GLYPHS.length)];
 }
 
+// Distinguishes click-explosion particles from pointer-trail particles so
+// the renderer can color them differently (bright red/heat-curve for
+// explosions, blue for the trail) -- separate from the ambient green rain
+// streams, which aren't Particles at all (see RainStream below). Both
+// kinds are stationary glyph-flashes (a grid-bound "ignite," not a flying
+// particle) -- there is no physics-driven variant; an earlier version had
+// one, removed per feedback preferring the grid-bound look exclusively.
+export type ParticleKind = "trail" | "explosion";
+
 export interface Particle {
+  // Rendered (grid-snapped) position -- this is what MatrixRain.tsx draws
+  // at. It only changes in whole-cell jumps on a timer, never smoothly.
   x: number;
   y: number;
+  // True continuous physics position/velocity underneath the snapped
+  // render position -- real 2D gravity simulation (Euler-integrated every
+  // call, same as the project's other physics, e.g. shapes.ts), so the
+  // underlying trajectory genuinely arcs outward and falls. (x, y) above
+  // is just (physX, physY) rounded to the nearest cell whenever a step
+  // fires, which is what gives "real gravity physics" + "step-like, not
+  // translation" at the same time.
+  physX: number;
+  physY: number;
   vx: number;
   vy: number;
   char: string;
   age: number;
   lifetime: number;
+  kind: ParticleKind;
+  // Discrete-step timing, same model as RainStream below -- ms between
+  // render-position snaps, and ms accumulated toward the next one.
+  // Optional so a literal without these still type-checks; createParticle
+  // always sets them.
+  cellSize?: number;
+  stepIntervalMs?: number;
+  accumulatedMs?: number;
 }
 
 export interface RainStream {
   x: number;
   y: number;
-  speed: number;
   length: number;
   chars: string[];
+  // Discrete-step timing (see stepStreams) -- ms between downward steps,
+  // and ms accumulated toward the next one. Optional only so a freshly
+  // constructed literal without these (e.g. in a test) still type-checks;
+  // spawnStream always sets them.
+  stepIntervalMs?: number;
+  accumulatedMs?: number;
 }
 
-const GRAVITY = 480; // px/s^2 -- gentle enough that explosion debris arcs visibly before falling off-screen
+// Render position re-snaps to the physics position on this schedule --
+// fast enough to track the underlying arc closely, slow enough to read as
+// discrete jumps rather than a smooth slide.
+const PARTICLE_STEP_INTERVAL_MIN_MS = 60;
+const PARTICLE_STEP_INTERVAL_MAX_MS = 140;
+
+const GRAVITY = 480; // px/s^2 -- gentle enough that debris arcs visibly before falling off-screen
 
 export function createParticle(
   x: number,
@@ -43,11 +82,45 @@ export function createParticle(
   vy: number,
   lifetime: number,
   char: string = randomGlyph(),
+  kind: ParticleKind = "trail",
+  cellSize = 18,
 ): Particle {
-  return { x, y, vx, vy, char, age: 0, lifetime };
+  return {
+    x,
+    y,
+    physX: x,
+    physY: y,
+    vx,
+    vy,
+    char,
+    age: 0,
+    lifetime,
+    kind,
+    cellSize,
+    stepIntervalMs:
+      PARTICLE_STEP_INTERVAL_MIN_MS +
+      Math.random() * (PARTICLE_STEP_INTERVAL_MAX_MS - PARTICLE_STEP_INTERVAL_MIN_MS),
+    accumulatedMs: 0,
+  };
 }
 
-/** Pure: returns a new Particle one step forward, or null if its lifetime expired. */
+// Chance per second that a single particle's glyph rerolls -- gives the
+// classic Matrix "glitching" look (the same particle visibly changes
+// character over its lifetime, not just at spawn).
+const PARTICLE_GLYPH_MUTATION_RATE = 4;
+
+/**
+ * Pure: returns a new Particle one step forward, or null if its lifetime
+ * expired. Two things happen every call:
+ *  1. Real continuous 2D physics (Euler-integrated): physX/physY advance
+ *     by velocity, vy accumulates gravity -- "it needs to act like 2D
+ *     physics with gravity," same model as a classic particle system.
+ *  2. The RENDERED x/y only re-snaps to the current physics position on
+ *     a timer (see stepIntervalMs), rounded to the nearest grid cell --
+ *     "step-like... not by translation." The glyph genuinely follows a
+ *     gravity arc, it just visibly jumps cell-to-cell rather than
+ *     sliding smoothly along it.
+ */
 export function stepParticle(
   p: Particle,
   dtSeconds: number,
@@ -55,13 +128,25 @@ export function stepParticle(
 ): Particle | null {
   const age = p.age + dtSeconds;
   if (age >= p.lifetime) return null;
-  return {
-    ...p,
-    x: p.x + p.vx * dtSeconds,
-    y: p.y + p.vy * dtSeconds,
-    vy: p.vy + gravity * dtSeconds,
-    age,
-  };
+  const char =
+    Math.random() < PARTICLE_GLYPH_MUTATION_RATE * dtSeconds ? randomGlyph() : p.char;
+
+  const physX = p.physX + p.vx * dtSeconds;
+  const physY = p.physY + p.vy * dtSeconds;
+  const vy = p.vy + gravity * dtSeconds;
+
+  let x = p.x;
+  let y = p.y;
+  let accumulatedMs = (p.accumulatedMs ?? 0) + dtSeconds * 1000;
+  const interval = p.stepIntervalMs ?? PARTICLE_STEP_INTERVAL_MIN_MS;
+  const cellSize = p.cellSize ?? 18;
+  if (accumulatedMs >= interval) {
+    accumulatedMs %= interval;
+    x = Math.round(physX / cellSize) * cellSize;
+    y = Math.round(physY / cellSize) * cellSize;
+  }
+
+  return { ...p, age, char, x, y, physX, physY, vy, accumulatedMs };
 }
 
 export function stepParticles(
@@ -77,43 +162,43 @@ export function stepParticles(
   return next;
 }
 
-/**
- * Click/tap "explosion": particles radiate outward from (x, y) at random
- * angles across a full circle, with randomized speed within [minSpeed,
- * maxSpeed] -- gravity (applied in stepParticle) pulls them into a falling
- * arc over their lifetime, which is what makes this read as a small physics
- * "pop" rather than a static starburst.
- */
-export function spawnExplosion(
-  x: number,
-  y: number,
-  count: number,
-  minSpeed = 80,
-  maxSpeed = 260,
-  lifetime = 1.1,
-): Particle[] {
-  const particles: Particle[] = [];
-  for (let i = 0; i < count; i++) {
-    const angle = Math.random() * Math.PI * 2;
-    const speed = minSpeed + Math.random() * (maxSpeed - minSpeed);
-    particles.push(
-      createParticle(
-        x,
-        y,
-        Math.cos(angle) * speed,
-        Math.sin(angle) * speed,
-        lifetime * (0.7 + Math.random() * 0.6),
-      ),
-    );
+// Fraction of lifeFrac (from 1 down to this threshold) spent in the
+// fast white -> yellow falloff; below the threshold is the slower
+// yellow -> orange -> red cooldown.
+const HEAT_WHITE_THRESHOLD = 0.7;
+
+// Classic "heat map" gradient: dim red (cooling/dying, slow) -> orange ->
+// yellow -> white-hot (freshly spawned, fast falloff). `lifeFrac` is 1 at
+// spawn, 0 at death, matching how MatrixRain.tsx already tracks particle
+// age. Per feedback the orange/red cooldown read well already; only the
+// hot end needed work -- it now starts genuinely white (high lightness,
+// desaturating) and drops through yellow quickly (the top 30% of
+// lifeFrac), spending the remaining, larger range easing through
+// orange to red exactly as before.
+export function heatColor(lifeFrac: number): string {
+  const t = Math.max(0, Math.min(1, lifeFrac));
+
+  if (t > HEAT_WHITE_THRESHOLD) {
+    const u = (t - HEAT_WHITE_THRESHOLD) / (1 - HEAT_WHITE_THRESHOLD); // 0..1
+    const hue = 48; // yellow
+    const sat = 85 - u * 55; // desaturating toward white as u -> 1
+    const light = 65 + u * 30; // 65% -> 95% (white-hot)
+    return `hsl(${hue} ${sat.toFixed(0)}% ${light.toFixed(0)}%)`;
   }
-  return particles;
+
+  const u = t / HEAT_WHITE_THRESHOLD; // 0..1
+  const hue = 8 + u * 40; // ~8 (red) -> ~48 (yellow)
+  const sat = 90;
+  const light = 35 + u * 30; // 35% (dim ember) -> 65%
+  return `hsl(${hue.toFixed(0)} ${sat}% ${light.toFixed(0)}%)`;
 }
 
 /**
- * Drag/move trail: spawns particles along a path of recent pointer
- * positions (oldest to newest), each falling gently downward like rain
- * rather than flying outward -- this is what makes a dragged path read as
- * "rain following the cursor" instead of a second explosion.
+ * Pointer-move trail: spawns particles along the pointer's recent path,
+ * each with a gentle downward + slight sideways velocity (real gravity
+ * physics, see stepParticle) so it reads as "rain following the cursor"
+ * rather than a static flare -- but rendered with the same grid-snapped
+ * stepping as everything else, not a smooth slide.
  */
 export function spawnTrail(
   path: { x: number; y: number }[],
@@ -131,9 +216,51 @@ export function spawnTrail(
           (Math.random() - 0.5) * 20,
           40 + Math.random() * 60,
           lifetime * (0.7 + Math.random() * 0.6),
+          undefined,
+          "trail",
         ),
       );
     }
+  }
+  return particles;
+}
+
+/**
+ * Click/tap "explosion": particles radiate outward from (x, y) at random
+ * angles across a full circle with randomized speed, real gravity (see
+ * stepParticle) pulling them into a falling arc over their lifetime --
+ * "it needs to act like 2D physics with gravity," not a static flare.
+ * `violence` (>= 1) scales both particle count and speed -- the caller
+ * derives this from how rapidly the user is clicking (see
+ * MatrixRain.tsx's clickStreakRef) so a quick burst of clicks escalates
+ * into a bigger, faster explosion than a single isolated click.
+ */
+export function spawnExplosion(
+  x: number,
+  y: number,
+  count: number,
+  minSpeed = 80,
+  maxSpeed = 260,
+  lifetime = 1.1,
+  violence = 1,
+): Particle[] {
+  const particles: Particle[] = [];
+  const scaledCount = Math.round(count * violence);
+  const speedScale = 1 + (violence - 1) * 0.5; // speed escalates more gently than count
+  for (let i = 0; i < scaledCount; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = (minSpeed + Math.random() * (maxSpeed - minSpeed)) * speedScale;
+    particles.push(
+      createParticle(
+        x,
+        y,
+        Math.cos(angle) * speed,
+        Math.sin(angle) * speed,
+        lifetime * (0.7 + Math.random() * 0.6),
+        undefined,
+        "explosion",
+      ),
+    );
   }
   return particles;
 }
@@ -143,25 +270,39 @@ export function createStreams(width: number, height: number, cellSize: number): 
   const cols = Math.max(1, Math.floor(width / cellSize));
   const streams: RainStream[] = [];
   for (let i = 0; i < cols; i++) {
-    streams.push(spawnStream(i * cellSize, width, height));
+    streams.push(spawnStream(i * cellSize, height));
   }
   return streams;
 }
 
-function spawnStream(x: number, _width: number, height: number): RainStream {
+// Time between discrete downward steps -- the rain visibly falls (a new
+// row appears at the top, everything shifts down one cell) but as a
+// grid-stepped jump, not a continuously-translating pixel scroll. "It
+// needs to be step-like" / "visibly move downward, but not by
+// translation."
+const STEP_INTERVAL_MIN_MS = 60;
+const STEP_INTERVAL_MAX_MS = 140;
+
+function spawnStream(x: number, height: number): RainStream {
   const length = 6 + Math.floor(Math.random() * 14);
   return {
     x,
     y: -Math.random() * height,
-    speed: 120 + Math.random() * 220,
     length,
     chars: Array.from({ length }, randomGlyph),
+    stepIntervalMs:
+      STEP_INTERVAL_MIN_MS + Math.random() * (STEP_INTERVAL_MAX_MS - STEP_INTERVAL_MIN_MS),
+    accumulatedMs: Math.random() * STEP_INTERVAL_MAX_MS, // stagger columns' first step
   };
 }
 
-/** Pure: advances each stream; a stream that has fully fallen past the
- * bottom respawns at the top of the same column rather than being removed,
- * since the ambient layer should rain continuously, not deplete. */
+/** Pure: advances each stream by whole-cell steps on its own schedule
+ * (see stepIntervalMs) rather than continuous sub-pixel translation -- a
+ * stream that has fully fallen past the bottom respawns at the top of the
+ * same column rather than being removed, since the ambient layer should
+ * rain continuously, not deplete. Each step also mutates a handful of
+ * characters so the trail visibly glitches/flickers (the defining
+ * "Matrix" look) on top of the downward stepping. */
 export function stepStreams(
   streams: RainStream[],
   dtSeconds: number,
@@ -169,16 +310,30 @@ export function stepStreams(
   cellSize: number,
 ): RainStream[] {
   return streams.map((s) => {
-    const y = s.y + s.speed * dtSeconds;
-    if (y - s.length * cellSize > height) {
-      return spawnStream(s.x, 0, height);
+    let y = s.y;
+    let accumulatedMs = (s.accumulatedMs ?? 0) + dtSeconds * 1000;
+    let chars = s.chars;
+    const interval = s.stepIntervalMs ?? STEP_INTERVAL_MIN_MS;
+
+    let mutated = false;
+    while (accumulatedMs >= interval) {
+      accumulatedMs -= interval;
+      y += cellSize;
+      if (!mutated) {
+        chars = chars.slice();
+        mutated = true;
+      }
+      // Mutate one or two characters per step -- enough to read as a
+      // glitching trail, not so much it looks like noise.
+      chars[Math.floor(Math.random() * chars.length)] = randomGlyph();
+      if (Math.random() < 0.4) {
+        chars[Math.floor(Math.random() * chars.length)] = randomGlyph();
+      }
     }
-    // Occasionally mutate one character so the trail glitches/flickers,
-    // matching the source-material look, instead of static strings falling.
-    const chars =
-      Math.random() < 0.05 * dtSeconds * 60
-        ? [...s.chars.slice(0, -1), randomGlyph()]
-        : s.chars;
-    return { ...s, y, chars };
+
+    if (y - s.length * cellSize > height) {
+      return spawnStream(s.x, height);
+    }
+    return { ...s, y, accumulatedMs, chars };
   });
 }

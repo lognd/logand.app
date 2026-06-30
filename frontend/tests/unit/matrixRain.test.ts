@@ -1,26 +1,40 @@
 import { describe, expect, it } from "vitest";
 import {
   createParticle,
+  createStreams,
+  heatColor,
   spawnExplosion,
   spawnTrail,
   stepParticle,
   stepParticles,
+  stepStreams,
 } from "../../src/ascii/matrixRain";
 
 describe("stepParticle", () => {
-  it("applies gravity to vertical velocity over time", () => {
-    const p = createParticle(0, 0, 0, 0, 10);
+  it("integrates real gravity physics into the underlying trajectory", () => {
+    const p = createParticle(0, 0, 0, 0, 10, "*", "trail", 18);
     const stepped = stepParticle(p, 1, 100);
     expect(stepped).not.toBeNull();
     expect(stepped!.vy).toBeCloseTo(100, 5);
+    expect(stepped!.physY).toBeCloseTo(0, 5); // vy was 0 for this 1s step
   });
 
-  it("updates position from velocity", () => {
-    const p = createParticle(0, 0, 10, 20, 10);
+  it("updates physX/physY from velocity even before a render-snap fires", () => {
+    const p = createParticle(0, 0, 10, 20, 10, "*", "trail", 18);
     const stepped = stepParticle(p, 0.5, 0);
     expect(stepped).not.toBeNull();
-    expect(stepped!.x).toBeCloseTo(5, 5);
-    expect(stepped!.y).toBeCloseTo(10, 5);
+    expect(stepped!.physX).toBeCloseTo(5, 5);
+    expect(stepped!.physY).toBeCloseTo(10, 5);
+  });
+
+  it("the rendered x/y only re-snaps to a whole grid cell, not every frame", () => {
+    const p = createParticle(0, 0, 100, 0, 10, "*", "trail", 18);
+    // Large dt guarantees at least one render-snap regardless of the
+    // particle's randomized stepIntervalMs.
+    const stepped = stepParticle(p, 0.5, 0);
+    expect(stepped).not.toBeNull();
+    expect(stepped!.x % 18).toBeCloseTo(0, 5);
+    expect(stepped!.y % 18).toBeCloseTo(0, 5);
   });
 
   it("dies (returns null) once its lifetime has elapsed", () => {
@@ -52,8 +66,8 @@ describe("spawnExplosion", () => {
     const particles = spawnExplosion(100, 100, 20);
     expect(particles).toHaveLength(20);
     for (const p of particles) {
-      expect(p.x).toBe(100);
-      expect(p.y).toBe(100);
+      expect(p.physX).toBe(100);
+      expect(p.physY).toBe(100);
       const speed = Math.hypot(p.vx, p.vy);
       expect(speed).toBeGreaterThan(0);
     }
@@ -63,6 +77,20 @@ describe("spawnExplosion", () => {
     const particles = spawnExplosion(0, 0, 30);
     const angles = new Set(particles.map((p) => Math.atan2(p.vy, p.vx).toFixed(2)));
     expect(angles.size).toBeGreaterThan(1);
+  });
+
+  it("particles spawned by spawnExplosion are tagged kind: explosion", () => {
+    const particles = spawnExplosion(0, 0, 5);
+    for (const p of particles) expect(p.kind).toBe("explosion");
+  });
+
+  it("a higher violence multiplier produces more, faster particles", () => {
+    const baseline = spawnExplosion(0, 0, 20, 100, 100, 1, 1);
+    const violent = spawnExplosion(0, 0, 20, 100, 100, 1, 3);
+    expect(violent.length).toBeGreaterThan(baseline.length);
+    const baselineSpeed = Math.hypot(baseline[0].vx, baseline[0].vy);
+    const violentSpeed = Math.hypot(violent[0].vx, violent[0].vy);
+    expect(violentSpeed).toBeGreaterThan(baselineSpeed);
   });
 });
 
@@ -81,6 +109,48 @@ describe("spawnTrail", () => {
     const particles = spawnTrail([{ x: 0, y: 0 }], 5);
     for (const p of particles) {
       expect(p.vy).toBeGreaterThan(0);
+    }
+  });
+
+  it("particles spawned by spawnTrail are tagged kind: trail", () => {
+    const particles = spawnTrail([{ x: 0, y: 0 }], 3);
+    for (const p of particles) expect(p.kind).toBe("trail");
+  });
+});
+
+describe("heatColor", () => {
+  it("returns a brighter (higher-lightness) color for a fresher particle", () => {
+    const fresh = heatColor(1);
+    const dying = heatColor(0);
+    const lightnessOf = (hsl: string) => Number(hsl.match(/(\d+)%\)$/)?.[1]);
+    expect(lightnessOf(fresh)).toBeGreaterThan(lightnessOf(dying));
+  });
+
+  it("clamps out-of-range input instead of producing an invalid color", () => {
+    expect(() => heatColor(-1)).not.toThrow();
+    expect(() => heatColor(2)).not.toThrow();
+  });
+});
+
+describe("ambient streams", () => {
+  it("createStreams fills one column per cell-width of the viewport", () => {
+    const streams = createStreams(100, 200, 18);
+    expect(streams.length).toBe(Math.floor(100 / 18));
+  });
+
+  it("stepStreams steps a column downward by whole cells over time, not continuously", () => {
+    const streams = createStreams(100, 200, 18);
+    const before = streams.map((s) => s.y);
+    // Large dt guarantees at least one step for every column regardless of
+    // its randomized stepIntervalMs.
+    const after = stepStreams(streams, 1, 200, 18);
+    for (let i = 0; i < streams.length; i++) {
+      const delta = after[i].y - before[i];
+      // Either it respawned at the top (delta can be anything) or it
+      // stepped down by a whole multiple of the cell size.
+      if (after[i].y >= before[i]) {
+        expect(delta % 18).toBeCloseTo(0, 5);
+      }
     }
   });
 });

@@ -7,6 +7,43 @@
 
 import { charForBrightness, DEFAULT_RAMP } from "./fallback";
 
+// DEFAULT_RAMP's darkest character is a literal space -- correct for
+// AsciiCanvas's noise layer (an unlit cell SHOULD be invisible there), but
+// wrong for a solid object: any actual surface point that wins a z-buffer
+// cell should always render as a visible glyph, never blank, so every face
+// of the shape stays legible regardless of its lighting angle ("each face
+// should be visible, ' ' shouldn't be a valid character" for the object).
+// Slicing off the leading space means the darkest a real point can render
+// is the next-darkest glyph, never nothing.
+const SHAPE_RAMP = DEFAULT_RAMP.slice(1);
+
+// Faces angled away from the light still need to read as part of the solid,
+// not vanish into near-zero brightness -- a small ambient floor (on top of
+// SHAPE_RAMP already excluding space) keeps every face visibly part of the
+// object rather than just technically non-space-but-imperceptible.
+const AMBIENT_FLOOR = 0.16;
+
+// normal-dot-light ranges over [-1, 1] (1 = facing the light directly, -1 =
+// facing directly away). A first pass clamped negative dot products to a
+// single flat AMBIENT_FLOOR value with Math.max(), which crushed the
+// entire away-facing hemisphere of the object to one identical brightness
+// -- visually flat there, with all the gradient detail squeezed into just
+// the half of the surface facing toward the light ("not that great...
+// actually see the gradients"). Remapping the full [-1, 1] range linearly
+// onto [AMBIENT_FLOOR, 1] gave every point its own brightness, but most of
+// the camera-FACING surface still landed in the dark/purple half of the
+// gradient ("not bright enough... everything seems to be purple") -- a
+// BRIGHTEN_GAMMA < 1 pulls midtones up (the same gamma trick used for
+// perceptual brightness in fallback.ts, applied here to push the visible
+// range toward the bright/yellow end rather than sitting mid-dark/purple).
+const BRIGHTEN_GAMMA = 0.6;
+
+function shadeFromDot(dot: number): number {
+  const normalized = (dot + 1) / 2; // [-1, 1] -> [0, 1]
+  const brightened = Math.pow(normalized, BRIGHTEN_GAMMA);
+  return AMBIENT_FLOOR + (1 - AMBIENT_FLOOR) * brightened;
+}
+
 export type ShapeKind = "donut" | "cube" | "sphere";
 
 export interface Point3 {
@@ -18,6 +55,12 @@ export interface Point3 {
 export interface SurfacePoint {
   position: Point3;
   normal: Point3;
+  // Extra brightness added on top of the lighting calculation -- used by
+  // generateCube to give points near a face boundary a slight rim-light
+  // boost, so edges/corners read as crisp lines instead of blending into
+  // the flat-shaded face on either side ("better edge rendering on the
+  // cube"). 0 for shapes that don't use it (donut, sphere).
+  edgeBoost?: number;
 }
 
 const SHAPE_KINDS: ShapeKind[] = ["donut", "cube", "sphere"];
@@ -29,6 +72,67 @@ export function randomShapeKind(): ShapeKind {
 function normalize(v: Point3): Point3 {
   const len = Math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z) || 1;
   return { x: v.x / len, y: v.y / len, z: v.z / len };
+}
+
+// --- Quaternion rotation -----------------------------------------------
+//
+// Orientation is tracked as a single accumulated quaternion, not a pair of
+// Euler angles (angleX, angleY) applied in sequence each frame. Sequential
+// Euler angles are exactly what made the drag controls feel like they
+// "rotate the wrong way" depending on the shape's current orientation --
+// each frame's rotation was applied around the fixed WORLD X/Y axes, so
+// once the shape had already turned partway, a horizontal drag no longer
+// corresponded to the visually-horizontal axis on screen (a version of
+// gimbal lock). Quaternions accumulated via left-multiplication by a
+// world-space incremental rotation (see SpinningShape.tsx) keep "drag
+// right" meaning the same visual thing regardless of accumulated spin.
+
+export interface Quaternion {
+  w: number;
+  x: number;
+  y: number;
+  z: number;
+}
+
+export function quatIdentity(): Quaternion {
+  return { w: 1, x: 0, y: 0, z: 0 };
+}
+
+export function quatFromAxisAngle(axis: Point3, angle: number): Quaternion {
+  const a = normalize(axis);
+  const half = angle / 2;
+  const s = Math.sin(half);
+  return { w: Math.cos(half), x: a.x * s, y: a.y * s, z: a.z * s };
+}
+
+/** Hamilton product a*b -- applying the result to a vector rotates by b first, then a. */
+export function quatMultiply(a: Quaternion, b: Quaternion): Quaternion {
+  return {
+    w: a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z,
+    x: a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y,
+    y: a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
+    z: a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w,
+  };
+}
+
+export function quatNormalize(q: Quaternion): Quaternion {
+  const len = Math.sqrt(q.w * q.w + q.x * q.x + q.y * q.y + q.z * q.z) || 1;
+  return { w: q.w / len, x: q.x / len, y: q.y / len, z: q.z / len };
+}
+
+/** Rotates vector `p` by quaternion `q` (q must be unit-length). */
+export function rotateByQuaternion(p: Point3, q: Quaternion): Point3 {
+  const { w, x, y, z } = q;
+  // t = 2 * cross(q.xyz, p)
+  const tx = 2 * (y * p.z - z * p.y);
+  const ty = 2 * (z * p.x - x * p.z);
+  const tz = 2 * (x * p.y - y * p.x);
+  // p' = p + w*t + cross(q.xyz, t)
+  return {
+    x: p.x + w * tx + (y * tz - z * ty),
+    y: p.y + w * ty + (z * tx - x * tz),
+    z: p.z + w * tz + (x * ty - y * tx),
+  };
 }
 
 // --- Point cloud generators -------------------------------------------------
@@ -124,9 +228,19 @@ function generateSphere(radius = 1.6): SurfacePoint[] {
   return points;
 }
 
+// Fraction of each face's [-1, 1] u/v range, measured from the boundary,
+// that gets a rim-light edge boost -- and how strong that boost is. Wider/
+// stronger than a hairline so the edge reads clearly at the font sizes
+// this renders at, without visibly eating into the face.
+const CUBE_EDGE_MARGIN = 0.06;
+const CUBE_EDGE_BOOST = 0.35;
+
 function generateCube(halfSide = 1.3): SurfacePoint[] {
   const points: SurfacePoint[] = [];
-  const stepsPerEdge = 40;
+  // Denser than the donut's effective sampling was leaving the cube's
+  // edges comparatively soft/under-defined ("better edge rendering on the
+  // cube... donut looks the best currently") -- bumped from 40 to 64.
+  const stepsPerEdge = 64;
   const faces: { normal: Point3; u: Point3; v: Point3 }[] = [
     { normal: { x: 1, y: 0, z: 0 }, u: { x: 0, y: 1, z: 0 }, v: { x: 0, y: 0, z: 1 } },
     { normal: { x: -1, y: 0, z: 0 }, u: { x: 0, y: 1, z: 0 }, v: { x: 0, y: 0, z: 1 } },
@@ -155,7 +269,16 @@ function generateCube(halfSide = 1.3): SurfacePoint[] {
             face.u.z * a * halfSide +
             face.v.z * b * halfSide,
         };
-        points.push({ position, normal: face.normal });
+        // Distance from the nearest face boundary in u/v space; points
+        // within CUBE_EDGE_MARGIN of an edge (including corners, where
+        // both a and b are near +-1) get a brightness boost proportional
+        // to how close they are to that boundary.
+        const distFromEdge = Math.min(1 - Math.abs(a), 1 - Math.abs(b));
+        const edgeBoost =
+          distFromEdge < CUBE_EDGE_MARGIN
+            ? CUBE_EDGE_BOOST * (1 - distFromEdge / CUBE_EDGE_MARGIN)
+            : 0;
+        points.push({ position, normal: face.normal, edgeBoost });
       }
     }
   }
@@ -173,23 +296,6 @@ export function generateShape(kind: ShapeKind): SurfacePoint[] {
   }
 }
 
-// --- Rotation ----------------------------------------------------------------
-
-/** Rotates `p` by `angleX` around the X axis then `angleY` around the Y axis. */
-export function rotatePoint(p: Point3, angleX: number, angleY: number): Point3 {
-  const cosX = Math.cos(angleX);
-  const sinX = Math.sin(angleX);
-  const y1 = p.y * cosX - p.z * sinX;
-  const z1 = p.y * sinX + p.z * cosX;
-
-  const cosY = Math.cos(angleY);
-  const sinY = Math.sin(angleY);
-  const x2 = p.x * cosY + z1 * sinY;
-  const z2 = -p.x * sinY + z1 * cosY;
-
-  return { x: x2, y: y1, z: z2 };
-}
-
 // --- Rasterization -------------------------------------------------------
 
 export interface ShapeCell {
@@ -197,22 +303,34 @@ export interface ShapeCell {
   brightness: number;
 }
 
-const LIGHT_DIR = normalize({ x: -0.5, y: -0.5, z: -1 });
+// z dominant (camera points toward +z, so a more-negative z is more
+// "toward the camera" / front-facing -- see rasterizeShape's projection
+// below) and only a small x/y offset for shape definition. The earlier
+// (-0.5, -0.5, -1) mix put 45 degrees of lateral skew on the light,
+// shifting the brightest point off toward a corner and leaving most of the
+// camera-facing surface dim ("not bright enough... everything seems
+// purple, move the light to be more on the front side").
+const LIGHT_DIR = normalize({ x: -0.2, y: -0.15, z: -1.6 });
 
 /**
- * Rotates every point in `points` by (angleX, angleY), projects with a
- * simple perspective division, and rasterizes onto a `cols` x `rows`
+ * Rotates every point in `points` by the quaternion `orientation`, projects
+ * with a simple perspective division, and rasterizes onto a `cols` x `rows`
  * character grid using a z-buffer so nearer points win overlapping cells.
- * Per-cell brightness comes from the rotated normal's alignment with a
- * fixed light direction, which is what gives the shape its shading.
+ *
+ * Lighting uses the point's LOCAL (unrotated) normal, not the rotated one
+ * -- per feedback, the light should stay on the same side OF THE OBJECT as
+ * it spins (i.e. the light rotates along with the object, so a given
+ * physical face is always lit/shadowed the same way), rather than being
+ * fixed in camera/world space (which would make a fixed face flicker
+ * between lit and shadowed as it rotates in and out of facing a
+ * screen-fixed light). Only position is rotated for projection/visibility.
  */
 export function rasterizeShape(
   points: SurfacePoint[],
-  angleX: number,
-  angleY: number,
+  orientation: Quaternion,
   cols: number,
   rows: number,
-  ramp: string = DEFAULT_RAMP,
+  ramp: string = SHAPE_RAMP,
 ): ShapeCell[][] {
   const zBuffer = new Float64Array(cols * rows).fill(-Infinity);
   const charGrid: string[] = new Array(cols * rows).fill(" ");
@@ -224,9 +342,8 @@ export function rasterizeShape(
   const cameraDistance = 5;
   const scale = Math.min(cols, rows * 2) * 0.38;
 
-  for (const { position, normal } of points) {
-    const rotated = rotatePoint(position, angleX, angleY);
-    const rotatedNormal = rotatePoint(normal, angleX, angleY);
+  for (const { position, normal, edgeBoost } of points) {
+    const rotated = rotateByQuaternion(position, orientation);
 
     const z = rotated.z + cameraDistance;
     if (z <= 0.1) continue; // behind the camera
@@ -243,12 +360,13 @@ export function rasterizeShape(
     if (invZ <= zBuffer[idx]) continue; // a nearer point already owns this cell
 
     zBuffer[idx] = invZ;
-    const luminance = Math.max(
-      0,
-      rotatedNormal.x * LIGHT_DIR.x +
-        rotatedNormal.y * LIGHT_DIR.y +
-        rotatedNormal.z * LIGHT_DIR.z,
-    );
+    // Local (unrotated) normal, not rotatedNormal -- see the function
+    // doc comment above: the light is meant to stay fixed relative to the
+    // OBJECT, not the camera. shadeFromDot remaps the full [-1, 1] dot
+    // product range so the gradient is visible across the whole surface,
+    // not just clamped flat on the away-facing half.
+    const dot = normal.x * LIGHT_DIR.x + normal.y * LIGHT_DIR.y + normal.z * LIGHT_DIR.z;
+    const luminance = Math.min(1, shadeFromDot(dot) + (edgeBoost ?? 0));
     brightnessGrid[idx] = luminance;
     charGrid[idx] = charForBrightness(luminance, ramp);
   }
