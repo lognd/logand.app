@@ -60,7 +60,14 @@ export function Landing() {
           className="pointer-events-auto absolute inset-0 -z-[5] flex items-center justify-center overflow-hidden opacity-30"
         />
       )}
-      <ParticleLayer className="pointer-events-none absolute inset-0 -z-[4]" />
+      {/* Muted (desaturated) over the spinning shape so the click/drag
+          particle layer doesn't compete with the shape's own shading;
+          full heat-curve color is kept on the Matrix-rain background,
+          where it's the point. */}
+      <ParticleLayer
+        className="pointer-events-none absolute inset-0 -z-[4]"
+        muted={background !== "rain"}
+      />
       {/* flex-1 + items-center/justify-center centers the heading block
           vertically within the available space (between header and
           footer) instead of pinning it to the top. */}

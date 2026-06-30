@@ -16,11 +16,12 @@ import { useFitFontSize } from "./useFitFontSize";
 const COLS = 100;
 const ROWS = 50;
 
-// Radians/sec auto-rotation when idle. Slowed down from an earlier
-// 0.25/0.45 per feedback that it "goes a little fast" -- still meant to
-// read as a calm, deliberate spin, not a distracting blur.
-const AUTO_SPEED_X = 0.15;
-const AUTO_SPEED_Y = 0.28;
+// Radians/sec auto-rotation when idle. Restored to the original 0.25/0.45
+// -- an earlier "it goes a little fast" complaint turned out to be about
+// the user-to-idle ramp's pacing (IDLE_RAMP_MS below), not this speed
+// itself, which the user liked.
+const AUTO_SPEED_X = 0.25;
+const AUTO_SPEED_Y = 0.45;
 
 // Below this drag distance (px) a pointerdown+move is treated as a scroll
 // gesture, not a rotate gesture -- see the mobile-scroll note below.
@@ -51,7 +52,9 @@ const HOVER_LERP = 10;
 // out (1 -> 0) while fading auto-rotation's speed in (0 -> 1) in lockstep,
 // so the handoff is smooth rather than an abrupt mode switch.
 const IDLE_GRACE_MS = 150;
-const IDLE_RAMP_MS = 1200;
+// Slowed from an earlier 1200ms -- "I was referring to the lerp from user
+// to idle [being fast]", not the idle auto-rotation speed itself.
+const IDLE_RAMP_MS = 2400;
 
 function easeInOutCubic(t: number): number {
   const c = Math.max(0, Math.min(1, t));
@@ -216,7 +219,7 @@ export function SpinningShape({
         }
       }
 
-      const grid = rasterizeShape(points, orientationRef.current, COLS, ROWS);
+      const grid = rasterizeShape(points, orientationRef.current, COLS, ROWS, undefined, kind);
       // One colored <span> per row rather than per character -- per-character
       // coloring would mean ~5000 styled DOM nodes re-rendered at up to
       // 60fps, which isn't worth it here; a per-row average brightness
@@ -238,7 +241,7 @@ export function SpinningShape({
 
     raf = requestAnimationFrame(render);
     return () => cancelAnimationFrame(raf);
-  }, [points]);
+  }, [points, kind]);
 
   // Window-level (not element-level) pointer listeners: real page content
   // (nav links, headings, paragraph text) sits visually on top of this

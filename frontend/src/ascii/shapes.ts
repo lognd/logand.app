@@ -61,6 +61,17 @@ export interface SurfacePoint {
   // the flat-shaded face on either side ("better edge rendering on the
   // cube"). 0 for shapes that don't use it (donut, sphere).
   edgeBoost?: number;
+  // [0, 1] fake ambient-occlusion strength -- used by generateDonut to
+  // darken the inner-hole-facing half of the tube. A single point's
+  // lighting only knows its own normal vs. the light, not that the
+  // opposite wall of the tube physically blocks light from reaching the
+  // concave inner side ("the donut is weird -- light penetrates one side,
+  // no shadow"). Without real raytracing, this is a cheap stand-in:
+  // points facing the donut's own hole are statistically far more likely
+  // to be self-shadowed than points facing outward, regardless of the
+  // current light/camera angle, so darken them proportionally. 0 for
+  // shapes that don't use it.
+  occlusion?: number;
 }
 
 const SHAPE_KINDS: ShapeKind[] = ["donut", "cube", "sphere"];
@@ -142,6 +153,10 @@ export function rotateByQuaternion(p: Point3, q: Quaternion): Point3 {
 // cells -- this is what makes the wireframe read as a filled, shaded surface
 // rather than sparse dots, matching the classic ASCII-donut look.
 
+// How strongly the inner-hole-facing half of the tube gets darkened (see
+// SurfacePoint.occlusion's doc comment).
+const DONUT_INNER_OCCLUSION = 0.45;
+
 function generateDonut(majorRadius = 1.5, minorRadius = 0.7): SurfacePoint[] {
   const points: SurfacePoint[] = [];
   const thetaSteps = 80; // around the tube
@@ -150,6 +165,11 @@ function generateDonut(majorRadius = 1.5, minorRadius = 0.7): SurfacePoint[] {
     const theta = (i / thetaSteps) * 2 * Math.PI;
     const cosTheta = Math.cos(theta);
     const sinTheta = Math.sin(theta);
+    // 0 at the outer rim (cosTheta = 1) ramping up to 1 at the inner rim
+    // (cosTheta = -1, facing straight into the donut's own hole) -- the
+    // region statistically most likely to be self-shadowed by the
+    // opposite tube wall.
+    const innerFactor = (1 - cosTheta) / 2;
     for (let j = 0; j < phiSteps; j++) {
       const phi = (j / phiSteps) * 2 * Math.PI;
       const cosPhi = Math.cos(phi);
@@ -166,7 +186,7 @@ function generateDonut(majorRadius = 1.5, minorRadius = 0.7): SurfacePoint[] {
         y: sinTheta,
         z: cosTheta * sinPhi,
       });
-      points.push({ position, normal });
+      points.push({ position, normal, occlusion: innerFactor });
     }
   }
   return points;
@@ -312,18 +332,53 @@ export interface ShapeCell {
 // purple, move the light to be more on the front side").
 const LIGHT_DIR = normalize({ x: -0.2, y: -0.15, z: -1.6 });
 
+// Direction FROM the surface TOWARD the camera, in camera/world space (the
+// camera sits at roughly z = -cameraDistance looking toward +z -- see the
+// projection below). Used only by the sphere/globe's view-facing lighting
+// and by the generic silhouette-edge detection.
+const VIEW_DIR: Point3 = { x: 0, y: 0, z: -1 };
+
+// Points whose rotated normal is within this far from perpendicular to the
+// view direction are near the visual silhouette/edge of the shape -- "the
+// characters chosen for exposed edges should be a function of the shape's
+// local geometry, not just brightness" (a hand-rolled, much cheaper cousin
+// of marching-cubes' edge-case lookup: rather than resolving an exact
+// boundary contour, just check whether this sample is close enough to
+// grazing to count, then pick a directional glyph from its local geometry).
+const SILHOUETTE_DOT_THRESHOLD = 0.16;
+const SILHOUETTE_CHARS = ["-", "/", "|", "\\"];
+
+function silhouetteChar(rotatedNormal: Point3): string {
+  // The silhouette edge runs perpendicular (in screen space) to the
+  // normal's own screen-space projection -- e.g. a normal pointing
+  // straight right/left in screen space means the surface is curving away
+  // top-to-bottom at that point, so the edge there reads as a vertical
+  // line, not a horizontal one.
+  const tangentAngle = Math.atan2(rotatedNormal.y, rotatedNormal.x) + Math.PI / 2;
+  const deg = (((tangentAngle * 180) / Math.PI) % 180 + 180) % 180;
+  if (deg < 22.5 || deg >= 157.5) return SILHOUETTE_CHARS[0]; // "-"
+  if (deg < 67.5) return SILHOUETTE_CHARS[1]; // "/"
+  if (deg < 112.5) return SILHOUETTE_CHARS[2]; // "|"
+  return SILHOUETTE_CHARS[3]; // "\"
+}
+
 /**
  * Rotates every point in `points` by the quaternion `orientation`, projects
  * with a simple perspective division, and rasterizes onto a `cols` x `rows`
  * character grid using a z-buffer so nearer points win overlapping cells.
  *
- * Lighting uses the point's LOCAL (unrotated) normal, not the rotated one
- * -- per feedback, the light should stay on the same side OF THE OBJECT as
- * it spins (i.e. the light rotates along with the object, so a given
- * physical face is always lit/shadowed the same way), rather than being
- * fixed in camera/world space (which would make a fixed face flicker
+ * Lighting normally uses the point's LOCAL (unrotated) normal, not the
+ * rotated one -- per feedback, the light should stay on the same side OF
+ * THE OBJECT as it spins (i.e. the light rotates along with the object, so
+ * a given physical face is always lit/shadowed the same way), rather than
+ * being fixed in camera/world space (which would make a fixed face flicker
  * between lit and shadowed as it rotates in and out of facing a
- * screen-fixed light). Only position is rotated for projection/visibility.
+ * screen-fixed light). The sphere/globe is the deliberate exception: per
+ * feedback ("the front always needs to be illuminated and the back kept in
+ * the dark -- it's hard to distinguish front from back"), it uses
+ * view-facing lighting instead (rotated normal vs. the camera), so its lit
+ * hemisphere always tracks whichever half is actually facing the viewer
+ * regardless of how the globe has spun.
  */
 export function rasterizeShape(
   points: SurfacePoint[],
@@ -331,10 +386,12 @@ export function rasterizeShape(
   cols: number,
   rows: number,
   ramp: string = SHAPE_RAMP,
+  kind?: ShapeKind,
 ): ShapeCell[][] {
   const zBuffer = new Float64Array(cols * rows).fill(-Infinity);
   const charGrid: string[] = new Array(cols * rows).fill(" ");
   const brightnessGrid = new Float64Array(cols * rows);
+  const viewFacingLight = kind === "sphere";
 
   // Camera/projection constants tuned so the shape comfortably fills a
   // terminal-ish aspect ratio; cells are roughly 2x taller than wide in a
@@ -342,7 +399,7 @@ export function rasterizeShape(
   const cameraDistance = 5;
   const scale = Math.min(cols, rows * 2) * 0.38;
 
-  for (const { position, normal, edgeBoost } of points) {
+  for (const { position, normal, edgeBoost, occlusion } of points) {
     const rotated = rotateByQuaternion(position, orientation);
 
     const z = rotated.z + cameraDistance;
@@ -360,15 +417,25 @@ export function rasterizeShape(
     if (invZ <= zBuffer[idx]) continue; // a nearer point already owns this cell
 
     zBuffer[idx] = invZ;
-    // Local (unrotated) normal, not rotatedNormal -- see the function
-    // doc comment above: the light is meant to stay fixed relative to the
-    // OBJECT, not the camera. shadeFromDot remaps the full [-1, 1] dot
-    // product range so the gradient is visible across the whole surface,
-    // not just clamped flat on the away-facing half.
-    const dot = normal.x * LIGHT_DIR.x + normal.y * LIGHT_DIR.y + normal.z * LIGHT_DIR.z;
-    const luminance = Math.min(1, shadeFromDot(dot) + (edgeBoost ?? 0));
+    const rotatedNormal = rotateByQuaternion(normal, orientation);
+    const viewDot =
+      rotatedNormal.x * VIEW_DIR.x + rotatedNormal.y * VIEW_DIR.y + rotatedNormal.z * VIEW_DIR.z;
+
+    // Local (unrotated) normal vs. the object-fixed light for everything
+    // except the sphere (see doc comment above). shadeFromDot remaps the
+    // full [-1, 1] dot product range so the gradient is visible across the
+    // whole surface, not just clamped flat on the away-facing half.
+    const dot = viewFacingLight
+      ? viewDot
+      : normal.x * LIGHT_DIR.x + normal.y * LIGHT_DIR.y + normal.z * LIGHT_DIR.z;
+    let luminance = Math.min(1, shadeFromDot(dot) + (edgeBoost ?? 0));
+    if (occlusion) luminance *= 1 - DONUT_INNER_OCCLUSION * occlusion;
     brightnessGrid[idx] = luminance;
-    charGrid[idx] = charForBrightness(luminance, ramp);
+
+    charGrid[idx] =
+      Math.abs(viewDot) < SILHOUETTE_DOT_THRESHOLD
+        ? silhouetteChar(rotatedNormal)
+        : charForBrightness(luminance, ramp);
   }
 
   const grid: ShapeCell[][] = [];

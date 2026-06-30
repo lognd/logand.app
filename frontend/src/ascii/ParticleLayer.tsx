@@ -23,6 +23,15 @@ const MAX_VIOLENCE = 4;
 const TRAIL_PARTICLE_HEAD_COLOR = "#7CC7FC";
 const TRAIL_PARTICLE_TAIL_COLOR = "#2f5d80";
 
+// Muted variants used when layered over the spinning shape ("keep the
+// color on the explosion and matrix rain, but mute them on the spinning
+// shape") -- desaturated/grayed-down so the particle layer doesn't compete
+// with the shape's own gruvbox yellow-green/purple-green shading, while
+// staying vivid (the real colors above) on the Matrix-rain background.
+const MUTED_TRAIL_HEAD_COLOR = "#8aa0ab";
+const MUTED_TRAIL_TAIL_COLOR = "#41525a";
+const MUTED_EXPLOSION_COLOR = "#9a8f7a";
+
 /**
  * The click/drag particle interaction (blue pointer trail + heat-colored,
  * gravity-physics "explosion" on click/tap, rapid clicks escalating
@@ -38,9 +47,21 @@ const TRAIL_PARTICLE_TAIL_COLOR = "#2f5d80";
  * real page content sits on top and is hit-testable, so an element-scoped
  * listener would stop firing under text/links.
  */
-export function ParticleLayer({ className }: { className?: string }) {
+export function ParticleLayer({
+  className,
+  muted = false,
+}: {
+  className?: string;
+  muted?: boolean;
+}) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const particlesRef = useRef<Particle[]>([]);
+  // Ref, not a direct closure read -- `muted` can change while this stays
+  // mounted (Landing swaps backgrounds without remounting ParticleLayer),
+  // but the render-loop effect below only runs once ([] deps), same
+  // pattern as reducedMotionRef in SpinningShape.tsx.
+  const mutedRef = useRef(muted);
+  mutedRef.current = muted;
   const recentPathRef = useRef<{ x: number; y: number }[]>([]);
   const clickStreakRef = useRef<{ count: number; lastClickAt: number }>({
     count: 0,
@@ -80,12 +101,19 @@ export function ParticleLayer({ className }: { className?: string }) {
       particlesRef.current = stepParticles(particlesRef.current, dtSeconds);
       for (const p of particlesRef.current) {
         const lifeFrac = 1 - p.age / p.lifetime;
+        const isMuted = mutedRef.current;
         ctx.fillStyle =
           p.kind === "explosion"
-            ? heatColor(lifeFrac)
+            ? isMuted
+              ? MUTED_EXPLOSION_COLOR
+              : heatColor(lifeFrac)
             : lifeFrac > 0.6
-              ? TRAIL_PARTICLE_HEAD_COLOR
-              : TRAIL_PARTICLE_TAIL_COLOR;
+              ? isMuted
+                ? MUTED_TRAIL_HEAD_COLOR
+                : TRAIL_PARTICLE_HEAD_COLOR
+              : isMuted
+                ? MUTED_TRAIL_TAIL_COLOR
+                : TRAIL_PARTICLE_TAIL_COLOR;
         ctx.globalAlpha = Math.max(0, lifeFrac);
         ctx.fillText(p.char, p.x, p.y);
       }
