@@ -85,7 +85,10 @@ export function ParticleLayer({
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     };
     resize();
+    // See MatrixRain.tsx's identical listener for why fullscreenchange is
+    // also needed here, not just resize.
     window.addEventListener("resize", resize);
+    document.addEventListener("fullscreenchange", resize);
 
     const render = (now: number) => {
       const dtSeconds = Math.min((now - lastTime) / 1000, 0.05);
@@ -126,6 +129,7 @@ export function ParticleLayer({
     return () => {
       cancelAnimationFrame(raf);
       window.removeEventListener("resize", resize);
+      document.removeEventListener("fullscreenchange", resize);
     };
   }, []);
 

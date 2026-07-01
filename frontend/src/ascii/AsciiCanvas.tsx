@@ -192,29 +192,40 @@ export function AsciiCanvas({ className }: { className?: string }) {
   }, []);
 
   return (
-    <pre
-      className={className}
-      aria-hidden="true"
-      // Explicit for the same reason as SpinningShape.tsx's <pre> -- keeps
-      // this layer's actual character widths consistent with what
-      // scripts/generate_ascii_ramp.py measured, now that
-      // @fontsource/jetbrains-mono guarantees "JetBrains Mono" resolves to
-      // the real thing for every visitor.
-      style={{
-        fontSize: `${fontSize}px`,
-        lineHeight: `${fontSize}px`,
-        fontFamily: '"JetBrains Mono", ui-monospace, monospace',
-      }}
-    >
-      {rows.map((row, i) => (
-        // One span per row (not per character): coloring every individual
-        // character would mean ~1500+ DOM nodes re-rendered on every tick,
-        // which isn't worth it for a blurred-out atmosphere layer -- a
-        // per-row average color still reads as a smooth vertical gradient.
-        <div key={i} style={{ color: row.color }}>
-          {row.text}
-        </div>
-      ))}
-    </pre>
+    // `className` (fixed inset-0 etc., from Shell.tsx) belongs on this
+    // wrapper, not the <pre> itself -- the <pre> previously received
+    // "fixed inset-0" directly, which forces its BOX to exactly match the
+    // viewport regardless of the grid's actual (smaller, letterboxed)
+    // content width, while the monospace text inside it doesn't stretch to
+    // fill that box. On any viewport wider than COLS*charAspect:ROWS's
+    // aspect ratio (e.g. ultrawide/fullscreen), that left the noise
+    // pattern pinned to the left edge instead of centered -- same
+    // wrapper+flex-center fix as SpinningShape.tsx's <pre>.
+    <div className={`${className ?? ""} flex items-center justify-center overflow-hidden`}>
+      <pre
+        aria-hidden="true"
+        // Explicit for the same reason as SpinningShape.tsx's <pre> -- keeps
+        // this layer's actual character widths consistent with what
+        // scripts/generate_ascii_ramp.py measured, now that
+        // @fontsource/jetbrains-mono guarantees "JetBrains Mono" resolves to
+        // the real thing for every visitor.
+        style={{
+          fontSize: `${fontSize}px`,
+          lineHeight: `${fontSize}px`,
+          display: "block",
+          fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+        }}
+      >
+        {rows.map((row, i) => (
+          // One span per row (not per character): coloring every individual
+          // character would mean ~1500+ DOM nodes re-rendered on every tick,
+          // which isn't worth it for a blurred-out atmosphere layer -- a
+          // per-row average color still reads as a smooth vertical gradient.
+          <div key={i} style={{ color: row.color }}>
+            {row.text}
+          </div>
+        ))}
+      </pre>
+    </div>
   );
 }

@@ -135,6 +135,27 @@ TEXT_CONTOUR_BUCKETS = 8
 # a bucket they don't actually represent well.
 MIN_ECCENTRICITY = 0.25
 
+# The exterior/silhouette contour pool for the donut and cube (the globe
+# keeps its own separate block-glyph table -- see BLOCK_CONTOUR_BY_DIRECTION
+# above) is deliberately much smaller than TEXT_CANDIDATE_POOL and picked
+# by hand, not just by an eccentricity cutoff -- the measured eccentricity
+# metric turns out to be a poor stand-in for "reads as a clear boundary at
+# a glance": round letters like "O" or "8" scored ABOVE 0.8 (higher than
+# genuinely clear glyphs like "Y") purely because the edge-half-weighted
+# PCA fit picks up tiny asymmetries in how the font rasterizes a circle,
+# not because the glyph is actually directional. So for the exterior
+# specifically ("reduce the glyph pool ... to only glyphs that have a VERY
+# CLEAR boundary"), only glyphs a human would immediately read as a single
+# strong stroke direction are eligible: pure verticals/horizontals/
+# diagonals (|, -, _, /, \\, l, I, 1, L), plus a few letters whose overall
+# silhouette is unambiguous even though they're not a single straight line
+# (Y's V+stem, h's arch reading as a shallow negative-slope boundary, N and
+# Z's dominant diagonal). Everything else -- round letters, symmetric
+# zigzags like M/W/X/K, anything whose stroke direction isn't obvious on
+# sight -- is excluded outright rather than left to the eccentricity score
+# to sort out.
+EXTERIOR_TEXT_CANDIDATES = list("|-_/\\lI1LYhNZjft")
+
 
 def build_text_candidates(font: ImageFont.FreeTypeFont) -> list[str]:
     """Filters TEXT_CANDIDATE_POOL down to glyphs whose measured advance
@@ -314,7 +335,12 @@ def main() -> None:
     if excluded:
         print(f"excluded {len(excluded)} non-fixed-width glyphs: {''.join(excluded)}")
     ramp = build_ramp(font, candidates)
-    text_contour = build_text_contour_table(font, candidates)
+    # Width-filtered AND on the hand-picked "clear boundary" allowlist --
+    # still fixed-width-checked (a curated glyph could in principle still
+    # be a non-fixed-width tofu box on some future font) but not the full
+    # ramp candidate pool.
+    exterior_candidates = [c for c in EXTERIOR_TEXT_CANDIDATES if c in candidates]
+    text_contour = build_text_contour_table(font, exterior_candidates)
     block_contour = build_block_contour_table(font)
 
     ts_lines = [

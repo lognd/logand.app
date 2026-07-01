@@ -74,7 +74,13 @@ export function MatrixRain({ className }: { className?: string }) {
       streamsRef.current = createStreams(rect.width, rect.height, CELL_SIZE);
     };
     resize();
+    // "resize" alone isn't reliably fired by every browser's Fullscreen
+    // API transition -- without also resizing here, the canvas's backing
+    // pixel buffer stays stale after fullscreening while its CSS box grows
+    // to fill the new viewport, stretching/cutting off the rendered rain
+    // ("shapes and rain get cut off when fullscreening").
     window.addEventListener("resize", resize);
+    document.addEventListener("fullscreenchange", resize);
 
     const render = (now: number) => {
       const dtSeconds = Math.min((now - lastTime) / 1000, 0.05);
@@ -113,6 +119,7 @@ export function MatrixRain({ className }: { className?: string }) {
     return () => {
       cancelAnimationFrame(raf);
       window.removeEventListener("resize", resize);
+      document.removeEventListener("fullscreenchange", resize);
     };
   }, []);
 

@@ -10,7 +10,7 @@ export const GENERATED_RAMP: string = " `.'-_:;~!>+|LTtIZeXUG#&RQBMN$W@";
 // through each glyph's own outer-edge ink (farthest from its mass
 // center, not all of it equally) and matching that line's
 // orientation to the bucket's boundary direction.
-export const CONTOUR_GLYPHS_TEXT: string[] = ["_", "_", "`", "\\", "|", "/", "r", "~"];
+export const CONTOUR_GLYPHS_TEXT: string[] = ["_", "_", "\\", "\\", "|", "/", "/", "_"];
 
 // Same idea, restricted to Unicode half/quadrant block glyphs --
 // reserved for the sphere/globe shape specifically (see shapes.ts).

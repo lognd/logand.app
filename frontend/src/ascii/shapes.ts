@@ -239,6 +239,24 @@ export function rotateByQuaternion(p: Point3, q: Quaternion): Point3 {
   };
 }
 
+// Just the z-component of rotateByQuaternion -- every point's silhouette-
+// band test and the sphere's view-facing shading only ever need
+// -rotatedNormal.z (VIEW_DIR is the fixed {0,0,-1}), never the rotated
+// normal's x/y, so computing the full 3-component rotation for EVERY
+// point's normal on EVERY frame (previously unconditional, for every
+// shape) was doing roughly 50% more multiply-adds than the result was
+// ever used for. rotateByQuaternion's tx/ty/tz cross-product terms are
+// still all needed to get z right, so this doesn't skip the whole
+// computation -- just the two components (final x, final y) nothing here
+// reads.
+function rotatedZOnly(p: Point3, q: Quaternion): number {
+  const { w, x, y, z } = q;
+  const tx = 2 * (y * p.z - z * p.y);
+  const ty = 2 * (z * p.x - x * p.z);
+  const tz = 2 * (x * p.y - y * p.x);
+  return p.z + w * tz + (x * ty - y * tx);
+}
+
 // --- Point cloud generators -------------------------------------------------
 //
 // Each generator samples a parametric surface densely enough that, after
@@ -298,7 +316,11 @@ function generateSphere(radius = 1.6): SurfacePoint[] {
   const points: SurfacePoint[] = [];
   const latRings = 9;
   const lonRings = 14;
-  const pointsPerRing = 220;
+  // Lowered from 220 -- at COLS=100 a full-width ring only ever needs on
+  // the order of cols*pi (~314) samples at 1-column granularity to look
+  // continuous, and most rings project much smaller than full width, so
+  // 220 was oversampling well past what any screen cell could distinguish.
+  const pointsPerRing = 150;
 
   for (let i = 1; i < latRings; i++) {
     const lat = (i / latRings) * Math.PI;
@@ -543,9 +565,10 @@ export function rasterizeShape(
     if (invZ <= zBuffer[idx]) continue; // a nearer point already owns this cell
 
     zBuffer[idx] = invZ;
-    const rotatedNormal = rotateByQuaternion(normal, orientation);
-    const viewDot =
-      rotatedNormal.x * VIEW_DIR.x + rotatedNormal.y * VIEW_DIR.y + rotatedNormal.z * VIEW_DIR.z;
+    // VIEW_DIR is the fixed {0, 0, -1}, so its dot with the rotated normal
+    // is just VIEW_DIR.z * rotatedNormal.z -- only silhouetteChar (a small
+    // fraction of points, see below) needs the rotated normal's x/y too.
+    const viewDot = VIEW_DIR.z * rotatedZOnly(normal, orientation);
 
     // Local (unrotated) normal vs. the object-fixed light for everything
     // except the sphere (see doc comment above). shadeFromDot remaps the
@@ -567,8 +590,11 @@ export function rasterizeShape(
     const outer = viewFacingLight ? SILHOUETTE_DOT_OUTER_SPHERE : SILHOUETTE_DOT_OUTER;
     const inner = viewFacingLight ? SILHOUETTE_DOT_INNER_SPHERE : SILHOUETTE_DOT_INNER;
     const inContourBand = absViewDot < outer && absViewDot > inner;
+    // Full rotateByQuaternion (x/y and all) only computed for the small
+    // fraction of points that actually land in the contour band -- see
+    // rotatedZOnly's doc comment.
     charGrid[idx] = inContourBand
-      ? silhouetteChar(rotatedNormal, viewFacingLight)
+      ? silhouetteChar(rotateByQuaternion(normal, orientation), viewFacingLight)
       : charForBrightness(luminance, ramp);
   }
 
