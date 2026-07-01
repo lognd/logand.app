@@ -122,7 +122,7 @@ export function Projects() {
         {PROJECTS.map((project, i) => (
           <section
             key={project.title}
-            className="flex h-full min-h-full shrink-0 snap-start flex-col items-center gap-4 overflow-y-auto no-scrollbar px-4 py-12"
+            className="flex h-full min-h-full shrink-0 snap-start flex-col items-center gap-4 px-4 py-12"
           >
             {/* justify-start (the flex default), NOT justify-center: when
                 a section's content (title + card, for the first one) is
@@ -135,11 +135,22 @@ export function Projects() {
                 title read as completely invisible ("the Projects header
                 is not visible"). The overflow below the box is what
                 visually spilled into the NEXT section's territory
-                ("the cards overlap"). Top-aligning instead means any
-                overflow only ever happens on the bottom, and this
-                section's own overflow-y-auto lets THAT be reached by
-                scrolling within the section itself, rather than
-                overlapping into the next one.
+                ("the cards overlap"). Top-aligning fixes both, since any
+                overflow then only ever happens on the bottom.
+                No overflow-y-auto on the section itself (tried that,
+                reverted) -- a nested scrollable ancestor under the
+                cursor gets first refusal of any wheel/trackpad scroll
+                event, and even with nothing of its own to scroll, some
+                browsers still spend one whole scroll gesture "realizing"
+                that before chaining to the outer feed, which is exactly
+                what made it take two scrolls to advance one card
+                ("make it so the first scroll actually works"). In
+                practice the content already fits one screen (see the
+                card's own max-h-40 description scroll for the one place
+                that genuinely needs independent scrolling); trading away
+                a rare-edge-case overflow guard for the outer feed's
+                scroll always working on the first try is the right
+                call.
                 "Projects" title lives on the FIRST card's own section,
                 not as a separate snap point above the feed -- a
                 persistent title outside the feed turned out to
