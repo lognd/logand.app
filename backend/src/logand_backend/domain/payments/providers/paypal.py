@@ -31,6 +31,10 @@ def _api_base(cfg: AppConfig) -> str:
     return _SANDBOX_BASE if cfg.paypal_mode == "sandbox" else _LIVE_BASE
 
 
+def _pay_page_url(cfg: AppConfig, invoice_id: str) -> str:
+    return f"{cfg.public_base_url}/invoices/{invoice_id}/pay"
+
+
 @dataclass(frozen=True)
 class PayPalOrder:
     order_id: str
@@ -76,6 +80,12 @@ async def create_order(
             return Err(token_result.danger_err)
         token = token_result.danger_ok
 
+        # return_url/cancel_url: PayPal redirects the customer's browser
+        # back here after approval, appending "?token=<order_id>" (that
+        # param name is PayPal's own, not something this app chose) --
+        # the frontend's Pay.tsx watches for that param to know it should
+        # call the capture endpoint automatically once the customer is
+        # back, rather than needing a separate "confirm payment" click.
         try:
             resp = await client.post(
                 f"{_api_base(cfg)}/v2/checkout/orders",
@@ -91,6 +101,10 @@ async def create_order(
                             },
                         }
                     ],
+                    "application_context": {
+                        "return_url": _pay_page_url(cfg, invoice_id),
+                        "cancel_url": _pay_page_url(cfg, invoice_id),
+                    },
                 },
             )
             resp.raise_for_status()

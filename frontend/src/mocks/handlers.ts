@@ -160,6 +160,21 @@ export const handlers = [
     return HttpResponse.json(invoices.map(toListShape));
   }),
 
+  // Registered BEFORE "/api/invoices/:id" -- same reasoning as the real
+  // backend's identical route-ordering comment (api/invoices_public.py):
+  // MSW matches path patterns in registration order, so ":id" would
+  // otherwise swallow the literal "payment-methods" segment as if it
+  // were an invoice ID.
+  http.get("/api/invoices/payment-methods", () => {
+    const denied = requireRole("customer");
+    if (denied) return denied;
+    // PayPal always "unavailable" in mock mode -- there's no real
+    // provider to hook the fake create/capture flow up to here, so the
+    // mock UI shows only the always-real Stripe path plus the "contact
+    // us for Zelle/PayPal/in-person" messaging.
+    return HttpResponse.json({ stripe: true, paypal: false });
+  }),
+
   http.get("/api/invoices/:id", ({ params }) => {
     const denied = requireRole("customer");
     if (denied) return denied;

@@ -56,3 +56,38 @@ export function recordManualPayment(
     payment,
   );
 }
+
+export interface PaymentMethodsAvailability {
+  stripe: boolean;
+  paypal: boolean;
+}
+
+export function getPaymentMethods(): Promise<PaymentMethodsAvailability> {
+  return apiGet<PaymentMethodsAvailability>("/api/invoices/payment-methods");
+}
+
+// Deliberately snake_case fields here (order_id/approval_url), not this
+// file's usual camelCase -- these are the LITERAL JSON keys
+// api/invoices_public.py's /pay/paypal route actually returns; getting
+// this wrong wouldn't just be a display mismatch (like some of this
+// file's older camelCase interfaces vs the mocked data they were written
+// against), it would silently read undefined for a real field.
+export interface PaypalOrderResponse {
+  order_id: string;
+  approval_url: string | null;
+}
+
+export function payInvoiceViaPaypal(id: string): Promise<PaypalOrderResponse> {
+  return apiPost<PaypalOrderResponse>(`/api/invoices/${id}/pay/paypal`);
+}
+
+export function capturePaypalPayment(
+  id: string,
+  orderId: string,
+): Promise<{ status: string }> {
+  // order_id (not orderId) in the body -- must match
+  // api/invoices_public.py's PayPalCaptureRequest field name exactly.
+  return apiPost<{ status: string }>(`/api/invoices/${id}/pay/paypal/capture`, {
+    order_id: orderId,
+  });
+}
