@@ -33,6 +33,25 @@ export default defineConfig({
   },
   server: {
     port: 5173,
+    // api/client.ts only ever fetches relative paths ("/api/...", see
+    // its own doc comment) -- fine for a real deployment (frontend and
+    // backend served from the same origin behind Caddy, per
+    // docs/design/11), but the plain `vite dev` server has nothing to
+    // forward those to on its own. This was a latent gap: no existing
+    // frontend system test actually called the API (landing.spec.ts just
+    // checks static content), so it went unnoticed. Proxying to the
+    // backend's real port here -- overridable via
+    // VITE_API_PROXY_TARGET for CI's docker-compose.test.yml stack,
+    // where the backend isn't necessarily on localhost:8000 -- is what
+    // makes a system test that actually registers/logs in/pays an
+    // invoice reach a real backend instead of 404ing against the dev
+    // server itself.
+    proxy: {
+      "/api": {
+        target: process.env.VITE_API_PROXY_TARGET ?? "http://localhost:8000",
+        changeOrigin: true,
+      },
+    },
   },
   test: {
     environment: "jsdom",
