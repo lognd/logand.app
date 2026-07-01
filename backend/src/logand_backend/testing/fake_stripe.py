@@ -27,6 +27,13 @@ from fastapi import FastAPI, Request
 # live Stripe account, not to be a full Stripe simulator.
 app = FastAPI(title="fake-stripe (test double, not real Stripe)")
 
+# In-memory only, module-level state for the lifetime of this process --
+# enough to let GET /v1/payment_intents/{id} (stripe.PaymentIntent.retrieve,
+# used by api/invoices_public.py's idempotent-resume check) echo back a
+# previously-created intent's own status/client_secret, without needing a
+# real database just for a test double.
+_intents: dict[str, dict] = {}
+
 
 @app.post("/v1/payment_intents")
 async def create_payment_intent(request: Request) -> dict:
@@ -59,7 +66,7 @@ async def create_payment_intent(request: Request) -> dict:
             metadata[key[len("metadata[") : -1]] = value
 
     intent_id = f"pi_fake_{uuid.uuid4().hex[:24]}"
-    return {
+    intent = {
         "id": intent_id,
         "object": "payment_intent",
         "amount": amount,
@@ -70,6 +77,18 @@ async def create_payment_intent(request: Request) -> dict:
         "livemode": False,
         "created": int(time.time()),
     }
+    _intents[intent_id] = intent
+    return intent
+
+
+@app.get("/v1/payment_intents/{intent_id}")
+async def retrieve_payment_intent(intent_id: str) -> dict:
+    # Real Stripe 404s for an unknown intent ID; this double only ever
+    # gets asked about IDs it created itself (see api/invoices_public.py's
+    # idempotent-resume check, which only retrieves an ID it already has
+    # stored on the invoice), so there's no meaningful "not found" case to
+    # simulate here.
+    return _intents[intent_id]
 
 
 if __name__ == "__main__":

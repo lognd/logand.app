@@ -86,11 +86,21 @@ async def get_payment_methods(
 
 
 async def _get_owned_invoice(
-    db: AsyncSession, invoice_id: UUID, customer_id: UUID
+    db: AsyncSession, invoice_id: UUID, customer_id: UUID, *, for_update: bool = False
 ) -> Invoice:
-    invoice = (
-        await db.execute(select(Invoice).where(Invoice.id == invoice_id))
-    ).scalar_one_or_none()
+    # for_update=True (SELECT ... FOR UPDATE) on every path that reads the
+    # invoice's status/amount and then acts on it (creating a payment
+    # intent, capturing a PayPal order) -- serializes two concurrent
+    # requests against the SAME invoice (a double-clicked pay button, two
+    # browser tabs) so neither can act on a stale read of "still payable"
+    # after the other has already started/finished paying it. Plain reads
+    # (get_my_invoice, the PDF route) pass for_update=False (the default)
+    # since taking a write lock there would serialize downloads against
+    # payment operations for no reason.
+    query = select(Invoice).where(Invoice.id == invoice_id)
+    if for_update:
+        query = query.with_for_update()
+    invoice = (await db.execute(query)).scalar_one_or_none()
     # NOTE: 404 (not 403) whether the invoice doesn't exist OR exists but
     # isn't owned by this customer -- never let the response distinguish the
     # two (docs/design/04).
@@ -162,7 +172,9 @@ async def pay_invoice_via_paypal(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     await _pay_limiter.check("invoice_pay_paypal", str(customer.user_id))
-    invoice = await _get_owned_invoice(db, invoice_id, customer.user_id)
+    invoice = await _get_owned_invoice(
+        db, invoice_id, customer.user_id, for_update=True
+    )
     if invoice.status not in ("sent", "overdue"):
         raise HTTPException(
             status_code=409, detail="invoice is not payable in its current state"
@@ -189,7 +201,9 @@ async def capture_invoice_paypal_payment(
     customer: SessionInfo = Depends(require_customer),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    invoice = await _get_owned_invoice(db, invoice_id, customer.user_id)
+    invoice = await _get_owned_invoice(
+        db, invoice_id, customer.user_id, for_update=True
+    )
     if invoice.status not in ("sent", "overdue"):
         raise HTTPException(
             status_code=409, detail="invoice is not payable in its current state"
@@ -240,7 +254,17 @@ async def pay_invoice(
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, str]:
     await _pay_limiter.check("invoice_pay", str(customer.user_id))
-    invoice = await _get_owned_invoice(db, invoice_id, customer.user_id)
+    # for_update=True -- serializes this against any other concurrent
+    # request touching the same invoice (another /pay call, a manual
+    # payment, a PayPal capture), see _get_owned_invoice's own doc
+    # comment. Combined with the idempotent-reuse check just below, this
+    # is what actually prevents a double-clicked "Pay" button (or two
+    # open tabs) from creating two separate live PaymentIntents that a
+    # customer could then go on to confirm both of, charging their card
+    # twice for one invoice.
+    invoice = await _get_owned_invoice(
+        db, invoice_id, customer.user_id, for_update=True
+    )
     if invoice.status not in ("sent", "overdue"):
         raise HTTPException(
             status_code=409, detail="invoice is not payable in its current state"
@@ -255,6 +279,21 @@ async def pay_invoice(
     # HTTP double, see AppConfig.stripe_api_base's doc comment.
     if cfg.stripe_api_base:
         stripe.api_base = cfg.stripe_api_base
+
+    # Idempotent resume: if a PREVIOUS call already created a still-live
+    # intent for this invoice (a reload of the pay page, a retried
+    # request), reuse it instead of creating a second one -- Stripe would
+    # happily create as many PaymentIntents as asked, and a customer
+    # confirming two of them (two browser tabs, a slow first request
+    # retried) would really charge their card twice.
+    if invoice.stripe_payment_intent_id:
+        existing_intent = stripe.PaymentIntent.retrieve(
+            invoice.stripe_payment_intent_id
+        )
+        if existing_intent.status not in ("canceled", "succeeded"):
+            assert existing_intent.client_secret is not None
+            return {"client_secret": existing_intent.client_secret}
+
     intent = stripe.PaymentIntent.create(
         amount=int(invoice.amount_total * 100),
         currency=invoice.currency,

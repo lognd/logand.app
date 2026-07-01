@@ -47,6 +47,30 @@ class LineItemInput(BaseModel):
     unit_price: Decimal
 
 
+async def lock_invoice_for_update(db: AsyncSession, invoice_id: UUID) -> Invoice | None:
+    """SELECT ... FOR UPDATE on a single invoice row -- serializes any two
+    concurrent requests that both try to read-then-mutate the SAME
+    invoice (a double-clicked "send," two admins racing a manual payment,
+    a retried webhook overlapping a customer's own /pay call) without
+    taking any lock at all on OTHER invoices, so this has no throughput
+    impact under normal traffic (a customer paying invoice A never blocks
+    a completely unrelated payment against invoice B). Postgres releases
+    the row lock automatically when this transaction commits or rolls
+    back -- there's no separate unlock step to remember.
+
+    Only used on paths that read a status/amount and then act on it
+    (send/void/record-payment/pay); generate_invoice_pdf below is
+    deliberately NOT locked, since it's read-only and taking a write lock
+    there would serialize PDF downloads against payment operations for no
+    reason.
+    """
+    return (
+        await db.execute(
+            select(Invoice).where(Invoice.id == invoice_id).with_for_update()
+        )
+    ).scalar_one_or_none()
+
+
 async def recompute_amount_total(db: AsyncSession, invoice_id: UUID) -> Decimal:
     """Sums invoice_line_items for invoice_id and writes it back to
     invoices.amount_total in the same transaction. Called on every write
@@ -96,7 +120,7 @@ async def send_invoice(
     """draft -> sent. Once sent, line items are frozen (docs/design/04) --
     enforce that here, not just in the API layer, since domain functions
     are the only thing that should be trusted to hold this invariant."""
-    invoice = await db.get(Invoice, invoice_id)
+    invoice = await lock_invoice_for_update(db, invoice_id)
     if invoice is None:
         return Err(InvoiceError.NotFound)
     if invoice.status != "draft":
@@ -112,7 +136,7 @@ async def send_invoice(
 async def void_invoice(
     db: AsyncSession, invoice_id: UUID
 ) -> Result[None, InvoiceError]:
-    invoice = await db.get(Invoice, invoice_id)
+    invoice = await lock_invoice_for_update(db, invoice_id)
     if invoice is None:
         return Err(InvoiceError.NotFound)
     if invoice.status not in ("sent", "overdue"):
@@ -141,7 +165,15 @@ async def record_manual_payment(
     stays payable (sent/overdue) for the remaining balance rather than
     being incorrectly marked fully paid.
     """
-    invoice = await db.get(Invoice, invoice_id)
+    # lock_invoice_for_update (SELECT ... FOR UPDATE), not db.get -- two admins (or
+    # one admin double-clicking Save) recording a payment against the
+    # SAME invoice at the same moment must be serialized, or both could
+    # read "$60 recorded so far, not yet covering the $100 total" before
+    # either one's INSERT commits, and neither would flip the invoice to
+    # "paid" even though the two payments together cover it (a lost
+    # update -- the invoice would stay "sent" until someone noticed and
+    # manually fixed it).
+    invoice = await lock_invoice_for_update(db, invoice_id)
     if invoice is None or invoice.deleted_at is not None:
         return Err(InvoiceError.NotFound)
     if invoice.status not in ("sent", "overdue"):

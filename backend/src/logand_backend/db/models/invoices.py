@@ -4,7 +4,17 @@ import uuid
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import CheckConstraint, Date, DateTime, ForeignKey, Numeric, Text, func
+from sqlalchemy import (
+    CheckConstraint,
+    Date,
+    DateTime,
+    ForeignKey,
+    Index,
+    Numeric,
+    Text,
+    func,
+    text,
+)
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -91,6 +101,30 @@ class Payment(Base):
     __table_args__ = (
         CheckConstraint(_PAYMENT_STATUS_CHECK, name="ck_payments_status"),
         CheckConstraint(_PAYMENT_METHOD_CHECK, name="ck_payments_method"),
+        # Defined here too, not only in migration 0003_payment_idempotency
+        # -- integration/system tests build their schema from THIS
+        # metadata via Base.metadata.create_all() (see conftest.py's
+        # db_engine fixture), not by actually running Alembic migrations,
+        # so an index that only exists in the migration file is invisible
+        # to most of the test suite (confirmed: the DB-level duplicate-
+        # payment test passed locally against a migrated DB but silently
+        # never even created the index against create_all() until this
+        # was added here too -- same gap db/models/inventory.py's own
+        # NOTE describes for the FTS column). Partial (postgresql_where)
+        # since most rows (manual payments) never set these at all, and
+        # NULL must never be treated as colliding with NULL.
+        Index(
+            "uq_payments_stripe_payment_intent_id",
+            "stripe_payment_intent_id",
+            unique=True,
+            postgresql_where=text("stripe_payment_intent_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_payments_paypal_order_id",
+            "paypal_order_id",
+            unique=True,
+            postgresql_where=text("paypal_order_id IS NOT NULL"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
