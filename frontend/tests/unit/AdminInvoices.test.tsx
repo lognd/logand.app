@@ -13,10 +13,10 @@ import type { Invoice } from "../../src/api/invoices";
 const draftInvoice: Invoice = {
   id: "inv-1",
   status: "draft",
-  amountTotal: "100.00",
+  amount_total: "100.00",
   currency: "usd",
   memo: "first invoice",
-  dueDate: "2026-07-01",
+  due_date: "2026-07-01",
 };
 
 function jsonResponse(body: unknown): Response {

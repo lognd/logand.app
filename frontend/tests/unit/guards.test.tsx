@@ -19,8 +19,7 @@ function renderGuard(Guard: typeof AdminGuard, child = <p>protected content</p>)
 describe("AdminGuard", () => {
   it("renders children once /api/me resolves with role=admin", async () => {
     vi.spyOn(authApi, "fetchMe").mockResolvedValue({
-      id: "1",
-      email: "logan@logandapp.com",
+      user_id: "1",
       role: "admin",
     });
     renderGuard(AdminGuard);
@@ -29,8 +28,7 @@ describe("AdminGuard", () => {
 
   it("renders Forbidden when the session role is customer, not admin", async () => {
     vi.spyOn(authApi, "fetchMe").mockResolvedValue({
-      id: "1",
-      email: "customer@example.com",
+      user_id: "1",
       role: "customer",
     });
     renderGuard(AdminGuard);
@@ -49,8 +47,7 @@ describe("AdminGuard", () => {
 describe("CustomerGuard", () => {
   it("renders children once /api/me resolves with role=customer", async () => {
     vi.spyOn(authApi, "fetchMe").mockResolvedValue({
-      id: "2",
-      email: "customer@example.com",
+      user_id: "2",
       role: "customer",
     });
     renderGuard(CustomerGuard);
@@ -59,8 +56,7 @@ describe("CustomerGuard", () => {
 
   it("renders Forbidden when the session role is admin, not customer", async () => {
     vi.spyOn(authApi, "fetchMe").mockResolvedValue({
-      id: "2",
-      email: "logan@logandapp.com",
+      user_id: "2",
       role: "admin",
     });
     renderGuard(CustomerGuard);

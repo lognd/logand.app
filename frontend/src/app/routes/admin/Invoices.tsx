@@ -185,9 +185,9 @@ export function AdminInvoices() {
                 <tr key={invoice.id} className="border-b border-border">
                   <td className="p-2">{invoice.status}</td>
                   <td className="p-2">
-                    {invoice.amountTotal} {invoice.currency}
+                    {invoice.amount_total} {invoice.currency}
                   </td>
-                  <td className="p-2">{invoice.dueDate ?? "-"}</td>
+                  <td className="p-2">{invoice.due_date ?? "-"}</td>
                   <td className="p-2">{invoice.memo ?? "-"}</td>
                   <td className="flex flex-wrap gap-2 p-2">
                     <button

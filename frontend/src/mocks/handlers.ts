@@ -94,8 +94,8 @@ function requireRole(role: Exclude<Role, null>): HttpResponse<DefaultBodyType> |
 }
 
 function toListShape(inv: MockInvoiceDetail): Invoice {
-  const { id, status, amountTotal, currency, memo, dueDate } = inv;
-  return { id, status, amountTotal, currency, memo, dueDate };
+  const { id, status, amount_total, currency, memo, due_date } = inv;
+  return { id, status, amount_total, currency, memo, due_date };
 }
 
 export const handlers = [
@@ -109,7 +109,6 @@ export const handlers = [
     } else {
       return HttpResponse.json({ detail: "invalid credentials" }, { status: 401 });
     }
-    sessionStorage.setItem("mock-email", body.email.toLowerCase());
     setMockCsrfCookie();
     return HttpResponse.json({ status: "ok" });
   }),
@@ -126,14 +125,12 @@ export const handlers = [
     // real backend's register() -- there is no path here to create an admin.
     addRegisteredEmail(body.email);
     writeCurrentRole("customer");
-    sessionStorage.setItem("mock-email", body.email.toLowerCase());
     setMockCsrfCookie();
     return HttpResponse.json({ status: "ok" });
   }),
 
   http.post("/api/auth/logout", () => {
     writeCurrentRole(null);
-    sessionStorage.removeItem("mock-email");
     clearMockCsrfCookie();
     return HttpResponse.json({ status: "ok" });
   }),
@@ -143,12 +140,10 @@ export const handlers = [
     if (currentRole === null) {
       return HttpResponse.json({ detail: "unauthenticated (mock)" }, { status: 401 });
     }
-    const email =
-      sessionStorage.getItem("mock-email") ??
-      (currentRole === "admin" ? MOCK_ADMIN_EMAIL : MOCK_CUSTOMER_EMAIL);
+    // user_id (not id) -- matches the real backend's actual MeResponse
+    // shape (api/health.py), see api/auth.ts's Me interface doc comment.
     return HttpResponse.json({
-      id: currentRole === "admin" ? "mock-admin-id" : MOCK_CUSTOMER_ID,
-      email,
+      user_id: currentRole === "admin" ? "mock-admin-id" : MOCK_CUSTOMER_ID,
       role: currentRole,
     });
   }),
@@ -191,7 +186,7 @@ export const handlers = [
     // Real Stripe Elements aren't mounted in mock mode -- return a fake
     // client_secret shaped like the real response so the calling code path
     // still exercises normally.
-    return HttpResponse.json({ clientSecret: "pi_mock_secret_" + invoice.id });
+    return HttpResponse.json({ client_secret: "pi_mock_secret_" + invoice.id });
   }),
 
   // -- admin invoices --------------------------------------------------
@@ -212,30 +207,37 @@ export const handlers = [
   http.post("/api/admin/invoices", async ({ request }) => {
     const denied = requireRole("admin");
     if (denied) return denied;
+    // NOTE: no real UI calls this yet (see AdminInvoices.tsx's own TODO --
+    // the create-invoice form doesn't exist), so this request-body shape
+    // is a best guess at what the real backend will eventually expect
+    // (api/invoices.py's create() takes customer_id as a query param and
+    // a bare JSON array of line items, not an object like this) -- fix
+    // this mock's request parsing to match once that form is actually
+    // built, rather than guessing further now.
     const body = (await request.json()) as {
-      customerId?: string;
+      customer_id?: string;
       memo?: string | null;
-      lineItems?: { description: string; quantity: string; unitPrice: string }[];
+      line_items?: { description: string; quantity: string; unit_price: string }[];
     };
-    const lineItems = (body.lineItems ?? []).map((li) => ({
+    const lineItems = (body.line_items ?? []).map((li) => ({
       id: mockId("li"),
       description: li.description,
       quantity: li.quantity,
-      unitPrice: li.unitPrice,
+      unit_price: li.unit_price,
     }));
     const amountTotal = lineItems
-      .reduce((sum, li) => sum + Number(li.quantity) * Number(li.unitPrice), 0)
+      .reduce((sum, li) => sum + Number(li.quantity) * Number(li.unit_price), 0)
       .toFixed(2);
     const invoice: MockInvoiceDetail = {
       id: mockId("inv"),
-      customerId: body.customerId ?? MOCK_CUSTOMER_ID,
+      customer_id: body.customer_id ?? MOCK_CUSTOMER_ID,
       status: "draft",
-      amountTotal,
+      amount_total: amountTotal,
       currency: "usd",
       memo: body.memo ?? null,
-      dueDate: null,
-      isRecurring: false,
-      lineItems,
+      due_date: null,
+      is_recurring: false,
+      line_items: lineItems,
       payments: [],
     };
     invoices.push(invoice);
@@ -282,11 +284,11 @@ export const handlers = [
       method: body.method,
       amount: body.amount,
       status: "succeeded",
-      transactionId: null,
+      transaction_id: null,
       note: body.note ?? null,
     });
     const paidSoFar = invoice.payments.reduce((sum, p) => sum + Number(p.amount), 0);
-    if (paidSoFar >= Number(invoice.amountTotal)) {
+    if (paidSoFar >= Number(invoice.amount_total)) {
       invoice.status = "paid";
     }
     return HttpResponse.json({ id: paymentId });

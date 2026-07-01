@@ -8,11 +8,17 @@ import type { Invoice } from "../api/invoices";
 import type { BudgetEntry } from "../api/budget";
 import type { InventoryItem } from "../api/inventory";
 
+// snake_case fields (unit_price, transaction_id, etc.), not camelCase --
+// matches the real backend's actual JSON field names (see api/invoices.ts's
+// Invoice interface doc comment for the full story on why this matters:
+// these mocks previously used camelCase, which happened to match an
+// equally-wrong camelCase frontend type, so the mismatch against the REAL
+// backend went unnoticed).
 export interface MockInvoiceLineItem {
   id: string;
   description: string;
   quantity: string;
-  unitPrice: string;
+  unit_price: string;
 }
 
 export interface MockPayment {
@@ -20,14 +26,14 @@ export interface MockPayment {
   method: string;
   amount: string;
   status: string;
-  transactionId: string | null;
+  transaction_id: string | null;
   note?: string | null;
 }
 
 export interface MockInvoiceDetail extends Invoice {
-  customerId: string;
-  isRecurring: boolean;
-  lineItems: MockInvoiceLineItem[];
+  customer_id: string;
+  is_recurring: boolean;
+  line_items: MockInvoiceLineItem[];
   payments: MockPayment[];
 }
 
@@ -42,53 +48,53 @@ export function mockId(prefix: string): string {
 export const invoices: MockInvoiceDetail[] = [
   {
     id: "inv-001",
-    customerId: MOCK_CUSTOMER_ID,
+    customer_id: MOCK_CUSTOMER_ID,
     status: "draft",
-    amountTotal: "450.00",
+    amount_total: "450.00",
     currency: "usd",
     memo: "Website redesign, phase 1",
-    dueDate: "2026-07-15",
-    isRecurring: false,
-    lineItems: [
-      { id: "li-1", description: "Design mockups", quantity: "1", unitPrice: "300.00" },
-      { id: "li-2", description: "Revisions", quantity: "3", unitPrice: "50.00" },
+    due_date: "2026-07-15",
+    is_recurring: false,
+    line_items: [
+      { id: "li-1", description: "Design mockups", quantity: "1", unit_price: "300.00" },
+      { id: "li-2", description: "Revisions", quantity: "3", unit_price: "50.00" },
     ],
     payments: [],
   },
   {
     id: "inv-002",
-    customerId: MOCK_CUSTOMER_ID,
+    customer_id: MOCK_CUSTOMER_ID,
     status: "sent",
-    amountTotal: "1200.00",
+    amount_total: "1200.00",
     currency: "usd",
     memo: "Monthly retainer -- June",
-    dueDate: "2026-06-30",
-    isRecurring: true,
-    lineItems: [
+    due_date: "2026-06-30",
+    is_recurring: true,
+    line_items: [
       {
         id: "li-3",
         description: "Retainer hours",
         quantity: "12",
-        unitPrice: "100.00",
+        unit_price: "100.00",
       },
     ],
     payments: [],
   },
   {
     id: "inv-003",
-    customerId: MOCK_CUSTOMER_ID,
+    customer_id: MOCK_CUSTOMER_ID,
     status: "paid",
-    amountTotal: "780.50",
+    amount_total: "780.50",
     currency: "usd",
     memo: "Server migration",
-    dueDate: "2026-05-20",
-    isRecurring: false,
-    lineItems: [
+    due_date: "2026-05-20",
+    is_recurring: false,
+    line_items: [
       {
         id: "li-4",
         description: "Migration labor",
         quantity: "7.5",
-        unitPrice: "104.0667",
+        unit_price: "104.0667",
       },
     ],
     payments: [
@@ -97,25 +103,25 @@ export const invoices: MockInvoiceDetail[] = [
         method: "stripe",
         amount: "780.50",
         status: "succeeded",
-        transactionId: "ch_mock_1",
+        transaction_id: "ch_mock_1",
       },
     ],
   },
   {
     id: "inv-004",
-    customerId: MOCK_CUSTOMER_ID,
+    customer_id: MOCK_CUSTOMER_ID,
     status: "overdue",
-    amountTotal: "199.99",
+    amount_total: "199.99",
     currency: "usd",
     memo: "Domain + hosting renewal",
-    dueDate: "2026-06-01",
-    isRecurring: true,
-    lineItems: [
+    due_date: "2026-06-01",
+    is_recurring: true,
+    line_items: [
       {
         id: "li-5",
         description: "Hosting renewal",
         quantity: "1",
-        unitPrice: "199.99",
+        unit_price: "199.99",
       },
     ],
     payments: [],

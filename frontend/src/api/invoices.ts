@@ -1,13 +1,22 @@
 import { apiGet, apiPost } from "./client";
 
 // TODO(logan): replace with generated type once backend/openapi.json exists.
+// snake_case fields (amount_total/due_date), not amountTotal/dueDate --
+// found during a security/correctness audit that this interface (and
+// mocks/data.ts's matching shape) had been declaring camelCase fields the
+// real backend (api/invoices_public.py's _invoice_summary,
+// api/invoices.py's identical admin one) never actually returns. Every
+// page reading these fields had only ever been exercised against MSW
+// mocks that happened to use the same (wrong) camelCase convention, so
+// this silently rendered "undefined" for both fields against a real
+// backend without anyone having noticed yet.
 export interface Invoice {
   id: string;
   status: "draft" | "sent" | "paid" | "overdue" | "void";
-  amountTotal: string;
+  amount_total: string;
   currency: string;
   memo: string | null;
-  dueDate: string | null;
+  due_date: string | null;
 }
 
 // Customer-scoped (/api/invoices, see api/invoices_public.py).
@@ -19,8 +28,11 @@ export function getInvoice(id: string): Promise<Invoice> {
   return apiGet<Invoice>(`/api/invoices/${id}`);
 }
 
-export function payInvoice(id: string): Promise<{ clientSecret: string }> {
-  return apiPost<{ clientSecret: string }>(`/api/invoices/${id}/pay`);
+// client_secret (not clientSecret) -- same real-field-name audit as
+// Invoice above; api/invoices_public.py's /pay route returns
+// {"client_secret": ...} literally.
+export function payInvoice(id: string): Promise<{ client_secret: string }> {
+  return apiPost<{ client_secret: string }>(`/api/invoices/${id}/pay`);
 }
 
 // Admin-scoped (/api/admin/invoices, see api/invoices.py).
