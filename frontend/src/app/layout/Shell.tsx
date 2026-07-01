@@ -158,7 +158,24 @@ export function Shell({ children }: { children: ReactNode }) {
           </nav>
         )}
       </header>
-      <div className="relative z-10 flex-1">{children}</div>
+      {/* `flex flex-col`, not a plain block box -- Landing.tsx's <main>
+          used to size itself via `h-full` (height:100%), which needs this
+          wrapper to have a genuinely DEFINITE height for that percentage
+          to resolve against. This wrapper's own height comes from
+          flex-grow (flex-1) on the shell-root flex column above, and
+          while getComputedStyle correctly reports a real pixel height for
+          it, a flex-grown size along the main axis isn't always treated
+          as "definite" for a DESCENDANT's percentage-height resolution
+          the way an explicit `height` would be -- in practice this left
+          <main> sized to fit its own content instead of stretching to
+          fill the actual remaining space, so its footer landed partway up
+          the page instead of at the true bottom ("you moved the footer
+          upwards," "content sizes to the minimum containing size").
+          Making this wrapper a flex container itself and having <main> use
+          flex-1 (not h-full) sidesteps percentage-height resolution
+          entirely -- flex-grow distribution is what flexbox is actually
+          built to do reliably. */}
+      <div className="relative z-10 flex flex-1 flex-col">{children}</div>
     </div>
   );
 }

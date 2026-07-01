@@ -4,23 +4,83 @@ on:
   push:
     branches: [main]
 
-# NOTE(logan): this only runs after CI's workflow_run completes successfully -- it does NOT
-# re-run the checks itself, so don't remove the `workflow_run` trigger thinking ci.yml's
-# `push: branches: [main]` job already gates this. They're separate workflow runs.
+# NOTE(logan): ci.yml ALSO triggers on `push: branches: [main]` -- both
+# workflows start in parallel on the same push, they are not sequential.
+# wait-for-ci below is what actually gates the deploy on ci.yml's result
+# for this exact SHA (via polling, since there's no clean "depends on a
+# different workflow's run" primitive short of workflow_run, which has its
+# own subtleties around re-resolving the right SHA). A previous version of
+# this comment incorrectly described this as workflow_run-triggered --
+# it never was; don't reintroduce that misunderstanding.
 jobs:
   wait-for-ci:
     runs-on: ubuntu-latest
+    # NOTE: the default GITHUB_TOKEN's permissions are read-only for most
+    # resources UNLESS the repo/org's default workflow permissions setting
+    # is "read and write," and even then, "checks: read" isn't implied by
+    # the broad defaults on every account -- without this explicit block,
+    # `gh api .../check-runs` below can 403 ("Resource not accessible by
+    # integration"), which the old `|| true` on that call silently
+    # swallowed into an EMPTY results file rather than a build failure --
+    # meaning a permissions problem here didn't loudly fail closed, it
+    # just meant `checks` came back empty and the gate below had nothing
+    # real to check.
+    permissions:
+      checks: read
+      contents: read
     steps:
       - name: poll CI status for this SHA
-        # GitHub Actions doesn't have a clean "depends on a different workflow's run for the
-        # same SHA" primitive without workflow_run (which only fires on default branch and
-        # has its own subtleties around re-fetching the right SHA). Polling via gh api is the
-        # simplest correct option for a single-VPS, low-traffic deploy.
+        # This used to make ONE gh api call immediately and judge the
+        # result on the spot -- a real race condition, since ci.yml (which
+        # takes several minutes across 4 jobs) starts at the same moment
+        # this workflow does. A single immediate check sees ci.yml's jobs
+        # still "in_progress" (no conclusion yet) far more often than not,
+        # which either falsely aborted a deploy that would have gone on to
+        # pass, or -- worse -- let a deploy through before CI had actually
+        # finished, depending on exactly how the empty/pending output got
+        # interpreted. Poll in a real loop instead, waiting for every
+        # relevant check run to reach a terminal conclusion (not just
+        # "exists"), with a generous but finite timeout so a genuinely
+        # stuck CI run fails the deploy rather than hanging forever.
         run: |
-          gh api repos/${{ github.repository }}/commits/${{ github.sha }}/check-runs \
-            --jq '.check_runs[] | select(.name | startswith("backend") or startswith("frontend") or startswith("wasm-ascii")) | .conclusion' \
-            > /tmp/conclusions.txt || true
-          if grep -qv "success" /tmp/conclusions.txt; then
+          # Includes system-tests -- previously excluded, which meant a
+          # deploy could go out even if the full end-to-end system-test
+          # job failed, as long as the three faster unit-level jobs it
+          # depends on passed.
+          names_pattern='^(backend|frontend|wasm-ascii|system-tests)'
+          elapsed=0
+          timeout=1800   # 30 minutes -- ci.yml's slowest job today is well under this
+          interval=20
+
+          while true; do
+            if ! gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/check-runs" \
+                 --jq '.check_runs[] | select(.name | test("'"$names_pattern"'")) | .name + " " + .status + " " + (.conclusion // "null")' \
+                 > /tmp/check_runs.txt; then
+              echo "gh api call failed (see error above -- check the checks:read permission" \
+                   "on this job, or GITHUB_TOKEN's repo access) -- aborting deploy"
+              exit 1
+            fi
+
+            echo "--- check-runs for $GITHUB_SHA at ${elapsed}s ---"
+            cat /tmp/check_runs.txt
+
+            relevant_count=$(wc -l < /tmp/check_runs.txt)
+            pending_count=$(awk '$2 != "completed"' /tmp/check_runs.txt | wc -l)
+
+            if [ "$relevant_count" -gt 0 ] && [ "$pending_count" -eq 0 ]; then
+              break  # every relevant check run has completed -- fall through to the verdict below
+            fi
+
+            if [ "$elapsed" -ge "$timeout" ]; then
+              echo "Timed out after ${timeout}s waiting for CI to finish on this SHA -- aborting deploy"
+              exit 1
+            fi
+
+            sleep "$interval"
+            elapsed=$((elapsed + interval))
+          done
+
+          if awk '{print $3}' /tmp/check_runs.txt | grep -qv '^success$'; then
             echo "CI did not pass cleanly for this SHA, aborting deploy"
             exit 1
           fi
