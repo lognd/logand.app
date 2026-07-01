@@ -294,7 +294,7 @@ export function createStreams(width: number, height: number, cellSize: number): 
   const cols = Math.max(1, Math.floor(width / cellSize));
   const streams: RainStream[] = [];
   for (let i = 0; i < cols; i++) {
-    streams.push(spawnStream(i * cellSize, height));
+    streams.push(spawnStream(i * cellSize, height, true));
   }
   return streams;
 }
@@ -307,11 +307,19 @@ export function createStreams(width: number, height: number, cellSize: number): 
 const STEP_INTERVAL_MIN_MS = 60;
 const STEP_INTERVAL_MAX_MS = 140;
 
-function spawnStream(x: number, height: number): RainStream {
+// initial=true scatters the stream's y anywhere from well above the top
+// down through the full visible height, so the very first frame already
+// looks "mid-rain" instead of empty and slowly filling in over the next
+// few seconds ("make the matrix rain background start populated").
+// Respawns (initial=false, after a stream falls fully past the bottom)
+// keep starting above the top -- that's the one place a stream SHOULD
+// reappear off-screen, since a respawn suddenly popping into the middle
+// of the visible area would read as a glitch, not a design choice.
+function spawnStream(x: number, height: number, initial = false): RainStream {
   const length = 6 + Math.floor(Math.random() * 14);
   return {
     x,
-    y: -Math.random() * height,
+    y: initial ? Math.random() * height * 2 - height : -Math.random() * height,
     length,
     chars: Array.from({ length }, randomGlyph),
     stepIntervalMs:
