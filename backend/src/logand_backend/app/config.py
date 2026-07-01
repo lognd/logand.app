@@ -12,7 +12,16 @@ class AppConfig(BaseModel):
     model_config = {}
 
     database_url: str = "postgresql+asyncpg://logand:changeme@localhost:5432/logand"
-    redis_url: str = "redis://localhost:6379/0"
+    # None (not a hardcoded "redis://localhost:6379/0"-looking default) --
+    # rate_limit.py's RateLimiter treats redis_url=None as "use the
+    # in-process fallback," and a plausible-looking default URL here made
+    # that decision silently wrong: every environment without a real Redis
+    # reachable at that exact address (plain `uv run pytest`, local `uv run
+    # uvicorn` without docker-compose) would have looked "configured" while
+    # actually being unreachable. None only becomes a real URL when
+    # REDIS_URL is actually set in the environment (docker-compose.yml/
+    # docker-compose.test.yml both do, via backend/.env or inline env).
+    redis_url: str | None = None
     session_secret: str = "dev-only-insecure-secret"
     payment_processor_secret: str = "sk_test_fake"
     stripe_webhook_secret: str = "whsec_fake"

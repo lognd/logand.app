@@ -15,7 +15,13 @@ from logand_backend.db.base import get_db
 from logand_backend.db.models.invoices import Invoice
 
 router = APIRouter(prefix="/api/invoices", tags=["customer", "invoices"])
-_pay_limiter = RateLimiter(*CUSTOMER_PAY)
+# redis_url wired from config -- see api/auth.py's identical NOTE for why
+# this previously always used RateLimiter's in-process fallback regardless
+# of REDIS_URL, and why AppConfig.redis_url defaulting to None (rather than
+# a hardcoded-looking-real URL) matters here.
+_pay_limiter = RateLimiter(
+    *CUSTOMER_PAY, redis_url=AppConfig.from_external(argparse.Namespace()).redis_url
+)
 
 
 def _invoice_summary(invoice: Invoice) -> dict:

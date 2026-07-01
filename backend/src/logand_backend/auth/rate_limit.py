@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import logging
 import time
 from typing import cast
 
 import redis.asyncio as redis
 from fastapi import HTTPException, Request
+
+logger = logging.getLogger(__name__)
 
 # Thresholds per docs/design/02-auth-and-security.md.
 LOGIN = (5, 15 * 60)
@@ -23,11 +26,17 @@ REGISTER = LOGIN
 class RateLimiter:
     """Token-bucket limiter keyed by (bucket_name, client_key).
 
-    NOTE (known v1 limitation, flagged explicitly in docs/design/02): without
-    REDIS_URL configured this falls back to an in-process dict, which resets
-    on restart and does not share state across uvicorn workers. Fine for a
-    single-worker dev box, not a substitute for Redis in production -- see
-    docs/design/11-deployment.md, the redis service is mandatory there.
+    Backed by Redis when `redis_url` is configured (shares state across
+    uvicorn workers and survives restarts -- see docs/design/11-deployment.md,
+    the redis service is mandatory in production), falling back to an
+    in-process dict otherwise (dev/test without REDIS_URL set) OR if Redis
+    is configured but turns out to be unreachable at request time -- a
+    rate limiter is defense in depth, not core functionality, so an outage
+    in the Redis dependency degrades to weaker (per-process) limiting
+    rather than 500ing every login/register/payment attempt. Once a Redis
+    error is seen, this instance stops retrying it for its own lifetime
+    (see _redis_unavailable) rather than eating a fresh connection-timeout
+    latency hit on every subsequent request during an outage.
     """
 
     def __init__(
@@ -37,12 +46,26 @@ class RateLimiter:
         self._window = window_seconds
         self._redis_url = redis_url
         self._redis: redis.Redis | None = None
+        self._redis_unavailable = False
         self._local_buckets: dict[str, list[float]] = {}
 
     async def check(self, bucket: str, client_key: str) -> None:
-        if self._redis_url is not None:
-            await self._check_redis(bucket, client_key)
-            return
+        if self._redis_url is not None and not self._redis_unavailable:
+            try:
+                await self._check_redis(bucket, client_key)
+                return
+            except HTTPException:
+                raise  # a real 429 from _check_redis, not a connection failure
+            except redis.RedisError as exc:
+                self._redis_unavailable = True
+                logger.warning(
+                    "rate limiter: Redis unavailable (%s), falling back to "
+                    "in-process limiting for the rest of this process's life",
+                    exc,
+                )
+        self._check_local(bucket, client_key)
+
+    def _check_local(self, bucket: str, client_key: str) -> None:
         now = time.monotonic()
         key = f"{bucket}:{client_key}"
         hits = [t for t in self._local_buckets.get(key, []) if now - t < self._window]
