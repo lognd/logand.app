@@ -14,6 +14,18 @@ function NavLinks({ className }: { className?: string }) {
   const logoutMutation = useMutation({
     mutationFn: logout,
     onSuccess: async () => {
+      // setQueryData(null) FIRST, not just invalidateQueries -- react-query
+      // keeps the last successful `data` around when a refetch errors (the
+      // /api/me call this invalidation triggers now 401s, since the session
+      // is actually gone), so invalidateQueries alone left `me` (and thus
+      // the nav) showing the just-logged-out user's stale session until an
+      // unrelated full page reload happened to clear it -- confirmed via a
+      // real logout against a real backend, not just the mocked test
+      // fixtures, which never exercised this specific stale-cache case.
+      // Setting it to null directly makes NavLinks' `!me` check flip
+      // immediately; invalidateQueries after that still forces a real
+      // background recheck for consistency.
+      queryClient.setQueryData(["me"], null);
       await queryClient.invalidateQueries({ queryKey: ["me"] });
       navigate("/");
     },

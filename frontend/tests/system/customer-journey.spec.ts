@@ -25,7 +25,7 @@ async function registerViaUi(page: Page, email: string, password: string): Promi
   await page.goto("/register");
   await page.locator("#email").fill(email);
   await page.locator("#password").fill(password);
-  await page.getByRole("button", { name: /register/i }).click();
+  await page.getByRole("button", { name: /create account/i }).click();
   // Registration logs the account in immediately and navigates home --
   // the nav's "log out" link is the real signal that a session exists,
   // not just that the form submission didn't error.
@@ -138,10 +138,22 @@ test.describe("customer journey", () => {
 
     await registerViaUi(page, email, password);
 
-    const meResp = await request.get("/api/me");
+    // page.request (NOT the standalone `request` fixture) for THIS read --
+    // the standalone fixture is its own isolated APIRequestContext with no
+    // cookies at all, so a plain `/api/me` through it always 401s
+    // regardless of what the page itself just registered. page.request
+    // shares the browser context's real cookie jar, which is what actually
+    // carries the customer session this specific read needs.
+    const meResp = await page.request.get("/api/me");
     expect(meResp.ok()).toBeTruthy();
     const customerId = (await meResp.json()).user_id as string;
 
+    // The standalone `request` fixture again (isolated, NOT page.request)
+    // for the actual admin seeding below -- seedSentInvoice logs an admin
+    // account in and back out. Doing that through page.request would log
+    // the admin in and out on the SAME cookie jar the page itself is using
+    // for the customer's own session, overwriting/clearing it before the
+    // test gets to actually use it to view/pay the invoice as the customer.
     const invoiceId = await seedSentInvoice(request, customerId);
 
     await page.goto("/invoices");
