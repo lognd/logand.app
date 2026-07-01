@@ -122,7 +122,7 @@ export function Projects() {
         {PROJECTS.map((project, i) => (
           <section
             key={project.title}
-            className="flex h-full min-h-full shrink-0 snap-start flex-col items-center gap-4 px-4 py-12"
+            className="flex h-full min-h-full shrink-0 snap-start flex-col items-center gap-4 overflow-hidden px-4 py-12"
           >
             {/* justify-start (the flex default), NOT justify-center: when
                 a section's content (title + card, for the first one) is
@@ -137,20 +137,24 @@ export function Projects() {
                 visually spilled into the NEXT section's territory
                 ("the cards overlap"). Top-aligning fixes both, since any
                 overflow then only ever happens on the bottom.
-                No overflow-y-auto on the section itself (tried that,
-                reverted) -- a nested scrollable ancestor under the
-                cursor gets first refusal of any wheel/trackpad scroll
-                event, and even with nothing of its own to scroll, some
-                browsers still spend one whole scroll gesture "realizing"
-                that before chaining to the outer feed, which is exactly
-                what made it take two scrolls to advance one card
-                ("make it so the first scroll actually works"). In
-                practice the content already fits one screen (see the
-                card's own max-h-40 description scroll for the one place
-                that genuinely needs independent scrolling); trading away
-                a rare-edge-case overflow guard for the outer feed's
-                scroll always working on the first try is the right
-                call.
+                overflow-hidden, not overflow-y-auto -- auto tried and
+                reverted once already: it makes the section a genuinely
+                scrollable ancestor, and even with nothing of its own to
+                scroll, some browsers still spend one whole wheel/
+                trackpad gesture "realizing" that before chaining to the
+                outer feed, which is exactly what made it take two
+                scrolls to advance one card. But different real browser
+                zoom/font-rendering combinations DO sometimes make a
+                card's content taller than the section (confirmed: cards
+                overlapping again on an actual browser at a size this
+                headless testing hadn't hit), so some form of containment
+                is still needed -- overflow-hidden clips instead of
+                scrolling, which isn't a wheel-scroll target at all (there's
+                nothing to scroll to), so it can't re-introduce the
+                two-scroll bug the way overflow-y-auto did. Any content
+                that's genuinely too tall for one screen is clipped at the
+                card's own max-h-40 description scroll (see below), which
+                is the one place actually meant to hold overflow.
                 "Projects" title lives on the FIRST card's own section,
                 not as a separate snap point above the feed -- a
                 persistent title outside the feed turned out to
