@@ -27,3 +27,12 @@ class BudgetError(ErrorSet):
 class InventoryError(ErrorSet):
     NotFound = "inventory item or location was not found"
     LocationInUse = "location cannot be deleted while items still reference it"
+
+
+class PaymentProviderError(ErrorSet):
+    # A real, expected state (an admin hasn't hooked up real API credentials
+    # yet), not a bug -- api/invoices_public.py surfaces this as a 503 with
+    # guidance toward the manual payment methods that always work
+    # regardless of whether any provider is configured.
+    NotConfigured = "this payment provider is not configured"
+    RequestFailed = "the payment provider rejected or failed to process the request"

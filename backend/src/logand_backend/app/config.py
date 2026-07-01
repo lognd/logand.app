@@ -41,6 +41,11 @@ class AppConfig(BaseModel):
     # "sandbox" (PayPal's own test environment name), not "test" -- matches
     # the literal API base URL host name switch in the PayPal provider.
     paypal_mode: str = "sandbox"
+    # None means "use the real sandbox/live PayPal host derived from
+    # paypal_mode" -- only ever overridden in test/CI, pointing at
+    # testing/fake_paypal.py's local HTTP double, same convention as
+    # stripe_api_base above.
+    paypal_api_base: str | None = None
     # Both must be explicitly set for the admin seed to run at all (see
     # app/app.py's lifespan and domain/auth/service.py's
     # ensure_admin_seeded docstring for why this is opt-in, not automatic).
@@ -87,6 +92,7 @@ class AppConfig(BaseModel):
             "PAYPAL_CLIENT_ID": "paypal_client_id",
             "PAYPAL_CLIENT_SECRET": "paypal_client_secret",
             "PAYPAL_MODE": "paypal_mode",
+            "PAYPAL_API_BASE": "paypal_api_base",
             "SEED_ADMIN_EMAIL": "seed_admin_email",
             "SEED_ADMIN_PASSWORD": "seed_admin_password",
             "PUBLIC_BASE_URL": "public_base_url",

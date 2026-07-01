@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import argparse
+from decimal import Decimal
 from uuid import UUID
 
 import stripe
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,9 +16,10 @@ from logand_backend.app.config import AppConfig
 from logand_backend.auth.rate_limit import CUSTOMER_PAY, RateLimiter
 from logand_backend.auth.sessions import SessionInfo, require_customer
 from logand_backend.db.base import get_db
-from logand_backend.db.models.invoices import Invoice
+from logand_backend.db.models.invoices import Invoice, Payment
 from logand_backend.domain.invoices.pdf.renderer import PdfRenderError
 from logand_backend.domain.invoices.service import generate_invoice_pdf
+from logand_backend.domain.payments.providers import paypal
 from logand_backend.logging import get_logger
 
 _log = get_logger(__name__)
@@ -54,6 +57,32 @@ async def list_my_invoices(
     )
     rows = (await db.execute(query.order_by(Invoice.created_at.desc()))).scalars().all()
     return [_invoice_summary(row) for row in rows]
+
+
+@router.get("/payment-methods")
+async def get_payment_methods(
+    _customer: SessionInfo = Depends(require_customer),
+) -> dict:
+    """Tells the frontend which payment methods are actually usable right
+    now -- "paypal" only when real API credentials are configured (see
+    domain/payments/providers/paypal.py's is_configured), so the customer-
+    facing UI can hide/disable a PayPal button instead of offering one
+    that would just 503. "manual" methods are always listed since an
+    admin can record any of them regardless of what's configured -- this
+    just tells the CUSTOMER-facing pay page what to show as a self-serve
+    option, not what an admin can record after the fact.
+
+    Registered BEFORE the "/{invoice_id}" route below -- FastAPI matches
+    routes in registration order, and "/{invoice_id}" would otherwise
+    swallow a literal "/payment-methods" path as if "payment-methods"
+    were an invoice ID (and fail a UUID parse) if this came after it.
+    """
+    cfg = AppConfig.from_external(argparse.Namespace())
+    return {
+        "stripe": True,
+        "paypal": paypal.is_configured(cfg),
+        "manual_methods_available_via_admin": ["zelle", "in_person", "other", "paypal"],
+    }
 
 
 async def _get_owned_invoice(
@@ -118,6 +147,90 @@ async def get_my_invoice_pdf(
         media_type="application/pdf",
         headers={"Content-Disposition": f'inline; filename="invoice-{invoice_id}.pdf"'},
     )
+
+
+class PayPalCaptureRequest(BaseModel):
+    model_config = {}
+
+    order_id: str
+
+
+@router.post("/{invoice_id}/pay/paypal")
+async def pay_invoice_via_paypal(
+    invoice_id: UUID,
+    customer: SessionInfo = Depends(require_customer),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    await _pay_limiter.check("invoice_pay_paypal", str(customer.user_id))
+    invoice = await _get_owned_invoice(db, invoice_id, customer.user_id)
+    if invoice.status not in ("sent", "overdue"):
+        raise HTTPException(
+            status_code=409, detail="invoice is not payable in its current state"
+        )
+
+    cfg = AppConfig.from_external(argparse.Namespace())
+    result = await paypal.create_order(
+        cfg, str(invoice.id), invoice.amount_total, invoice.currency
+    )
+    if result.is_err:
+        # NotConfigured surfaces as a real 503 here (see api/errors.py) --
+        # the frontend uses that specific status to show "PayPal isn't
+        # available yet, try Zelle or contact us" rather than a generic
+        # error banner indistinguishable from an actual outage.
+        raise to_http_exception(result.danger_err)
+    order = result.danger_ok
+    return {"order_id": order.order_id, "approval_url": order.approval_url}
+
+
+@router.post("/{invoice_id}/pay/paypal/capture")
+async def capture_invoice_paypal_payment(
+    invoice_id: UUID,
+    body: PayPalCaptureRequest,
+    customer: SessionInfo = Depends(require_customer),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    invoice = await _get_owned_invoice(db, invoice_id, customer.user_id)
+    if invoice.status not in ("sent", "overdue"):
+        raise HTTPException(
+            status_code=409, detail="invoice is not payable in its current state"
+        )
+
+    cfg = AppConfig.from_external(argparse.Namespace())
+    result = await paypal.capture_order(cfg, body.order_id)
+    if result.is_err:
+        raise to_http_exception(result.danger_err)
+    capture = result.danger_ok
+
+    db.add(
+        Payment(
+            invoice_id=invoice.id,
+            method="paypal",
+            paypal_order_id=capture.order_id,
+            amount=capture.captured_amount,
+            status="succeeded",
+        )
+    )
+    await db.flush()
+
+    # Same "sum every succeeded payment, mark paid once it covers the
+    # total" logic as domain/invoices/service.py's record_manual_payment
+    # -- a customer could in principle combine a partial manual payment
+    # with a PayPal payment for the remainder, so this always sums
+    # everything rather than assuming this one capture is the only
+    # payment ever made against the invoice.
+    existing = (
+        await db.execute(
+            select(Payment).where(
+                Payment.invoice_id == invoice.id, Payment.status == "succeeded"
+            )
+        )
+    ).scalars()
+    paid_so_far = sum((p.amount for p in existing), Decimal(0))
+    if paid_so_far >= invoice.amount_total:
+        invoice.status = "paid"
+    await db.flush()
+
+    return {"status": "captured"}
 
 
 @router.post("/{invoice_id}/pay")

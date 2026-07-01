@@ -3,7 +3,13 @@ from __future__ import annotations
 from fastapi import HTTPException
 from typani.error_set import ErrorSet
 
-from logand_backend.errors import AuthError, BudgetError, InventoryError, InvoiceError
+from logand_backend.errors import (
+    AuthError,
+    BudgetError,
+    InventoryError,
+    InvoiceError,
+    PaymentProviderError,
+)
 
 # Every ErrorSet variant that can ever reach an API boundary must be mapped
 # here. Per docs/design/01: an unmapped variant raises NotImplementedError
@@ -22,6 +28,12 @@ _STATUS_MAP: dict[ErrorSet, int] = {
     BudgetError.EvidenceRequired: 409,
     InventoryError.NotFound: 404,
     InventoryError.LocationInUse: 409,
+    # 503 (not 500) -- "not configured yet" is an expected, temporary
+    # deployment state, not a server error; the frontend uses this to show
+    # "try Zelle/in-person instead" rather than a generic error banner.
+    PaymentProviderError.NotConfigured: 503,
+    # 502 -- the provider itself is the thing that failed, not this server.
+    PaymentProviderError.RequestFailed: 502,
 }
 
 
@@ -32,7 +44,13 @@ _STATUS_MAP: dict[ErrorSet, int] = {
 # actually pulls it in; if iteration isn't supported, replace with an
 # explicit tuple-of-variants per ErrorSet class.
 def _verify_complete_mapping() -> None:
-    for error_set_cls in (AuthError, BudgetError, InventoryError, InvoiceError):
+    for error_set_cls in (
+        AuthError,
+        BudgetError,
+        InventoryError,
+        InvoiceError,
+        PaymentProviderError,
+    ):
         for variant in error_set_cls:
             if variant not in _STATUS_MAP:
                 raise NotImplementedError(
