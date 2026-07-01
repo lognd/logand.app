@@ -26,7 +26,7 @@ const FONT_STACK = '"JetBrains Mono", ui-monospace, monospace';
 // clips real content off both edges ("shapes and rain get cut off when
 // fullscreening"). Measuring the actual rendered advance width of a glyph
 // in FONT_STACK via canvas removes that gap entirely.
-function measureCharAspect(): number {
+export function measureCharAspect(): number {
   if (typeof document === "undefined") return 0.6;
   const canvas = document.createElement("canvas");
   const ctx = canvas.getContext("2d");

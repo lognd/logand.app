@@ -1,12 +1,12 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { AsciiCanvas } from "../../ascii/AsciiCanvas";
-import { LINK_CLASS } from "../../styles/a11y";
+import { NAV_BRAND_CLASS, NAV_LINK_CLASS } from "../../styles/a11y";
 import { logout } from "../../api/auth";
 import { useMe } from "../../hooks/useMe";
 
-function NavLinks() {
+function NavLinks({ className }: { className?: string }) {
   const { data: me, isLoading } = useMe();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -26,10 +26,10 @@ function NavLinks() {
   if (!me) {
     return (
       <>
-        <a href="/login" className={LINK_CLASS}>
+        <a href="/login" className={`${NAV_LINK_CLASS} ${className ?? ""}`}>
           log in
         </a>
-        <a href="/register" className={LINK_CLASS}>
+        <a href="/register" className={`${NAV_LINK_CLASS} ${className ?? ""}`}>
           register
         </a>
       </>
@@ -40,25 +40,25 @@ function NavLinks() {
     <>
       {me.role === "admin" && (
         <>
-          <a href="/admin/invoices" className={LINK_CLASS}>
+          <a href="/admin/invoices" className={`${NAV_LINK_CLASS} ${className ?? ""}`}>
             invoices
           </a>
-          <a href="/admin/budget" className={LINK_CLASS}>
+          <a href="/admin/budget" className={`${NAV_LINK_CLASS} ${className ?? ""}`}>
             budget
           </a>
-          <a href="/admin/inventory" className={LINK_CLASS}>
+          <a href="/admin/inventory" className={`${NAV_LINK_CLASS} ${className ?? ""}`}>
             inventory
           </a>
         </>
       )}
       {me.role === "customer" && (
-        <a href="/invoices" className={LINK_CLASS}>
+        <a href="/invoices" className={`${NAV_LINK_CLASS} ${className ?? ""}`}>
           my invoices
         </a>
       )}
       <button
         type="button"
-        className={LINK_CLASS}
+        className={`${NAV_LINK_CLASS} ${className ?? ""}`}
         onClick={() => logoutMutation.mutate()}
         disabled={logoutMutation.isPending}
       >
@@ -68,7 +68,25 @@ function NavLinks() {
   );
 }
 
+// Primary nav links (not the account-state-dependent NavLinks above) --
+// shared between the desktop inline row and the mobile dropdown so the
+// two can't drift out of sync.
+function PrimaryLinks({ className }: { className?: string }) {
+  return (
+    <>
+      <a href="/projects" className={`${NAV_LINK_CLASS} ${className ?? ""}`}>
+        projects
+      </a>
+      <a href="/contact" className={`${NAV_LINK_CLASS} ${className ?? ""}`}>
+        contact
+      </a>
+    </>
+  );
+}
+
 export function Shell({ children }: { children: ReactNode }) {
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+
   return (
     // flex flex-col, not just min-h-screen: a plain min-h-screen root PLUS
     // a min-h-screen <main> further down (Landing.tsx) double-counts height
@@ -90,20 +108,47 @@ export function Shell({ children }: { children: ReactNode }) {
           combined background (this + Landing's SpinningShape stacked on
           top) read as distracting. */}
       <AsciiCanvas className="pointer-events-none fixed inset-0 -z-10 opacity-10" />
-      <header className="relative z-10 border-b border-border p-4">
-        <nav aria-label="primary" className="flex flex-wrap items-center gap-4">
-          <a href="/" className={LINK_CLASS}>
+      <header className="relative z-20 border-b border-border">
+        <div className="flex items-center justify-between gap-4 p-4">
+          <a href="/" className={NAV_BRAND_CLASS}>
             logand.app
           </a>
-          <a href="/projects" className={LINK_CLASS}>
-            projects
-          </a>
-          <a href="/contact" className={LINK_CLASS}>
-            contact
-          </a>
-          <span className="flex-1" />
-          <NavLinks />
-        </nav>
+          {/* Desktop/wide nav: everything inline in one row. Hidden below
+              `sm` -- at phone widths this exact row is what wrapped onto a
+              cramped, uneven second line ("the header gets scrunched up"),
+              since there just isn't room for brand + 2 primary links + 2
+              account links side by side. */}
+          <nav aria-label="primary" className="hidden items-center gap-6 sm:flex">
+            <PrimaryLinks />
+            <NavLinks />
+          </nav>
+          {/* Mobile toggle: replaces the cramped wrapped row with a single
+              deliberate control. aria-expanded/aria-controls tie it to the
+              dropdown panel below for assistive tech. */}
+          <button
+            type="button"
+            // Plain ASCII text label, not a glyph/icon -- keeps this
+            // legible and unambiguous rather than relying on a Unicode
+            // hamburger/close glyph that isn't guaranteed to render
+            // identically (or at the same width) across fonts.
+            className="inline-flex min-h-11 min-w-11 items-center justify-center rounded px-3 text-base text-fg-primary hover:text-accent-aqua focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-orange sm:hidden"
+            aria-expanded={mobileNavOpen}
+            aria-controls="mobile-nav"
+            onClick={() => setMobileNavOpen((open) => !open)}
+          >
+            {mobileNavOpen ? "Close" : "Menu"}
+          </button>
+        </div>
+        {mobileNavOpen && (
+          <nav
+            id="mobile-nav"
+            aria-label="primary"
+            className="flex flex-col gap-1 border-t border-border p-4 sm:hidden"
+          >
+            <PrimaryLinks className="w-full" />
+            <NavLinks className="w-full" />
+          </nav>
+        )}
       </header>
       <div className="relative z-10 flex-1">{children}</div>
     </div>

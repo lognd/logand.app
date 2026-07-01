@@ -12,9 +12,16 @@ import {
   type ShapeKind,
 } from "./shapes";
 import { useFitFontSize } from "./useFitFontSize";
+import { useResponsiveGrid } from "./useResponsiveGrid";
 
-const COLS = 100;
-const ROWS = 50;
+// 100x50 (5000 cells) is now the "high" quality-tier BUDGET, not a fixed
+// grid shape -- useResponsiveGrid reshapes it to match the viewport's
+// actual aspect ratio (so it fills a tall phone screen instead of
+// rendering as a tiny centered rectangle -- "the animations get
+// misaligned" on narrow viewports) and scales the cell count down on
+// lower-power devices ("scaled to account for processing power").
+const TARGET_CELLS = 100 * 50;
+const GRID_BOUNDS = { minCols: 40, maxCols: 140, minRows: 24, maxRows: 90 };
 
 // Radians/sec auto-rotation when idle. Restored to the original 0.25/0.45
 // -- an earlier "it goes a little fast" complaint turned out to be about
@@ -84,6 +91,7 @@ export function SpinningShape({
   const kind = controlledKind ?? randomKind;
   const points = useMemo(() => generateShape(kind), [kind]);
   const [rows, setRows] = useState<ShapeRow[]>([]);
+  const { cols: COLS, rows: ROWS } = useResponsiveGrid(TARGET_CELLS, GRID_BOUNDS);
   const fontSize = useFitFontSize(COLS, ROWS);
 
   // Accumulated orientation as a single quaternion -- NOT a pair of Euler
@@ -250,7 +258,7 @@ export function SpinningShape({
 
     raf = requestAnimationFrame(render);
     return () => cancelAnimationFrame(raf);
-  }, [points, kind]);
+  }, [points, kind, COLS, ROWS]);
 
   // Window-level (not element-level) pointer listeners: real page content
   // (nav links, headings, paragraph text) sits visually on top of this

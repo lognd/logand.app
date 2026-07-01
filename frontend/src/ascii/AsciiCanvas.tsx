@@ -6,12 +6,18 @@ import {
   type AsciiCell,
 } from "./fallback";
 import { useFitFontSize } from "./useFitFontSize";
+import { useResponsiveGrid } from "./useResponsiveGrid";
 
 // Coarser than the original 80x40 -- a dense grid of independently random
 // cells read as visual static ("distracting"); fewer, larger cells let
 // individual characters stay legible as a calm texture instead of a blur.
-const COLS = 56;
-const ROWS = 28;
+// 56x28 (1568 cells) is now the "high" quality-tier BUDGET, not a fixed
+// grid shape -- useResponsiveGrid below reshapes it to match the actual
+// viewport's aspect ratio (so it still fills a tall phone screen edge to
+// edge instead of rendering as a small centered rectangle) and scales the
+// total cell count down on lower-power devices.
+const TARGET_CELLS = 56 * 28;
+const GRID_BOUNDS = { minCols: 20, maxCols: 90, minRows: 16, maxRows: 70 };
 
 // Mirrors wasm-ascii/src/lib.rs's rasterize(): packed pairs of
 // (char_code: u8, brightness: u8), row-major, cols*rows pairs total.
@@ -85,7 +91,6 @@ async function loadWasmRasterize(): Promise<
 // Brightness targets are biased toward the low end (see BIAS_EXPONENT)
 // with occasional brighter "speckle" cells, so the layer reads as a quiet
 // atmosphere, not solid static, even before applying opacity.
-const CELL_COUNT = COLS * ROWS;
 const EASE_PER_TICK = 0.08;
 const TICK_INTERVAL_MS = 90; // ~11fps -- a slow drift, not a 60fps animation
 const BIAS_EXPONENT = 2.2; // skews Math.random() toward 0
@@ -108,11 +113,11 @@ interface NoiseState {
   nextChangeAt: Float64Array;
 }
 
-function createNoiseState(): NoiseState {
-  const current = new Float32Array(CELL_COUNT);
-  const target = new Float32Array(CELL_COUNT);
-  const nextChangeAt = new Float64Array(CELL_COUNT);
-  for (let i = 0; i < CELL_COUNT; i++) {
+function createNoiseState(cellCount: number): NoiseState {
+  const current = new Float32Array(cellCount);
+  const target = new Float32Array(cellCount);
+  const nextChangeAt = new Float64Array(cellCount);
+  for (let i = 0; i < cellCount; i++) {
     const b = randomTargetBrightness();
     current[i] = b;
     target[i] = b;
@@ -127,6 +132,7 @@ export function AsciiCanvas({ className }: { className?: string }) {
   const [rows, setRows] = useState<{ text: string; color: string }[]>([]);
   const rasterizeRef = useRef<Awaited<ReturnType<typeof loadWasmRasterize>>>(null);
   const noiseRef = useRef<NoiseState | null>(null);
+  const { cols: COLS, rows: ROWS } = useResponsiveGrid(TARGET_CELLS, GRID_BOUNDS);
   const fontSize = useFitFontSize(COLS, ROWS);
 
   useEffect(() => {
@@ -146,7 +152,8 @@ export function AsciiCanvas({ className }: { className?: string }) {
     // until wasm-ascii/pkg/ is built (see loadWasmRasterize's comment), so
     // this isn't a regression: the TS path was already what actually
     // renders in any checkout that hasn't run `make build`.
-    noiseRef.current = createNoiseState();
+    const cellCount = COLS * ROWS;
+    noiseRef.current = createNoiseState(cellCount);
     let raf = 0;
     let elapsedSinceTick = 0;
     let lastTime = performance.now();
@@ -161,7 +168,7 @@ export function AsciiCanvas({ className }: { className?: string }) {
         const state = noiseRef.current;
         if (state) {
           const { current, target, nextChangeAt } = state;
-          for (let i = 0; i < CELL_COUNT; i++) {
+          for (let i = 0; i < cellCount; i++) {
             if (now >= nextChangeAt[i]) {
               target[i] = randomTargetBrightness();
               nextChangeAt[i] = now + randomChangeDelayMs();
@@ -189,7 +196,10 @@ export function AsciiCanvas({ className }: { className?: string }) {
 
     raf = requestAnimationFrame(render);
     return () => cancelAnimationFrame(raf);
-  }, []);
+    // Regenerates noise state (and its own render closure) whenever the
+    // responsive grid reshapes, e.g. a phone rotating or a window resizing
+    // across the breakpoint that changes cols/rows.
+  }, [COLS, ROWS]);
 
   return (
     // `className` (fixed inset-0 etc., from Shell.tsx) belongs on this
