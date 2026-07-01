@@ -25,6 +25,13 @@ class AppConfig(BaseModel):
     session_secret: str = "dev-only-insecure-secret"
     payment_processor_secret: str = "sk_test_fake"
     stripe_webhook_secret: str = "whsec_fake"
+    # None means "talk to the real api.stripe.com" (stripe-python's own
+    # default) -- only ever set to something else in a test/CI environment
+    # pointing at testing/fake_stripe.py's local HTTP double, so system
+    # tests exercise the real HTTP call stripe-python makes (real
+    # serialization, real response parsing) without needing a real Stripe
+    # test-mode account/API key just to run the test suite.
+    stripe_api_base: str | None = None
     # PayPal is optional -- None (not a fake-looking default, same
     # convention as redis_url above) means "not configured," which the
     # PayPal provider (domain/payments/providers/paypal.py) treats as a
@@ -63,6 +70,7 @@ class AppConfig(BaseModel):
             "SESSION_SECRET": "session_secret",
             "PAYMENT_PROCESSOR_SECRET": "payment_processor_secret",
             "STRIPE_WEBHOOK_SECRET": "stripe_webhook_secret",
+            "STRIPE_API_BASE": "stripe_api_base",
             "PAYPAL_CLIENT_ID": "paypal_client_id",
             "PAYPAL_CLIENT_SECRET": "paypal_client_secret",
             "PAYPAL_MODE": "paypal_mode",

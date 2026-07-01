@@ -94,6 +94,11 @@ async def pay_invoice(
     # handles capture entirely on Stripe's side, see docs/design/04.
     cfg = AppConfig.from_external(argparse.Namespace())
     stripe.api_key = cfg.payment_processor_secret
+    # None in production (stripe-python's own default: real api.stripe.com)
+    # -- only set in test/CI, pointing at testing/fake_stripe.py's local
+    # HTTP double, see AppConfig.stripe_api_base's doc comment.
+    if cfg.stripe_api_base:
+        stripe.api_base = cfg.stripe_api_base
     intent = stripe.PaymentIntent.create(
         amount=int(invoice.amount_total * 100),
         currency=invoice.currency,

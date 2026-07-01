@@ -21,6 +21,21 @@ services:
     ports:
       - "6380:6379"
 
+  # A local HTTP double for the slice of Stripe's real API this backend
+  # calls (see testing/fake_stripe.py's own doc comment) -- lets the full
+  # stack's invoice-payment system tests exercise a REAL HTTP round trip
+  # through the real stripe-python SDK without a real Stripe test-mode
+  # account/API key. Not used by backend/tests/system's own pytest suite
+  # (those tests spin up their own copy in-process, see
+  # test_stripe_fake_server.py), only by anything driving this compose
+  # stack directly (frontend Playwright system tests, local manual runs).
+  fake-stripe:
+    build:
+      context: ./backend
+    command: ["python", "-m", "logand_backend.testing.fake_stripe"]
+    ports:
+      - "12111:12111"
+
   backend:
     build:
       context: ./backend
@@ -30,6 +45,7 @@ services:
       SESSION_SECRET: test-secret-not-for-production
       PAYMENT_PROCESSOR_SECRET: sk_test_fake
       STRIPE_WEBHOOK_SECRET: whsec_fake
+      STRIPE_API_BASE: http://fake-stripe:12111
       # Guarantees a known admin account exists before any system test
       # runs, without a separate seeding step in CI that could be
       # forgotten -- see app/app.py's _seed_admin_if_configured. Frontend
@@ -42,3 +58,5 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      fake-stripe:
+        condition: service_started
