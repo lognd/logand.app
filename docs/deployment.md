@@ -1,0 +1,151 @@
+# Deployment -- from a bare VPS to a running site
+
+Audience: whoever is standing this up for the first time, or
+redeploying after a long gap. See [design/11-deployment.md](design/11-deployment.md)
+for the architectural *why*; this doc is the literal step-by-step.
+See [secrets.md](secrets.md) for how to generate every value below.
+
+## Prerequisites
+
+- A VPS (2 vCPU / 4GB RAM minimum -- see
+  [design/11-deployment.md](design/11-deployment.md)'s sizing note),
+  Docker + Docker Compose installed, ports 80/443 open.
+- A domain (or two -- the `Caddyfile` already handles `logand.app` and
+  `logandapp.com` as aliases) with DNS **A/AAAA records pointing at the
+  VPS's IP** before you start Caddy -- Caddy's automatic HTTPS
+  (Let's Encrypt) fails its ACME challenge if DNS isn't live yet.
+- A Stripe account (test mode is fine to start). PayPal is optional --
+  skip it entirely for now if you don't have a PayPal developer account
+  yet; nothing else in the deploy depends on it.
+
+## 1. Clone and configure
+
+```bash
+git clone <this-repo-url> logand.app
+cd logand.app
+cp backend/.env.example backend/.env
+```
+
+Edit `backend/.env` and fill in real values -- see [secrets.md](secrets.md)
+for what each one is and how to generate it. At minimum for a first
+deploy you need: `DATABASE_URL` (a real password, not `changeme`),
+`SESSION_SECRET`, `PAYMENT_PROCESSOR_SECRET`, `STRIPE_WEBHOOK_SECRET`,
+`PUBLIC_BASE_URL` (your real domain). Leave `PAYPAL_*` unset for now --
+see "Turning on PayPal later" below.
+
+## 2. Build the frontend
+
+The frontend is a static build Caddy serves directly (no frontend
+container) -- see [design/10-seo-and-agent-accessibility.md](design/10-seo-and-agent-accessibility.md)
+for why it's prerendered rather than a plain client-side SPA shell.
+
+```bash
+cd frontend
+npm ci
+npm run build   # outputs frontend/dist, which docker-compose.yml mounts into caddy
+cd ..
+```
+
+## 3. Bring up the stack
+
+```bash
+docker compose up -d postgres redis
+docker compose --profile migrate run --rm migrate   # creates the schema fresh
+docker compose up -d backend caddy backup
+```
+
+Confirm the backend is actually healthy before moving on:
+
+```bash
+curl -s https://yourdomain/api/me   # expect a 401 (not connection-refused/502) -- that's correct, means the backend answered
+```
+
+If Caddy can't get a certificate yet (DNS not propagated), it'll retry
+automatically -- check `docker compose logs caddy` if `https://` isn't
+answering after a few minutes.
+
+## 4. Create the first admin account
+
+There is no signup path to admin -- self-registration always creates a
+customer account, by design (see [design/02-auth-and-security.md](design/02-auth-and-security.md)).
+The one-time bootstrap:
+
+```bash
+# In backend/.env, temporarily add:
+SEED_ADMIN_EMAIL=you@example.com
+SEED_ADMIN_PASSWORD=a-real-password-you-will-change-immediately-after
+
+docker compose up -d backend   # restart to pick up the new env vars
+```
+
+Log in at `https://yourdomain/login` with those credentials, confirm
+you land on an admin-visible page (the nav shows "invoicing", not "my
+invoices"). Then:
+
+```bash
+# Remove SEED_ADMIN_EMAIL/SEED_ADMIN_PASSWORD from backend/.env again
+docker compose up -d backend   # restart once more
+```
+
+See [secrets.md](secrets.md)'s entry on this variable pair for why it
+shouldn't stay set indefinitely.
+
+## 5. Wire up Stripe webhooks
+
+In the [Stripe dashboard](https://dashboard.stripe.com/webhooks), add
+an endpoint: `https://yourdomain/api/webhooks/stripe`, subscribed to
+`payment_intent.succeeded` and `payment_intent.payment_failed`. Copy
+its signing secret into `backend/.env`'s `STRIPE_WEBHOOK_SECRET`,
+restart `backend`.
+
+Test it: create an invoice as admin, send it, pay it as the customer
+with a [Stripe test card](https://docs.stripe.com/testing) (`4242 4242
+4242 4242`, any future expiry/CVC), confirm the invoice flips to `paid`.
+
+## 6. Turning on PayPal later (optional, anytime)
+
+Nothing above depends on this -- the site works completely without it,
+falling back to "pay via Zelle/PayPal-direct/in person, contact us."
+When you're ready:
+
+1. Create a REST API app in the [PayPal Developer Dashboard](https://developer.paypal.com/dashboard/applications).
+2. Add its **Sandbox** Client ID/Secret to `backend/.env`
+   (`PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `PAYPAL_MODE=sandbox`),
+   restart `backend`.
+3. Test a full sandbox payment end to end (PayPal's sandbox gives you
+   fake buyer accounts to pay with) before touching live credentials.
+4. Once confirmed, swap in the app's **Live** credentials and
+   `PAYPAL_MODE=live`, restart again.
+
+## 7. CI/CD going forward
+
+Once the above works, everyday deploys are just `git push` to `main`:
+`.github/workflows/ci.yml` runs the full test pyramid, and
+`.github/workflows/deploy.yml` builds images, ships them, and restarts
+the backend over SSH after CI passes. Add the same secrets from step 1
+to the repo's **Settings > Secrets and variables > Actions** so
+`deploy.yml` can build with them (see [secrets.md](secrets.md)'s
+GitHub Actions section) -- this is a one-time setup, not a
+per-deploy step.
+
+## Known limitation: backups aren't off-box yet
+
+`ops/backup.sh` runs nightly (see the `backup` service in
+`docker-compose.yml`) and stages a `pg_dump` + evidence-volume tarball
+locally, but does **not** yet push that staged backup anywhere off the
+VPS (see the `TODO` at the top of that script). A single-VPS deployment
+with only on-box backups is not resilient against losing the VPS
+itself. Until this is wired up (`rclone`/`aws s3 cp` to real off-box
+storage), treat this as: backups protect against "I fat-fingered a
+DELETE," not "the VPS provider had an outage that ate the disk." See
+[runbooks/restore.md](runbooks/restore.md) for the restore procedure
+once you do have a real backup file, staged locally or otherwise.
+
+## Redeploying / restarting after config changes
+
+Most `backend/.env` changes just need `docker compose up -d backend`
+(recreates that one container with the new env). Frontend changes need
+`npm run build` re-run and `docker compose restart caddy` (or just
+`up -d caddy` again) to pick up the new `frontend/dist`. Database
+migrations: `docker compose --profile migrate run --rm migrate` (safe
+to run anytime, `alembic upgrade head` no-ops if already current).

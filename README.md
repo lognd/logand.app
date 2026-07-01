@@ -2,11 +2,18 @@
 
 Personal + professional site and protected admin tool for Logan Dapp
 (`logand.app` / `logandapp.com`). Public landing/projects/contact pages
-plus an internal invoicing, budget, and inventory system behind auth.
+plus an internal invoicing, budget, and inventory system behind auth --
+including multi-method invoice payments (Stripe, PayPal, and manually-
+recorded Zelle/in-person payments), professional PDF invoice generation,
+and row-level-locked payment operations so the same invoice can never
+be double-charged or double-recorded under concurrent requests.
 
 Full product spec and architecture: **[docs/design/](docs/design/README.md)**
 -- start there, not here, for anything about *what* to build or *why*.
-This file only covers *how to run the repo*.
+Deploying this yourself? Start at **[docs/deployment.md](docs/deployment.md)**
+instead. Using the deployed site? See **[docs/usage.md](docs/usage.md)**.
+This file only covers *how to run the repo*. See
+**[docs/README.md](docs/README.md)** for the full documentation index.
 
 <!-- NOTE(logan): keep this file short. If you're about to explain a
      design decision here, it belongs in docs/design/ instead -- link
@@ -20,6 +27,7 @@ frontend/     TypeScript / React / Tailwind -- see docs/design/07
 wasm-ascii/   Rust crate, ASCII rasterizer -- see docs/design/08
 ops/          VPS-side tooling (backups, release-watch) -- see below
 docs/design/  pre-implementation specs, read by component
+docs/         deployment/secrets/usage guides + runbooks -- see docs/README.md
 .github/      CI (every PR) + deploy (push to main)
 ```
 
@@ -87,3 +95,14 @@ in GitHub Actions repo secrets. No agent working in this repo should
 ever read `.env` directly or indirectly -- see
 [docs/design/00-overview.md](docs/design/00-overview.md) and
 [docs/design/02-auth-and-security.md](docs/design/02-auth-and-security.md).
+For what every individual secret is and how to rotate it, see
+**[docs/secrets.md](docs/secrets.md)**.
+
+## License
+
+[MIT](LICENSE) -- use, modify, and redistribute freely, with
+attribution (see the license file for the exact terms). This is a
+personal project shared in case any of it (the ASCII renderer, the
+LaTeX invoice PDFs, the payment-provider abstraction) is useful to
+someone else, not a maintained product -- expect to fork and adapt
+rather than file issues against it.
