@@ -164,7 +164,37 @@ export function Shell({ children }: { children: ReactNode }) {
             {mobileNavOpen ? "Close" : "Menu"}
           </button>
         </div>
-        {mobileNavOpen && (
+        {/* Always mounted, visibility toggled with `hidden` -- not
+            `{mobileNavOpen && (...)}` (conditionally rendering the JSX,
+            tried first). Conditionally rendering destroys and recreates
+            NavLinks as a brand new component instance every time the
+            menu opens, which loses NavLinks' own "have we ever finished
+            loading" ref (see that component's doc comment for the
+            alt-tab refetch-flash bug this same ref fixes) -- a fresh
+            instance starts that ref back at false, so opening the menu
+            again could re-trigger the exact same blank flash this was
+            just fixed for elsewhere ("the menu open/close now has the
+            same flashing bug as the main site earlier"). Keeping one
+            persistent instance mounted the whole time means that ref
+            (and the fact that /api/me already resolved once) survives
+            across every open/close.
+            `hidden` (not just clipping via max-h-0, say) also fully
+            removes it from layout and the accessibility tree while
+            closed, same as it not being rendered at all would have. */}
+        <nav
+          id="mobile-nav"
+          aria-label="primary"
+          // hidden via the CONDITIONAL CLASS below (`hidden` utility vs
+          // `flex`), not the native `hidden` attribute -- the attribute's
+          // `[hidden]{display:none}` rule lives in the browser's lowest-
+          // priority default stylesheet, which this element's own `flex`
+          // utility class (an author-stylesheet rule) would silently
+          // override regardless of specificity, leaving it visible
+          // anyway. Swapping the display utility itself avoids that.
+          // `aria-hidden` still needs to reflect closed state directly
+          // for assistive tech, since `display:none` via a class (rather
+          // than the `hidden` attribute) doesn't imply it on its own.
+          aria-hidden={!mobileNavOpen}
           // `absolute` overlay, not normal flow -- a normal-flow dropdown
           // grows the header's own box height while open, which (with
           // several stacked links, e.g. an admin's full link list) could
@@ -186,15 +216,13 @@ export function Shell({ children }: { children: ReactNode }) {
           // existing border-t) -- "there needs to be a thin bottom border
           // on the menu popdown, so it doesn't immediately jut out" against
           // whatever's below it once it's open.
-          <nav
-            id="mobile-nav"
-            aria-label="primary"
-            className="glass-panel absolute inset-x-0 top-full z-30 flex max-h-[70dvh] flex-col gap-1 overflow-y-auto border-b border-t p-4 sm:hidden"
-          >
-            <PrimaryLinks className="w-full" />
-            <NavLinks className="w-full" />
-          </nav>
-        )}
+          className={`glass-panel absolute inset-x-0 top-full z-30 ${
+            mobileNavOpen ? "flex" : "hidden"
+          } max-h-[70dvh] flex-col gap-1 overflow-y-auto border-b border-t p-4 sm:hidden`}
+        >
+          <PrimaryLinks className="w-full" />
+          <NavLinks className="w-full" />
+        </nav>
       </header>
       {/* `flex flex-col`, not a plain block box -- Landing.tsx's <main>
           used to size itself via `h-full` (height:100%), which needs this
