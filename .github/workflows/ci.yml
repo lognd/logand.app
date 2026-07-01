@@ -70,6 +70,12 @@ jobs:
       - name: frontend system tests
         working-directory: frontend
         run: npm ci && npx playwright install --with-deps && npm run test:system
+        env:
+          # Matches docker-compose.test.yml's backend SEED_ADMIN_EMAIL/
+          # PASSWORD exactly -- customer-journey.spec.ts logs in as this
+          # account to seed an invoice for the customer it's testing.
+          SEED_ADMIN_EMAIL: admin-fixture@example.com
+          SEED_ADMIN_PASSWORD: admin-fixture-password-not-for-production
       - name: tear down
         if: always()
         run: docker compose -f docker-compose.test.yml down -v

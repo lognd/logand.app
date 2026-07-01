@@ -74,3 +74,37 @@ async def logout(db: AsyncSession, session_id: UUID) -> Result[None, AuthError]:
     from logand_backend.auth.sessions import revoke_session
 
     return await revoke_session(db, session_id)
+
+
+async def ensure_admin_seeded(db: AsyncSession, email: str, password: str) -> User:
+    """Idempotently ensures an admin account exists at `email` with
+    `password` -- the one out-of-band path for creating an admin (see
+    register()'s docstring: there is deliberately no request path that can
+    set role="admin"). Safe to call on every app startup/every test-suite
+    run: if the account already exists, this only re-hashes and rewrites
+    the password (so a changed SEED_ADMIN_PASSWORD env var actually takes
+    effect on the next restart) rather than erroring or duplicating it.
+
+    Only ever wired up behind an explicit opt-in (SEED_ADMIN_EMAIL/
+    SEED_ADMIN_PASSWORD env vars, see app/app.py's lifespan) -- never
+    called unconditionally, since a real production deployment shouldn't
+    have a well-known admin password sitting in an env var at all past
+    its very first bootstrap.
+    """
+    normalized_email = email.strip().lower()
+    existing = (
+        await db.execute(select(User).where(func.lower(User.email) == normalized_email))
+    ).scalar_one_or_none()
+
+    if existing is not None:
+        existing.password_hash = hash_password(password)
+        existing.role = "admin"
+        await db.flush()
+        return existing
+
+    user = User(
+        email=normalized_email, password_hash=hash_password(password), role="admin"
+    )
+    db.add(user)
+    await db.flush()
+    return user

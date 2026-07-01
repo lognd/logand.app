@@ -25,6 +25,20 @@ class AppConfig(BaseModel):
     session_secret: str = "dev-only-insecure-secret"
     payment_processor_secret: str = "sk_test_fake"
     stripe_webhook_secret: str = "whsec_fake"
+    # PayPal is optional -- None (not a fake-looking default, same
+    # convention as redis_url above) means "not configured," which the
+    # PayPal provider (domain/payments/providers/paypal.py) treats as a
+    # real, expected state (gracefully unavailable), not a misconfiguration.
+    paypal_client_id: str | None = None
+    paypal_client_secret: str | None = None
+    # "sandbox" (PayPal's own test environment name), not "test" -- matches
+    # the literal API base URL host name switch in the PayPal provider.
+    paypal_mode: str = "sandbox"
+    # Both must be explicitly set for the admin seed to run at all (see
+    # app/app.py's lifespan and domain/auth/service.py's
+    # ensure_admin_seeded docstring for why this is opt-in, not automatic).
+    seed_admin_email: str | None = None
+    seed_admin_password: str | None = None
     host: str = "127.0.0.1"
     port: int = 8000
 
@@ -49,6 +63,11 @@ class AppConfig(BaseModel):
             "SESSION_SECRET": "session_secret",
             "PAYMENT_PROCESSOR_SECRET": "payment_processor_secret",
             "STRIPE_WEBHOOK_SECRET": "stripe_webhook_secret",
+            "PAYPAL_CLIENT_ID": "paypal_client_id",
+            "PAYPAL_CLIENT_SECRET": "paypal_client_secret",
+            "PAYPAL_MODE": "paypal_mode",
+            "SEED_ADMIN_EMAIL": "seed_admin_email",
+            "SEED_ADMIN_PASSWORD": "seed_admin_password",
             "HOST": "host",
             "PORT": "port",
         }

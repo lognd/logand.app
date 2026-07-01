@@ -30,6 +30,13 @@ services:
       SESSION_SECRET: test-secret-not-for-production
       PAYMENT_PROCESSOR_SECRET: sk_test_fake
       STRIPE_WEBHOOK_SECRET: whsec_fake
+      # Guarantees a known admin account exists before any system test
+      # runs, without a separate seeding step in CI that could be
+      # forgotten -- see app/app.py's _seed_admin_if_configured. Frontend
+      # Playwright system tests (customer-journey.spec.ts) read these same
+      # two values back out of the environment to log in as this account.
+      SEED_ADMIN_EMAIL: admin-fixture@example.com
+      SEED_ADMIN_PASSWORD: admin-fixture-password-not-for-production
     ports:
       - "8000:8000"
     depends_on:

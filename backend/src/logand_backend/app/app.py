@@ -90,8 +90,31 @@ class App:
     async def _lifespan(self, _app: FastAPI) -> AsyncIterator[None]:
         _log.info("starting up: initializing database engine")
         init_engine(self._config.database_url)
+        await self._seed_admin_if_configured()
         try:
             yield
         finally:
             _log.info("shutting down: disposing database engine")
             await dispose_engine()
+
+    async def _seed_admin_if_configured(self) -> None:
+        # Opt-in only (see AppConfig.seed_admin_email/password and
+        # domain/auth/service.py's ensure_admin_seeded docstring) --
+        # a real production deployment has no reason to keep either env
+        # var set past its very first bootstrap, so this is a no-op there.
+        # Used by docker-compose.test.yml (CI's system-test stack) and
+        # local dev to guarantee a known admin fixture exists without a
+        # separate seeding step anyone could forget to run.
+        email = self._config.seed_admin_email
+        password = self._config.seed_admin_password
+        if not email or not password:
+            return
+
+        import logand_backend.db.base as db_base
+        from logand_backend.domain.auth.service import ensure_admin_seeded
+
+        assert db_base._sessionmaker is not None  # init_engine() just ran above
+        async with db_base._sessionmaker() as session:
+            await ensure_admin_seeded(session, email, password)
+            await session.commit()
+        _log.info("seeded admin account", extra={"email": email})

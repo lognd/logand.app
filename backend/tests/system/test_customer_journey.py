@@ -114,7 +114,9 @@ async def test_full_customer_journey_register_to_paid_invoice(
     invoice_ids = [inv["id"] for inv in invoices_resp.json()]
     assert invoice_id in invoice_ids
 
-    with patch("stripe.PaymentIntent.create", side_effect=_fake_payment_intent_create) as mock_create:
+    with patch(
+        "stripe.PaymentIntent.create", side_effect=_fake_payment_intent_create
+    ) as mock_create:
         pay_resp = await db_client.post(
             f"/api/invoices/{invoice_id}/pay", headers=customer_headers
         )
