@@ -1,12 +1,33 @@
 import { useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { BackgroundPicker, type BackgroundOption } from "../../../ascii/BackgroundPicker";
 import { MatrixRain } from "../../../ascii/MatrixRain";
 import { ParticleLayer } from "../../../ascii/ParticleLayer";
 import { SpinningShape } from "../../../ascii/SpinningShape";
-import { randomShapeKind } from "../../../ascii/shapes";
 import { LINK_CLASS } from "../../../styles/a11y";
 import { GlitchText } from "../../layout/GlitchText";
 import { useBrightnessWave } from "../../layout/useBrightnessWave";
+
+const BACKGROUND_OPTIONS: BackgroundOption[] = ["donut", "cube", "sphere", "rain"];
+
+// A regular site visit randomizes among all four backgrounds ("I want the
+// regular site visit to randomize donut/cube/globe/rain") -- "?bg=..."
+// still overrides this with one specific choice (used by the Projects
+// page's embedded logand.app preview, which wants "donut" consistently
+// rather than a fresh random pick on every embed).
+function randomBackground(): BackgroundOption {
+  return BACKGROUND_OPTIONS[Math.floor(Math.random() * BACKGROUND_OPTIONS.length)];
+}
+
+// "?bg=rain" (etc) forces a specific initial background instead of the
+// usual random pick -- lets a caller (the Projects page's embedded
+// logand.app preview, for one) deterministically show a specific,
+// good-looking background rather than whatever the random pick happens
+// to land on that particular load.
+function backgroundFromSearchParams(params: URLSearchParams): BackgroundOption | null {
+  const raw = params.get("bg");
+  return BACKGROUND_OPTIONS.includes(raw as BackgroundOption) ? (raw as BackgroundOption) : null;
+}
 
 // Public routes must render real semantic content -- crawlers and the
 // vite-ssg prerender pass (see docs/design/10) read this markup directly,
@@ -28,7 +49,10 @@ import { useBrightnessWave } from "../../layout/useBrightnessWave";
 // trail and explosion on the donut and cube and globe") it now works
 // regardless of which background is showing.
 export function Landing() {
-  const [background, setBackground] = useState<BackgroundOption>(() => randomShapeKind());
+  const [searchParams] = useSearchParams();
+  const [background, setBackground] = useState<BackgroundOption>(
+    () => backgroundFromSearchParams(searchParams) ?? randomBackground(),
+  );
   const contentRef = useRef<HTMLDivElement | null>(null);
   useBrightnessWave(contentRef);
 
