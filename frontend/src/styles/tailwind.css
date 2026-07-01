@@ -26,6 +26,37 @@ body {
   overflow-x: hidden;
 }
 
+/* Used by the Projects page's vertical snap-scroll feed -- genuinely
+   scrollable (mouse wheel, touch drag, keyboard) but with the scrollbar
+   itself hidden, per explicit request ("when I say scrollable, I don't
+   want scroll bars"). All three rules are needed for full cross-browser
+   coverage: scrollbar-width for Firefox, -ms-overflow-style for legacy
+   Edge, and the ::-webkit-scrollbar rule for every Chromium/WebKit
+   browser (Chrome, Safari, Edge Chromium). */
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* Shared "glass" treatment -- a thin translucent border over a ~70%-
+   opaque background with a light backdrop blur, so text stays legible
+   over whatever animated content shows through. Used by Shell.tsx's
+   mobile nav dropdown and Projects.tsx's project cards ("I would prefer
+   that we use the same glass look for the card as we did for the menu")
+   -- centralized here so the two can't drift out of sync. tokens.css's
+   --bg-primary/--border are plain hex, not the space-separated RGB
+   channels Tailwind's `/NN` opacity-modifier syntax needs to actually
+   blend, hence spelling the same values out as literal rgba() here
+   instead (--bg-primary #282828, --border #504945). */
+.glass-panel {
+  border-color: rgba(80, 73, 69, 0.35);
+  background-color: rgba(40, 40, 40, 0.7);
+  backdrop-filter: blur(4px);
+}
+
 /* Used by useBrightnessWave.ts -- a light brightness pulse, staggered per
    element by distance from the click/load origin so a whole content area
    brightening at once reads as an outward-expanding wave rather than a

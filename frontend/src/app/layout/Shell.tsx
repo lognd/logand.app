@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { AsciiCanvas } from "../../ascii/AsciiCanvas";
@@ -19,10 +19,17 @@ function NavLinks({ className }: { className?: string }) {
     },
   });
 
-  // Don't flash "log in" before the very first /api/me resolves -- render
-  // nothing in that brief window rather than a guess that's wrong half the
-  // time.
-  if (isLoading) return null;
+  // Only ever hide these links before the VERY FIRST /api/me resolves,
+  // never again after that -- react-query's default refetchOnWindowFocus
+  // refetches /api/me every time the tab regains focus (e.g. alt-tabbing
+  // back), and isLoading goes true again for that background refetch too
+  // ("the header links still flash when I alt+tab"). Once we've rendered
+  // real content once, a ref (not state, so this doesn't itself trigger a
+  // re-render) remembers that, so a later refetch keeps showing the last-
+  // known links instead of blanking them out while it's in flight.
+  const hasLoadedOnceRef = useRef(false);
+  if (!isLoading) hasLoadedOnceRef.current = true;
+  if (isLoading && !hasLoadedOnceRef.current) return null;
 
   if (!me) {
     return (
@@ -168,13 +175,21 @@ export function Shell({ children }: { children: ReactNode }) {
           // changes any other element's layout; `max-h-[70dvh]` +
           // `overflow-y-auto` make the PANEL ITSELF scrollable if its own
           // content (an admin's full nav list, say) is taller than that,
-          // rather than the page growing to fit it. `bg-bg-primary` is
-          // solid/opaque since this now overlays real page content instead
-          // of sitting inline in the header's own row.
+          // rather than the page growing to fit it.
+          //
+          // Background/border switched from solid bg-bg-primary/border-border
+          // to the shared .glass-panel treatment ("an incredibly thin
+          // border as well as like 70%-ish opacity" -- see tailwind.css's
+          // .glass-panel for why this is a plain CSS class rather than
+          // Tailwind's bg-x/NN opacity-modifier syntax, which tokens.css's
+          // plain-hex colors don't support). border-b (in addition to the
+          // existing border-t) -- "there needs to be a thin bottom border
+          // on the menu popdown, so it doesn't immediately jut out" against
+          // whatever's below it once it's open.
           <nav
             id="mobile-nav"
             aria-label="primary"
-            className="absolute inset-x-0 top-full z-30 flex max-h-[70dvh] flex-col gap-1 overflow-y-auto border-t border-border bg-bg-primary p-4 sm:hidden"
+            className="glass-panel absolute inset-x-0 top-full z-30 flex max-h-[70dvh] flex-col gap-1 overflow-y-auto border-b border-t p-4 sm:hidden"
           >
             <PrimaryLinks className="w-full" />
             <NavLinks className="w-full" />
