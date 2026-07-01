@@ -1,4 +1,4 @@
-.PHONY: install test test-system lint typecheck check fmt clean bump migrate
+.PHONY: install test test-system coverage lint typecheck check fmt clean bump migrate
 
 install:
 	uv sync
@@ -8,6 +8,14 @@ test:
 
 test-system:
 	uv run pytest tests/system -n auto
+
+# Includes tests/system -- run locally for the real number; in CI, the
+# unit+integration-only `backend` job's coverage always undercounts the
+# LaTeX-dependent PDF paths (see tests/system/test_invoice_pdf_generation.py's
+# skip condition -- latexmk isn't installed on that runner, only inside
+# the real Docker image the system-tests job builds).
+coverage:
+	uv run pytest tests/unit tests/integration tests/system --cov --cov-report=term-missing -n auto
 
 test-fast:
 	uv run pytest tests/unit tests/integration --testmon

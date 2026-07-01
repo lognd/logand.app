@@ -46,8 +46,26 @@ dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
     "pytest-xdist>=3.6",
+    "pytest-cov>=5.0",
     "ruff>=0.7",
     "ty>=0.0.1a1",
     "testcontainers[postgres]>=4.8",
     "httpx>=0.27",
 ]
+
+[tool.coverage.run]
+source = ["src/logand_backend"]
+# The two testing/fake_*.py doubles exist purely to be driven BY tests
+# (see their own doc comments) -- they're test infrastructure, not
+# application code, so they're excluded from the coverage target the same
+# way tests/ itself would be.
+omit = ["src/logand_backend/testing/*", "src/logand_backend/db/migrations/*"]
+
+[tool.coverage.report]
+# latexmk/texlive isn't installed on every machine running the unit/
+# integration suite (see tests/system/test_invoice_pdf_generation.py's
+# skip condition) -- excluding this one line is what keeps a missing
+# LaTeX toolchain from silently tanking the coverage percentage on a
+# branch that's otherwise fully covered when the real Docker image (which
+# does have it) runs the same tests.
+exclude_lines = ["pragma: no cover"]

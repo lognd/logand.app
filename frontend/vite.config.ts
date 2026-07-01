@@ -58,5 +58,15 @@ export default defineConfig({
     globals: true,
     setupFiles: ["./tests/setup.ts"],
     include: ["tests/unit/**/*.test.ts", "tests/unit/**/*.test.tsx"],
+    coverage: {
+      provider: "v8",
+      reporter: ["text", "html"],
+      include: ["src/**/*.{ts,tsx}"],
+      // mocks/ only exists to be loaded BY tests (see its own top-of-file
+      // doc comment) -- test infrastructure, not application code, same
+      // reasoning as the backend's coverage config excluding
+      // testing/fake_*.py.
+      exclude: ["src/mocks/**", "**/*.d.ts"],
+    },
   },
 });
