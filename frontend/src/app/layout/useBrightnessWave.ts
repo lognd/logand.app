@@ -2,8 +2,13 @@ import { useEffect, type RefObject } from "react";
 
 // How fast the brightness ripple expands outward from its origin, and how
 // long each individual element's own brightness pulse lasts once it's hit.
-const WAVE_SPEED_PX_PER_MS = 2.6;
-const PULSE_DURATION_MS = 650;
+// Slowed down from 2.6 px/ms / 650ms -- "the ripple is a little too fast
+// and needs to be a little less subtle... slowing it down will help with
+// that" (a slower expansion also gives each element's own pulse more time
+// to actually read before the next one starts, which is most of what made
+// it feel more noticeable without changing the brightness peak itself).
+const WAVE_SPEED_PX_PER_MS = 1.4;
+const PULSE_DURATION_MS = 900;
 // Elements marked with this attribute (headings, paragraphs, links) are
 // what the wave actually brightens -- not every descendant, so decorative
 // wrappers/containers don't also get a filter applied for no visual

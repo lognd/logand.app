@@ -4,27 +4,17 @@ import { useEffect, useRef, useState } from "react";
 // character always reads as visibly "wrong" rather than accidentally
 // spelling a different real word.
 const GLITCH_CHARS = "!<>-_\\/[]{}=+*^?#&$~";
-// Slowed down from an earlier 400ms/40ms ("make the glitch out a little
-// slower") -- longer overall duration and a slower per-frame flicker rate,
-// so each substituted character has time to actually register before the
-// next swap instead of reading as a blur.
-const GLITCH_DURATION_MS = 650;
-const GLITCH_FRAME_MS = 70;
-// Exactly one or two characters substituted per frame, never a
-// proportional fraction of the whole word -- "the glitching should be
-// like one or two characters" (a fraction-based rate looked like "a lot"
-// on longer words, which is what "should be a lot more subtle" was
-// about).
-const MIN_SUBSTITUTIONS = 1;
-const MAX_SUBSTITUTIONS = 2;
+// Went through several rounds of "slower", then "still a bit much", then
+// "shorter and less": down to two flicker frames total (a single quick
+// blip, not a sustained scramble) substituting exactly one character.
+const GLITCH_DURATION_MS = 190;
+const GLITCH_FRAME_MS = 95;
+const SUBSTITUTIONS = 1;
 
 function scramble(text: string): string {
   const chars = [...text];
   const eligibleIndices = chars.map((_ch, i) => i).filter((i) => chars[i] !== " ");
-  const count = Math.min(
-    eligibleIndices.length,
-    MIN_SUBSTITUTIONS + Math.round(Math.random() * (MAX_SUBSTITUTIONS - MIN_SUBSTITUTIONS)),
-  );
+  const count = Math.min(eligibleIndices.length, SUBSTITUTIONS);
   // Fisher-Yates-ish partial shuffle -- picks `count` distinct positions
   // without ever substituting the same character twice in one frame.
   for (let i = eligibleIndices.length - 1; i > eligibleIndices.length - 1 - count; i--) {
