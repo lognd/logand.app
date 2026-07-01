@@ -12,7 +12,11 @@ import {
   type ShapeKind,
 } from "./shapes";
 import { useFitFontSize } from "./useFitFontSize";
-import { useResponsiveGrid } from "./useResponsiveGrid";
+import {
+  SHAPE_GRID_BOUNDS as GRID_BOUNDS,
+  SHAPE_TARGET_CELLS as TARGET_CELLS,
+  useResponsiveGrid,
+} from "./useResponsiveGrid";
 
 // 100x50 (5000 cells) is now the "high" quality-tier BUDGET, not a fixed
 // grid shape -- useResponsiveGrid reshapes it to match the viewport's
@@ -20,8 +24,10 @@ import { useResponsiveGrid } from "./useResponsiveGrid";
 // rendering as a tiny centered rectangle -- "the animations get
 // misaligned" on narrow viewports) and scales the cell count down on
 // lower-power devices ("scaled to account for processing power").
-const TARGET_CELLS = 100 * 50;
-const GRID_BOUNDS = { minCols: 40, maxCols: 140, minRows: 24, maxRows: 90 };
+// TARGET_CELLS/GRID_BOUNDS now live in useResponsiveGrid.ts (as
+// SHAPE_TARGET_CELLS/SHAPE_GRID_BOUNDS) so MatrixRain/ParticleLayer can
+// import the exact same values and match this component's resulting font
+// size -- see that module's doc comment.
 
 // Radians/sec auto-rotation when idle. Y (side-to-side, turning around the
 // vertical axis) bumped from 0.45 -> 0.6 -- "side to side is a little too

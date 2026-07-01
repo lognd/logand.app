@@ -7,6 +7,19 @@ export interface GridDims {
   rows: number;
 }
 
+// SpinningShape's own grid budget/bounds, re-exported so MatrixRain.tsx and
+// ParticleLayer.tsx can size their canvas text to MATCH it -- those two
+// don't lay out a cols x rows text grid themselves (free-form canvas
+// particles/streams instead), but on mobile their previously-fixed 18px
+// cell size and the shape's viewport-scaled font size diverged sharply
+// ("the trail text size and the background text size are very far
+// apart... especially for the spinning shapes"). Deriving the same
+// cols/rows here that SpinningShape derives, then feeding them through
+// useFitFontSize the same way, produces the same resulting font size --
+// "coincident" by construction, not just visually close.
+export const SHAPE_TARGET_CELLS = 100 * 50;
+export const SHAPE_GRID_BOUNDS = { minCols: 40, maxCols: 140, minRows: 24, maxRows: 90 };
+
 // Picks a cols x rows character grid whose own aspect ratio
 // (cols * charAspect : rows) matches the viewport's, instead of a fixed
 // ratio baked in at design time. A fixed 100x50 (2:1-ish) grid is close to
@@ -23,6 +36,17 @@ export interface GridDims {
 // (see deviceQuality.ts) -- roughly preserves each component's original
 // hand-tuned density on a capable desktop while scaling down on lower-end
 // devices.
+// Below this viewport width (matches Tailwind's `sm` breakpoint, the same
+// one Shell.tsx's header nav collapses at), the grid's cell budget is
+// reduced further -- "I prefer slightly larger background text on mobile
+// viewport for the spinning shapes and rain." The aspect-fit math above
+// already reshapes cols/rows to fill a narrow screen edge-to-edge, but at
+// the SAME total budget as desktop that just means more, smaller
+// characters packed into less physical space; deliberately shrinking the
+// budget on narrow viewports makes each character bigger instead.
+const MOBILE_BREAKPOINT_PX = 640;
+const MOBILE_BUDGET_SCALE = 0.6;
+
 export function useResponsiveGrid(
   targetCells: number,
   bounds: { minCols: number; maxCols: number; minRows: number; maxRows: number },
@@ -34,7 +58,6 @@ export function useResponsiveGrid(
 
   useEffect(() => {
     const charAspect = measureCharAspect();
-    const budget = targetCells * getQualityMultiplier();
 
     function recompute() {
       // window.visualViewport, when available, reflects what's actually
@@ -43,7 +66,12 @@ export function useResponsiveGrid(
       // them alone left the grid's shape un-updated on zoom (see
       // useFitFontSize's viewportSize doc comment for the same issue).
       const vv = window.visualViewport;
+      const viewportWidth = vv ? vv.width : window.innerWidth;
       const viewportAspect = vv ? vv.width / vv.height : window.innerWidth / window.innerHeight;
+      const budget =
+        targetCells *
+        getQualityMultiplier() *
+        (viewportWidth < MOBILE_BREAKPOINT_PX ? MOBILE_BUDGET_SCALE : 1);
       // Solve cols*charAspect/rows = viewportAspect and cols*rows = budget
       // simultaneously (see the derivation in the module doc comment).
       const rows = Math.sqrt((budget * charAspect) / viewportAspect);

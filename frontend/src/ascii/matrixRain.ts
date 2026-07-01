@@ -199,25 +199,41 @@ export function heatColor(lifeFrac: number): string {
  * physics, see stepParticle) so it reads as "rain following the cursor"
  * rather than a static flare -- but rendered with the same grid-snapped
  * stepping as everything else, not a smooth slide.
+ *
+ * `cellSize` scales both the jitter/velocity magnitudes AND the grid-snap
+ * step (passed through to createParticle) relative to the 18px reference
+ * they were originally tuned at -- these used to be hardcoded regardless
+ * of the caller's actual on-screen cell size, so on a phone viewport
+ * (where ParticleLayer.tsx's cellSize is much smaller than 18px, see
+ * useResponsiveGrid.ts) particles still traveled the same absolute pixel
+ * distances, which relative to the now-tiny glyphs read as "spacing...
+ * too big."
  */
 export function spawnTrail(
   path: { x: number; y: number }[],
   particlesPerPoint = 1,
   lifetime = 0.6,
+  // Defaults to the original design-reference cell size (18px) so every
+  // existing call site/test that doesn't pass one keeps its old behavior
+  // exactly. `cellScale` below is relative to that reference -- see its
+  // doc comment.
+  cellSize = 18,
 ): Particle[] {
+  const cellScale = cellSize / 18;
   const particles: Particle[] = [];
   for (const point of path) {
     for (let i = 0; i < particlesPerPoint; i++) {
-      const jitterX = (Math.random() - 0.5) * 8;
+      const jitterX = (Math.random() - 0.5) * 8 * cellScale;
       particles.push(
         createParticle(
           point.x + jitterX,
           point.y,
-          (Math.random() - 0.5) * 20,
-          40 + Math.random() * 60,
+          (Math.random() - 0.5) * 20 * cellScale,
+          (40 + Math.random() * 60) * cellScale,
           lifetime * (0.7 + Math.random() * 0.6),
           undefined,
           "trail",
+          cellSize,
         ),
       );
     }
@@ -234,6 +250,11 @@ export function spawnTrail(
  * derives this from how rapidly the user is clicking (see
  * MatrixRain.tsx's clickStreakRef) so a quick burst of clicks escalates
  * into a bigger, faster explosion than a single isolated click.
+ *
+ * `cellSize` scales the outward speed (and the grid-snap step, passed
+ * through to createParticle) relative to the 18px reference it was
+ * originally tuned at -- see spawnTrail's identical doc comment for why
+ * ("the spacing between the explosion is too big on mobile").
  */
 export function spawnExplosion(
   x: number,
@@ -243,13 +264,15 @@ export function spawnExplosion(
   maxSpeed = 260,
   lifetime = 1.1,
   violence = 1,
+  cellSize = 18,
 ): Particle[] {
+  const cellScale = cellSize / 18;
   const particles: Particle[] = [];
   const scaledCount = Math.round(count * violence);
   const speedScale = 1 + (violence - 1) * 0.5; // speed escalates more gently than count
   for (let i = 0; i < scaledCount; i++) {
     const angle = Math.random() * Math.PI * 2;
-    const speed = (minSpeed + Math.random() * (maxSpeed - minSpeed)) * speedScale;
+    const speed = (minSpeed + Math.random() * (maxSpeed - minSpeed)) * speedScale * cellScale;
     particles.push(
       createParticle(
         x,
@@ -259,6 +282,7 @@ export function spawnExplosion(
         lifetime * (0.7 + Math.random() * 0.6),
         undefined,
         "explosion",
+        cellSize,
       ),
     );
   }

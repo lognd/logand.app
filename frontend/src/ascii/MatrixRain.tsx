@@ -1,7 +1,18 @@
 import { useEffect, useRef } from "react";
 import { createStreams, stepStreams, type RainStream } from "./matrixRain";
+import { useFitFontSize } from "./useFitFontSize";
+import { SHAPE_GRID_BOUNDS, SHAPE_TARGET_CELLS, useResponsiveGrid } from "./useResponsiveGrid";
 
-const CELL_SIZE = 18; // px per character cell at the canvas's own (CSS) pixel scale
+// Used to be a flat 18px constant regardless of viewport -- on a phone
+// screen that stayed fixed while SpinningShape's own text shrank to fit
+// the smaller viewport, so the rain/trail glyphs read as wildly larger
+// than the shape's ("the trail text size and the background text size are
+// very far apart... especially for the spinning shapes"). Deriving it from
+// the exact same grid budget/bounds SpinningShape uses (see
+// useResponsiveGrid.ts's SHAPE_TARGET_CELLS doc comment) produces a
+// matching font size instead -- `ctx.font` below is `CELL_SIZE * 0.85`px,
+// so dividing back out by 0.85 here recovers the CELL_SIZE that yields
+// that exact font size.
 
 // Matrix rain is a specific-enough aesthetic reference that a brighter,
 // more saturated green than the muted Gruvbox --accent-green reads
@@ -45,6 +56,9 @@ export function MatrixRain({ className }: { className?: string }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const streamsRef = useRef<RainStream[]>([]);
   const reducedMotionRef = useRef(false);
+  const { cols, rows } = useResponsiveGrid(SHAPE_TARGET_CELLS, SHAPE_GRID_BOUNDS);
+  const fontSize = useFitFontSize(cols, rows);
+  const cellSize = fontSize / 0.85;
 
   useEffect(() => {
     const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -71,7 +85,7 @@ export function MatrixRain({ className }: { className?: string }) {
       canvas.width = rect.width * dpr;
       canvas.height = rect.height * dpr;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      streamsRef.current = createStreams(rect.width, rect.height, CELL_SIZE);
+      streamsRef.current = createStreams(rect.width, rect.height, cellSize);
     };
     resize();
     // "resize" alone isn't reliably fired by every browser's Fullscreen
@@ -105,17 +119,17 @@ export function MatrixRain({ className }: { className?: string }) {
       ctx.fillStyle = BACKDROP_COLOR;
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       ctx.restore();
-      ctx.font = `${CELL_SIZE * 0.85}px "JetBrains Mono", monospace`;
+      ctx.font = `${cellSize * 0.85}px "JetBrains Mono", monospace`;
       ctx.textBaseline = "top";
 
       // Skipped entirely under prefers-reduced-motion, same convention as
       // SpinningShape's auto-rotation: autoplaying motion is suppressed.
       if (!reducedMotionRef.current) {
-        streamsRef.current = stepStreams(streamsRef.current, dtSeconds, rect.height, CELL_SIZE);
+        streamsRef.current = stepStreams(streamsRef.current, dtSeconds, rect.height, cellSize);
         for (const s of streamsRef.current) {
           for (let i = 0; i < s.chars.length; i++) {
-            const y = s.y - i * CELL_SIZE;
-            if (y < -CELL_SIZE || y > rect.height) continue;
+            const y = s.y - i * cellSize;
+            if (y < -cellSize || y > rect.height) continue;
             ctx.fillStyle = i === 0 ? HEAD_COLOR : TRAIL_COLOR;
             ctx.globalAlpha = i === 0 ? 1 : Math.max(0, 1 - i / s.length);
             ctx.fillText(s.chars[i], s.x, y);
@@ -133,7 +147,10 @@ export function MatrixRain({ className }: { className?: string }) {
       window.removeEventListener("resize", resize);
       document.removeEventListener("fullscreenchange", resize);
     };
-  }, []);
+    // Restarts (streams reset) when cellSize changes -- already happens
+    // today on every window resize anyway (resize() above always calls
+    // createStreams() fresh), so this isn't a new disruption.
+  }, [cellSize]);
 
   return (
     <canvas

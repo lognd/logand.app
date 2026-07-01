@@ -6,8 +6,9 @@ import {
   stepParticles,
   type Particle,
 } from "./matrixRain";
+import { useFitFontSize } from "./useFitFontSize";
+import { SHAPE_GRID_BOUNDS, SHAPE_TARGET_CELLS, useResponsiveGrid } from "./useResponsiveGrid";
 
-const CELL_SIZE = 18; // px per character cell -- matches MatrixRain's ambient grid
 const EXPLOSION_COUNT = 36;
 const TRAIL_PARTICLES_PER_MOVE = 1;
 const MAX_TRAIL_POINTS_PER_FRAME = 6; // cap how many path points one pointermove can spawn from, for fast drags
@@ -62,6 +63,20 @@ export function ParticleLayer({
   // pattern as reducedMotionRef in SpinningShape.tsx.
   const mutedRef = useRef(muted);
   mutedRef.current = muted;
+  // Same reasoning as MatrixRain.tsx's identical lines -- was a flat 18px
+  // constant regardless of viewport, which on a phone screen read as
+  // wildly larger than SpinningShape's own (viewport-scaled) text
+  // ("especially for the spinning shapes"). Matching SpinningShape's exact
+  // grid budget/bounds here produces the same font size it computes.
+  const { cols, rows } = useResponsiveGrid(SHAPE_TARGET_CELLS, SHAPE_GRID_BOUNDS);
+  const fontSize = useFitFontSize(cols, rows);
+  const cellSize = fontSize / 0.85;
+  // Ref, not a direct closure read -- the pointer-listener effect below
+  // has [] deps (registers its window listeners once), so without this it
+  // would keep using whatever cellSize was computed at mount forever,
+  // same reasoning as mutedRef above.
+  const cellSizeRef = useRef(cellSize);
+  cellSizeRef.current = cellSize;
   const recentPathRef = useRef<{ x: number; y: number }[]>([]);
   const clickStreakRef = useRef<{ count: number; lastClickAt: number }>({
     count: 0,
@@ -115,7 +130,7 @@ export function ParticleLayer({
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.restore();
-      ctx.font = `${CELL_SIZE * 0.85}px "JetBrains Mono", monospace`;
+      ctx.font = `${cellSize * 0.85}px "JetBrains Mono", monospace`;
       ctx.textBaseline = "top";
 
       particlesRef.current = stepParticles(particlesRef.current, dtSeconds);
@@ -148,7 +163,7 @@ export function ParticleLayer({
       window.removeEventListener("resize", resize);
       document.removeEventListener("fullscreenchange", resize);
     };
-  }, []);
+  }, [cellSize]);
 
   useEffect(() => {
     const isWithinCanvas = (clientX: number, clientY: number) => {
@@ -171,7 +186,9 @@ export function ParticleLayer({
       const path = recentPathRef.current;
       path.push(point);
       if (path.length > MAX_TRAIL_POINTS_PER_FRAME) path.shift();
-      particlesRef.current.push(...spawnTrail([point], TRAIL_PARTICLES_PER_MOVE));
+      particlesRef.current.push(
+        ...spawnTrail([point], TRAIL_PARTICLES_PER_MOVE, undefined, cellSizeRef.current),
+      );
     };
 
     const onWindowPointerDown = (e: PointerEvent) => {
@@ -188,7 +205,7 @@ export function ParticleLayer({
       const violence = Math.min(MAX_VIOLENCE, 1 + (streak.count - 1) * 0.6);
 
       particlesRef.current.push(
-        ...spawnExplosion(x, y, EXPLOSION_COUNT, 80, 260, 1.1, violence),
+        ...spawnExplosion(x, y, EXPLOSION_COUNT, 80, 260, 1.1, violence, cellSizeRef.current),
       );
     };
 

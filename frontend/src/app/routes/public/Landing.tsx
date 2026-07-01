@@ -93,19 +93,6 @@ export function Landing() {
             className="pointer-events-auto absolute inset-0 -z-[5] flex items-center justify-center overflow-hidden opacity-30"
           />
         )}
-        {/* Muted (desaturated) over the spinning shape so the click/drag
-            particle layer doesn't compete with the shape's own shading;
-            full heat-curve color is kept on the Matrix-rain background,
-            where it's the point. `fixed` (not `absolute`) -- the trail/
-            explosion effect is popular enough to want everywhere on the
-            page, header included ("I like the trail and explosion
-            trailing everywhere... enable it on the header"), not just
-            bounded to this content div the way the selected background
-            (donut/cube/globe/rain) now deliberately is. */}
-        <ParticleLayer
-          className="pointer-events-none fixed inset-0 -z-[4]"
-          muted={background !== "rain"}
-        />
         {/* ref + data-wave-text below: useBrightnessWave (see its own doc
             comment) brightens these specific elements in an outward wave
             on click/first load -- "the text in the content should become
@@ -144,6 +131,30 @@ export function Landing() {
       <footer className="relative z-10 shrink-0 border-t border-border bg-bg-primary px-4 py-4">
         <BackgroundPicker value={background} onChange={setBackground} />
       </footer>
+      {/* Moved out here as `main`'s LAST child (a sibling of both the
+          content div above and the footer), not nested inside the content
+          div -- that div's own `relative z-10` makes it establish a
+          stacking context, which caps everything inside it (including
+          this, no matter what z-index IT used) at the content div's own
+          rank when compared against the footer (an equal-z-10 sibling
+          painted later in DOM order, so it always painted on top
+          regardless). Trail/explosion particles were still spawning and
+          animating over the footer's area the whole time (verified via
+          canvas pixel data) but invisibly, occluded by the footer's own
+          opaque bg-bg-primary paint ("the trails and explosions don't
+          work on the footer"). As a true sibling of the footer with a
+          higher z-index, this now actually paints above it.
+          `fixed` (not `absolute`) -- the trail/explosion effect is popular
+          enough to want everywhere on the page, header included ("I like
+          the trail and explosion trailing everywhere... enable it on the
+          header"), not just bounded to the content div the way the
+          selected background (donut/cube/globe/rain) deliberately is.
+          pointer-events-none means this never intercepts clicks on the
+          footer's real controls despite painting above them. */}
+      <ParticleLayer
+        className="pointer-events-none fixed inset-0 z-20"
+        muted={background !== "rain"}
+      />
     </main>
   );
 }
