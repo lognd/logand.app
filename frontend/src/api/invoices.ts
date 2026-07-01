@@ -1,5 +1,16 @@
 import { apiGet, apiPost } from "./client";
 
+// A raw line item request body, matching api/invoices.py's LineItemInput
+// pydantic model field-for-field -- description/quantity/unit_price, not
+// this file's usual mix of camelCase mistakes fixed elsewhere. Kept
+// separate from the response-shaped MockInvoiceLineItem-adjacent types
+// since this is what gets SENT, not what comes back.
+export interface CreateInvoiceLineItem {
+  description: string;
+  quantity: string;
+  unit_price: string;
+}
+
 // TODO(logan): replace with generated type once backend/openapi.json exists.
 // snake_case fields (amount_total/due_date), not amountTotal/dueDate --
 // found during a security/correctness audit that this interface (and
@@ -38,6 +49,27 @@ export function payInvoice(id: string): Promise<{ client_secret: string }> {
 // Admin-scoped (/api/admin/invoices, see api/invoices.py).
 export function listAdminInvoices(): Promise<Invoice[]> {
   return apiGet<Invoice[]>("/api/admin/invoices");
+}
+
+// customer_id and memo travel as QUERY PARAMS, line_items as a bare JSON
+// array body -- matches api/invoices.py's create() route signature
+// exactly (customer_id: UUID and memo: str | None are plain scalar
+// params, which FastAPI treats as query params by default; line_items:
+// list[LineItemInput] is the one body-eligible param, so it's the WHOLE
+// body, not wrapped in an envelope object). Getting this shape wrong
+// doesn't 422 with an obviously-wrong-looking error -- it 422s with
+// "field required: customer_id" even though the caller DID send a
+// customer_id, just in the wrong place, which is exactly what happened
+// before this was ever wired up to a real form (see AdminInvoices.tsx's
+// former TODO).
+export function createInvoice(
+  customerId: string,
+  lineItems: CreateInvoiceLineItem[],
+  memo?: string,
+): Promise<{ id: string }> {
+  const params = new URLSearchParams({ customer_id: customerId });
+  if (memo) params.set("memo", memo);
+  return apiPost<{ id: string }>(`/api/admin/invoices?${params.toString()}`, lineItems);
 }
 
 export function sendInvoice(id: string): Promise<Invoice> {

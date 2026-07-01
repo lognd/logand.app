@@ -189,6 +189,13 @@ export const handlers = [
     return HttpResponse.json({ client_secret: "pi_mock_secret_" + invoice.id });
   }),
 
+  // -- admin customers (lookup for the create-invoice form) --------------
+  http.get("/api/admin/customers", () => {
+    const denied = requireRole("admin");
+    if (denied) return denied;
+    return HttpResponse.json([{ id: MOCK_CUSTOMER_ID, email: MOCK_CUSTOMER_EMAIL }]);
+  }),
+
   // -- admin invoices --------------------------------------------------
   http.get("/api/admin/invoices", () => {
     const denied = requireRole("admin");
@@ -207,19 +214,20 @@ export const handlers = [
   http.post("/api/admin/invoices", async ({ request }) => {
     const denied = requireRole("admin");
     if (denied) return denied;
-    // NOTE: no real UI calls this yet (see AdminInvoices.tsx's own TODO --
-    // the create-invoice form doesn't exist), so this request-body shape
-    // is a best guess at what the real backend will eventually expect
-    // (api/invoices.py's create() takes customer_id as a query param and
-    // a bare JSON array of line items, not an object like this) -- fix
-    // this mock's request parsing to match once that form is actually
-    // built, rather than guessing further now.
-    const body = (await request.json()) as {
-      customer_id?: string;
-      memo?: string | null;
-      line_items?: { description: string; quantity: string; unit_price: string }[];
-    };
-    const lineItems = (body.line_items ?? []).map((li) => ({
+    // customer_id/memo as QUERY PARAMS, line_items as the bare JSON array
+    // body -- matches the real backend's actual request shape now that
+    // AdminInvoices.tsx's create-invoice form actually calls this (see
+    // api/invoices.ts's createInvoice doc comment for why the shape is
+    // what it is).
+    const url = new URL(request.url);
+    const customerId = url.searchParams.get("customer_id");
+    const memo = url.searchParams.get("memo");
+    const rawLineItems = (await request.json()) as {
+      description: string;
+      quantity: string;
+      unit_price: string;
+    }[];
+    const lineItems = rawLineItems.map((li) => ({
       id: mockId("li"),
       description: li.description,
       quantity: li.quantity,
@@ -230,11 +238,11 @@ export const handlers = [
       .toFixed(2);
     const invoice: MockInvoiceDetail = {
       id: mockId("inv"),
-      customer_id: body.customer_id ?? MOCK_CUSTOMER_ID,
+      customer_id: customerId ?? MOCK_CUSTOMER_ID,
       status: "draft",
       amount_total: amountTotal,
       currency: "usd",
-      memo: body.memo ?? null,
+      memo: memo ?? null,
       due_date: null,
       is_recurring: false,
       line_items: lineItems,

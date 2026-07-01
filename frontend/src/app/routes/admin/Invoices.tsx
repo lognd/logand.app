@@ -1,8 +1,11 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { listCustomers } from "../../../api/customers";
 import {
+  type CreateInvoiceLineItem,
   type Invoice,
   type ManualPaymentMethod,
+  createInvoice,
   listAdminInvoices,
   recordManualPayment,
   sendInvoice,
@@ -137,9 +140,213 @@ function ManualPaymentForm({
   );
 }
 
-// TODO(logan): create-invoice form (React Hook Form + zod) is still missing --
-// this wires up list/send/void against real endpoints first since that's the
-// higher-value data-flow path to prove out.
+const EMPTY_LINE_ITEM: CreateInvoiceLineItem = {
+  description: "",
+  quantity: "1",
+  unit_price: "",
+};
+
+// Plain useState, not React Hook Form + zod -- the ManualPaymentForm
+// above (and every other form in this app) already uses this same plain
+// pattern; introducing a form library for just this one form would be
+// inconsistent without buying much, given the field count here is small
+// and fixed-shape (no dynamic validation schema worth the dependency).
+function CreateInvoiceForm({ onCreated }: { onCreated: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [customerId, setCustomerId] = useState("");
+  const [memo, setMemo] = useState("");
+  const [lineItems, setLineItems] = useState<CreateInvoiceLineItem[]>([
+    { ...EMPTY_LINE_ITEM },
+  ]);
+
+  const customersQuery = useQuery({
+    queryKey: ["admin", "customers"],
+    queryFn: listCustomers,
+    // Only fetch once the form is actually open -- an admin might never
+    // open this on a given visit, and the customer list isn't needed
+    // for anything else on this page.
+    enabled: open,
+  });
+
+  const mutation = useMutation({
+    mutationFn: () =>
+      createInvoice(
+        customerId,
+        lineItems.filter((li) => li.description && li.unit_price),
+        memo || undefined,
+      ),
+    onSuccess: () => {
+      onCreated();
+      setOpen(false);
+      setCustomerId("");
+      setMemo("");
+      setLineItems([{ ...EMPTY_LINE_ITEM }]);
+    },
+  });
+
+  function updateLineItem(index: number, patch: Partial<CreateInvoiceLineItem>) {
+    setLineItems((items) =>
+      items.map((item, i) => (i === index ? { ...item, ...patch } : item)),
+    );
+  }
+
+  function addLineItem() {
+    setLineItems((items) => [...items, { ...EMPTY_LINE_ITEM }]);
+  }
+
+  function removeLineItem(index: number) {
+    setLineItems((items) => items.filter((_, i) => i !== index));
+  }
+
+  const hasAtLeastOneRealLineItem = lineItems.some(
+    (li) => li.description && li.unit_price,
+  );
+
+  if (!open) {
+    return (
+      <button type="button" onClick={() => setOpen(true)} className={BUTTON_CLASS}>
+        New invoice
+      </button>
+    );
+  }
+
+  return (
+    <form
+      className="mb-6 flex flex-col gap-4 rounded border border-border p-4"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (!customerId || !hasAtLeastOneRealLineItem) return;
+        mutation.mutate();
+      }}
+    >
+      <h2 className="text-xl text-fg-primary">New invoice</h2>
+
+      <div>
+        <label htmlFor="new-invoice-customer" className={LABEL_CLASS}>
+          Bill to
+        </label>
+        <select
+          id="new-invoice-customer"
+          required
+          value={customerId}
+          onChange={(e) => setCustomerId(e.target.value)}
+          className={INPUT_CLASS}
+        >
+          <option value="">
+            {customersQuery.isLoading ? "Loading customers..." : "Select a customer"}
+          </option>
+          {customersQuery.data?.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.email}
+            </option>
+          ))}
+        </select>
+        {customersQuery.isError && (
+          <p role="alert" className="mt-1 text-base text-accent-red">
+            Could not load customer list.
+          </p>
+        )}
+      </div>
+
+      <div className="flex flex-col gap-3">
+        <span className={LABEL_CLASS}>Line items</span>
+        {lineItems.map((item, index) => (
+          <div key={index} className="flex flex-wrap items-end gap-2">
+            <div className="min-w-[10rem] flex-1">
+              <label htmlFor={`li-description-${index}`} className={LABEL_CLASS}>
+                Description
+              </label>
+              <input
+                id={`li-description-${index}`}
+                type="text"
+                value={item.description}
+                onChange={(e) => updateLineItem(index, { description: e.target.value })}
+                className={INPUT_CLASS}
+              />
+            </div>
+            <div className="w-20">
+              <label htmlFor={`li-quantity-${index}`} className={LABEL_CLASS}>
+                Qty
+              </label>
+              <input
+                id={`li-quantity-${index}`}
+                type="number"
+                step="0.01"
+                min="0"
+                value={item.quantity}
+                onChange={(e) => updateLineItem(index, { quantity: e.target.value })}
+                className={INPUT_CLASS}
+              />
+            </div>
+            <div className="w-28">
+              <label htmlFor={`li-unit-price-${index}`} className={LABEL_CLASS}>
+                Unit price
+              </label>
+              <input
+                id={`li-unit-price-${index}`}
+                type="number"
+                step="0.01"
+                min="0"
+                value={item.unit_price}
+                onChange={(e) => updateLineItem(index, { unit_price: e.target.value })}
+                className={INPUT_CLASS}
+              />
+            </div>
+            <button
+              type="button"
+              onClick={() => removeLineItem(index)}
+              disabled={lineItems.length === 1}
+              aria-label={`Remove line item ${index + 1}`}
+              className={BUTTON_CLASS}
+            >
+              Remove
+            </button>
+          </div>
+        ))}
+        <button
+          type="button"
+          onClick={addLineItem}
+          className={`${BUTTON_CLASS} self-start`}
+        >
+          Add line item
+        </button>
+      </div>
+
+      <div>
+        <label htmlFor="new-invoice-memo" className={LABEL_CLASS}>
+          Memo (optional)
+        </label>
+        <input
+          id="new-invoice-memo"
+          type="text"
+          value={memo}
+          onChange={(e) => setMemo(e.target.value)}
+          className={INPUT_CLASS}
+        />
+      </div>
+
+      <div className="flex gap-2">
+        <button
+          type="submit"
+          disabled={mutation.isPending || !customerId || !hasAtLeastOneRealLineItem}
+          className={BUTTON_CLASS}
+        >
+          {mutation.isPending ? "Creating..." : "Create invoice"}
+        </button>
+        <button type="button" onClick={() => setOpen(false)} className={BUTTON_CLASS}>
+          Cancel
+        </button>
+      </div>
+
+      {mutation.isError && (
+        <p role="alert" className="text-base text-accent-red">
+          Could not create the invoice. Check every field and try again.
+        </p>
+      )}
+    </form>
+  );
+}
+
 export function AdminInvoices() {
   const queryClient = useQueryClient();
   const {
@@ -159,6 +366,7 @@ export function AdminInvoices() {
   return (
     <main className="mx-auto w-full max-w-4xl px-4 py-8">
       <h1 className="mb-6 text-2xl text-fg-primary">Invoices (admin)</h1>
+      <CreateInvoiceForm onCreated={invalidate} />
       {isLoading && <p className="text-base text-fg-muted">Loading...</p>}
       {isError && (
         <p role="alert" className="text-base text-accent-red">
