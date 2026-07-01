@@ -31,6 +31,7 @@ export function CustomerInvoices() {
                 <th className="p-2">Amount</th>
                 <th className="p-2">Due</th>
                 <th className="p-2">Action</th>
+                <th className="p-2">PDF</th>
               </tr>
             </thead>
             <tbody>
@@ -53,6 +54,24 @@ export function CustomerInvoices() {
                     ) : (
                       "-"
                     )}
+                  </td>
+                  <td className="p-2">
+                    {/* Plain <a>, not a fetch+blob download -- the browser
+                        already sends the session cookie on a same-origin
+                        navigation, and letting it open the PDF directly
+                        (Content-Disposition: inline, see
+                        invoices_public.py) lets the browser's own PDF
+                        viewer handle print/save/zoom instead of this app
+                        reimplementing any of that. */}
+                    <a
+                      href={`/api/invoices/${invoice.id}/pdf`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className={LINK_CLASS}
+                      aria-label={`Download PDF for invoice ${invoice.id}`}
+                    >
+                      Download PDF
+                    </a>
                   </td>
                 </tr>
               ))}

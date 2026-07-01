@@ -73,6 +73,20 @@ export function AdminInvoices() {
                     >
                       Void
                     </button>
+                    {/* Same plain-<a>-not-fetch approach as
+                        customer/Invoices.tsx -- see that file's identical
+                        comment. Admins can preview a draft's PDF too (the
+                        backend route has no status restriction), unlike
+                        Pay/the customer view. */}
+                    <a
+                      href={`/api/admin/invoices/${invoice.id}/pdf`}
+                      target="_blank"
+                      rel="noreferrer"
+                      aria-label={`Download PDF for invoice ${invoice.id}`}
+                      className={BUTTON_CLASS}
+                    >
+                      PDF
+                    </a>
                   </td>
                 </tr>
               ))}
