@@ -592,9 +592,12 @@ export function rasterizeShape(
     const inContourBand = absViewDot < outer && absViewDot > inner;
     // Full rotateByQuaternion (x/y and all) only computed for the small
     // fraction of points that actually land in the contour band -- see
-    // rotatedZOnly's doc comment.
+    // rotatedZOnly's doc comment. Text glyphs for every shape's contour,
+    // globe included -- "remove the block characters again from the
+    // globe" (the block table remains defined above in case that
+    // preference flips back, just unused for now).
     charGrid[idx] = inContourBand
-      ? silhouetteChar(rotateByQuaternion(normal, orientation), viewFacingLight)
+      ? silhouetteChar(rotateByQuaternion(normal, orientation), false)
       : charForBrightness(luminance, ramp);
   }
 

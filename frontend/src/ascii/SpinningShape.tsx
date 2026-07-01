@@ -23,12 +23,11 @@ import { useResponsiveGrid } from "./useResponsiveGrid";
 const TARGET_CELLS = 100 * 50;
 const GRID_BOUNDS = { minCols: 40, maxCols: 140, minRows: 24, maxRows: 90 };
 
-// Radians/sec auto-rotation when idle. Restored to the original 0.25/0.45
-// -- an earlier "it goes a little fast" complaint turned out to be about
-// the user-to-idle ramp's pacing (IDLE_RAMP_MS below), not this speed
-// itself, which the user liked.
+// Radians/sec auto-rotation when idle. Y (side-to-side, turning around the
+// vertical axis) bumped from 0.45 -> 0.6 -- "side to side is a little too
+// slow." X (the up/down tumble) is unrelated and stays put.
 const AUTO_SPEED_X = 0.25;
-const AUTO_SPEED_Y = 0.45;
+const AUTO_SPEED_Y = 0.6;
 // Combined rate + default axis for idle auto-rotation, expressed the same
 // way a flick's angular velocity is (see quatFromAngularVelocity in
 // shapes.ts) -- this is what lets "resume in the same direction as the
@@ -245,11 +244,28 @@ export function SpinningShape({
         grid.map((row) => {
           let text = "";
           let sum = 0;
+          let litCount = 0;
           for (const cell of row) {
             text += cell.char;
-            sum += cell.brightness;
+            // Only cells that are actually part of the shape (not the
+            // surrounding blank background) count toward this row's
+            // average -- averaging brightness over the FULL row width
+            // (previously sum / row.length) dilutes the color toward
+            // colorForBrightness(0)'s dark purple in proportion to how
+            // much of the row is empty space, which isn't a property of
+            // the shape's own lighting at all. That dilution was always
+            // present but stayed mild while COLS/ROWS were fixed; once
+            // useResponsiveGrid started reshaping the grid per viewport,
+            // some aspect ratios put the shape's silhouette in a much
+            // smaller fraction of each row, and the whole shape read as
+            // noticeably darker ("the spinning shapes look a bit dark
+            // now").
+            if (cell.char !== " ") {
+              sum += cell.brightness;
+              litCount++;
+            }
           }
-          return { text, color: colorForBrightness(sum / row.length) };
+          return { text, color: colorForBrightness(litCount > 0 ? sum / litCount : 0) };
         }),
       );
 
