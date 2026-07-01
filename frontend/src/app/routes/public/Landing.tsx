@@ -42,7 +42,14 @@ export function Landing() {
     // here. min-h-screen would ADD a full 100vh on top of that flex-1 box
     // (header height + 100vh > 100vh), which is what caused the page to be
     // taller than the viewport and produce a permanent vertical scrollbar.
-    <main className="relative isolate flex h-full min-h-[480px] flex-col">
+    //
+    // No min-h-[480px] floor (removed) -- it forced this <main> taller
+    // than the viewport whenever the actual available height dropped
+    // below 480px (mobile landscape, a short/zoomed-out desktop window),
+    // which is exactly a vertical overflow/scrollbar with nothing real to
+    // scroll to ("the overflow is busted on mobile"). h-full already
+    // sizes this correctly down to whatever height is actually available.
+    <main className="relative isolate flex h-full flex-col">
       {background === "rain" ? (
         // No opacity wrapper here -- MatrixRain paints its own solid,
         // stationary backdrop (see MatrixRain.tsx's BACKDROP_COLOR) rather

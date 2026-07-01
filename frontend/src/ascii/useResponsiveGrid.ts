@@ -37,7 +37,13 @@ export function useResponsiveGrid(
     const budget = targetCells * getQualityMultiplier();
 
     function recompute() {
-      const viewportAspect = window.innerWidth / window.innerHeight;
+      // window.visualViewport, when available, reflects what's actually
+      // visible during pinch/page zoom -- window.innerWidth/innerHeight
+      // stay pinned to the page's original layout viewport, so relying on
+      // them alone left the grid's shape un-updated on zoom (see
+      // useFitFontSize's viewportSize doc comment for the same issue).
+      const vv = window.visualViewport;
+      const viewportAspect = vv ? vv.width / vv.height : window.innerWidth / window.innerHeight;
       // Solve cols*charAspect/rows = viewportAspect and cols*rows = budget
       // simultaneously (see the derivation in the module doc comment).
       const rows = Math.sqrt((budget * charAspect) / viewportAspect);
@@ -52,10 +58,12 @@ export function useResponsiveGrid(
     window.addEventListener("resize", recompute);
     document.addEventListener("fullscreenchange", recompute);
     window.addEventListener("orientationchange", recompute);
+    window.visualViewport?.addEventListener("resize", recompute);
     return () => {
       window.removeEventListener("resize", recompute);
       document.removeEventListener("fullscreenchange", recompute);
       window.removeEventListener("orientationchange", recompute);
+      window.visualViewport?.removeEventListener("resize", recompute);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- bounds is a fresh object literal at every call site; only targetCells identity matters here
   }, [targetCells]);

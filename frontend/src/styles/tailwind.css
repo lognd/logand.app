@@ -16,4 +16,12 @@
 
 body {
   margin: 0;
+  /* Defense in depth against horizontal overflow: every ASCII grid
+     component already computes its own width to fit exactly, but this is
+     a zero-cost backstop against any future miscalculation (or a
+     mid-transition frame during a resize/zoom/rotation) ever producing a
+     visible horizontal scrollbar/shift ("the overflow is busted on
+     mobile"). Never legitimately needed on the vertical axis, since real
+     page content should scroll normally. */
+  overflow-x: hidden;
 }

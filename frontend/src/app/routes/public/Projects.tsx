@@ -11,7 +11,9 @@ import { ParticleLayer } from "../../../ascii/ParticleLayer";
 // (no donut/cube/globe alternative on this page), just always on.
 export function Projects() {
   return (
-    <main className="relative isolate flex h-full min-h-[480px] flex-col">
+    // No min-h-[480px] floor -- see Landing.tsx's identical fix; it forced
+    // overflow whenever the real available height dropped below 480px.
+    <main className="relative isolate flex h-full flex-col">
       <MatrixRain className="absolute inset-0 -z-[5]" />
       <ParticleLayer className="pointer-events-none absolute inset-0 -z-[4]" />
       <div className="relative z-10 flex flex-1 items-center justify-center px-4 py-12">

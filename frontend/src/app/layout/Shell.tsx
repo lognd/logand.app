@@ -88,15 +88,23 @@ export function Shell({ children }: { children: ReactNode }) {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   return (
-    // flex flex-col, not just min-h-screen: a plain min-h-screen root PLUS
-    // a min-h-screen <main> further down (Landing.tsx) double-counts height
-    // (header height + 100vh for main = more than 100vh total), producing a
+    // flex flex-col, not just min-h-dvh: a plain min-h-dvh root PLUS
+    // a min-h-dvh <main> further down (Landing.tsx) double-counts height
+    // (header height + 100dvh for main = more than 100dvh total), producing a
     // permanent vertical scrollbar even with nothing actually overflowing.
     // With flex-col + the content wrapper below set to flex-1, the content
-    // area exactly fills "100vh minus header height", so a child that also
+    // area exactly fills "100dvh minus header height", so a child that also
     // wants to fill its container (Landing's <main className="h-full">)
     // does so without exceeding the viewport.
-    <div className="relative isolate flex min-h-screen flex-col bg-bg-primary text-fg-primary">
+    //
+    // min-h-dvh (dynamic viewport height), not min-h-screen (100vh) -- on
+    // mobile browsers, 100vh is measured against the LARGEST possible
+    // viewport (address bar hidden), so with the address bar visible
+    // (the common case) an element sized to 100vh is taller than what's
+    // actually visible, forcing a scrollbar/overflow that has nothing to
+    // do with real content ("the overflow is busted on mobile"). 100dvh
+    // tracks the viewport's actual current size, address bar and all.
+    <div className="relative isolate flex min-h-dvh flex-col bg-bg-primary text-fg-primary">
       {/* `isolate` is load-bearing, not decorative: without it this div doesn't
           establish its own stacking context (position:relative + no z-index
           doesn't), so its own bg-bg-primary paints OVER any negative-z-index

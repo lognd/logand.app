@@ -44,6 +44,37 @@ export function measureCharAspect(): number {
 // imperceptible but guarantees the grid never exceeds its container.
 const SAFETY_MARGIN = 0.985;
 
+// Below this font size, per-glyph pixel rounding stops being negligible:
+// measureCharAspect measures at a large reference size (200px) and scales
+// the result down linearly, which assumes a glyph's rendered width is a
+// smooth fraction of its font-size -- true at normal sizes, but at a few
+// px per character the renderer snaps each glyph's advance to a whole
+// device pixel, and that per-glyph rounding is a much bigger fraction of
+// a tiny glyph's own width. Summed across 100+ columns, that was enough
+// to overflow the container by tens of pixels on very short/zoomed-out
+// viewports even with SAFETY_MARGIN applied (a fixed 1.5% margin is far
+// too small relative to the actual rounding error down here). A much
+// larger margin only in this small-font regime fixes that without
+// affecting the normal case, where SAFETY_MARGIN alone is already enough.
+const SMALL_FONT_THRESHOLD_PX = 12;
+const SMALL_FONT_SAFETY_MARGIN = 0.85;
+
+// window.innerWidth/innerHeight report the LAYOUT viewport, which on a
+// pinch-zoomed mobile browser stays the same size the whole page was laid
+// out at -- it's window.visualViewport (when available) that reports what
+// portion of that layout is actually visible right now, shrinking as the
+// user zooms in. Sizing off innerWidth/innerHeight alone meant zooming in
+// didn't shrink the computed font size to match, so the grid kept
+// rendering at its un-zoomed size and overflowed the now-smaller visible
+// area ("zooming out is broken (Ctrl+- and Ctrl++)"). Falls back to
+// window.inner* on browsers without the API (desktop Firefox before 2024,
+// old Safari).
+function viewportSize(): { width: number; height: number } {
+  const vv = typeof window !== "undefined" ? window.visualViewport : null;
+  if (vv) return { width: vv.width, height: vv.height };
+  return { width: window.innerWidth, height: window.innerHeight };
+}
+
 export function useFitFontSize(
   cols: number,
   rows: number,
@@ -59,23 +90,31 @@ export function useFitFontSize(
     const aspect = charAspect ?? measureCharAspect();
 
     function recompute() {
-      const sizeForWidth = window.innerWidth / (cols * aspect);
-      const sizeForHeight = window.innerHeight / rows;
-      setFontSize(Math.max(4, Math.min(sizeForWidth, sizeForHeight) * SAFETY_MARGIN));
+      const { width, height } = viewportSize();
+      const sizeForWidth = width / (cols * aspect);
+      const sizeForHeight = height / rows;
+      const raw = Math.min(sizeForWidth, sizeForHeight);
+      const margin = raw < SMALL_FONT_THRESHOLD_PX ? SMALL_FONT_SAFETY_MARGIN : SAFETY_MARGIN;
+      setFontSize(Math.max(4, raw * margin));
     }
     recompute();
     // "resize" alone isn't reliably fired by every browser's Fullscreen
     // API transition -- "fullscreenchange" is the dedicated event for
     // exactly that state change, and orientationchange covers mobile
     // rotation, which can also change the effective viewport without a
-    // "resize" event firing first on some browsers.
+    // "resize" event firing first on some browsers. visualViewport's own
+    // "resize" is what actually fires on pinch-zoom/page-zoom scale
+    // changes (see viewportSize's doc comment) -- window's "resize" isn't
+    // guaranteed to fire for those on every browser.
     window.addEventListener("resize", recompute);
     document.addEventListener("fullscreenchange", recompute);
     window.addEventListener("orientationchange", recompute);
+    window.visualViewport?.addEventListener("resize", recompute);
     return () => {
       window.removeEventListener("resize", recompute);
       document.removeEventListener("fullscreenchange", recompute);
       window.removeEventListener("orientationchange", recompute);
+      window.visualViewport?.removeEventListener("resize", recompute);
     };
   }, [cols, rows, charAspect]);
 
