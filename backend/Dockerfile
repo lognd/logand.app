@@ -41,5 +41,11 @@ EXPOSE 8000
 # Migrate THEN serve, every container start -- idempotent (alembic no-ops
 # once the DB is already at head), and means a fresh docker-compose stack
 # (test or real) never needs a separate manual/CI migration step someone
-# could forget to run before the app's first request.
+# could forget to run before the app's first request. This makes
+# docker-compose.yml's own one-shot `migrate` profile (still invoked
+# explicitly by .github/workflows/deploy.yml before restarting `backend`)
+# belt-and-suspenders rather than the only path -- both are safe to run
+# together since alembic upgrade head is idempotent; deploy.yml's explicit
+# step is kept so a migration failure surfaces as its own clearly-labeled
+# deploy step instead of buried in backend's own startup log.
 CMD ["sh", "-c", "alembic upgrade head && uvicorn logand_backend.asgi:app --host 0.0.0.0 --port 8000"]
