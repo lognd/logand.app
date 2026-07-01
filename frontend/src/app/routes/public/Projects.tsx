@@ -122,7 +122,9 @@ export function Projects() {
         {PROJECTS.map((project, i) => (
           <section
             key={project.title}
-            className="flex h-full min-h-full shrink-0 snap-start flex-col items-center gap-4 overflow-hidden px-4 py-12"
+            className={`flex h-full min-h-full shrink-0 snap-start flex-col items-center gap-2 overflow-hidden px-4 ${
+              i === 0 ? "py-6" : "py-12"
+            }`}
           >
             {/* justify-start (the flex default), NOT justify-center: when
                 a section's content (title + card, for the first one) is
@@ -166,8 +168,19 @@ export function Projects() {
                 own section, stacked above that card in the same flex
                 column, means it's part of the one thing that's already
                 guaranteed to be reachable on load. */}
+            {/* text-2xl (down from text-3xl) and this section's own
+                reduced py-6 (other sections keep py-12) -- the title
+                eats into the same fixed section height every other
+                card's content alone gets, so the first card was ending
+                up with noticeably less room for everything below it
+                ("the first panel only gets two lines of viewing space
+                because of the title"). Shrinking the title's own
+                footprint (font size, section padding it doesn't need
+                since the title already provides visual separation from
+                the header above) gives that space back without removing
+                the title itself. */}
             {i === 0 && (
-              <h1 data-wave-text className="shrink-0 text-center text-3xl text-fg-primary">
+              <h1 data-wave-text className="shrink-0 text-center text-2xl text-fg-primary">
                 Projects
               </h1>
             )}
@@ -179,10 +192,30 @@ export function Projects() {
                 Shell.tsx's mobile nav dropdown -- "I would prefer that we
                 use the same glass look for the card as we did for the
                 menu." */}
-            <div className="glass-panel w-full max-w-2xl rounded border p-4 sm:p-6">
-              <ImageCarousel slides={project.slides} />
+            {/* flex min-h-0 flex-col: the card used to size its
+                description to a flat max-h-40 (160px) regardless of how
+                much room the section actually had -- fine on a tall
+                viewport, but on a shorter one (different browser chrome,
+                zoom level, etc) the section's overflow-hidden (see above)
+                just clipped straight through the description AND its own
+                bottom border ("the bottom text area is ridiculously
+                small, and the bottom border is cut"). Making the card a
+                flex column that itself fills the section's real leftover
+                height (min-h-0 is load-bearing here -- without it a flex
+                item won't shrink below its content's natural size, which
+                defeats the whole point) means the description below can
+                flex to whatever space is ACTUALLY left after the image
+                and title, rather than a fixed guess that sometimes
+                doesn't fit. */}
+            <div className="glass-panel flex w-full min-h-0 max-w-2xl flex-1 flex-col overflow-hidden rounded border p-4 sm:p-6">
+              <div className="shrink-0">
+                <ImageCarousel slides={project.slides} />
+              </div>
               {/* data-wave-text: see useBrightnessWave's doc comment. */}
-              <h2 data-wave-text className="mb-2 mt-4 text-2xl text-fg-primary">
+              <h2
+                data-wave-text
+                className="mb-2 mt-4 shrink-0 text-2xl text-fg-primary"
+              >
                 {project.title}
               </h2>
               {/* The card itself is capped to the feed's own height (one
@@ -197,14 +230,16 @@ export function Projects() {
                   rather than being swallowed here; that chaining is the
                   browser's default overscroll-behavior, which
                   overscroll-contain would have blocked.
-                  border-y (thin, matching --border) marks the actual
-                  scrollable region's boundary -- without it the text just
-                  starts/stops abruptly at the card's padding with no visual
-                  cue that this specific bit, and not the whole card, is
-                  what scrolls. */}
+                  flex-1 min-h-0 (replacing max-h-40) -- fills whatever
+                  space is actually left in the card instead of a fixed
+                  guess. border-y (thin, matching --border) marks the
+                  actual scrollable region's boundary -- without it the
+                  text just starts/stops abruptly at the card's padding
+                  with no visual cue that this specific bit, and not the
+                  whole card, is what scrolls. */}
               <div
                 data-wave-text
-                className="max-h-40 overflow-y-auto no-scrollbar border-y border-border py-2 pr-1 text-base text-fg-primary"
+                className="min-h-0 flex-1 overflow-y-auto no-scrollbar border-y border-border py-2 pr-1 text-base text-fg-primary"
               >
                 {project.description}
               </div>

@@ -8,8 +8,17 @@ import { useEffect, useRef, useState } from "react";
 // the rest of the site rather than a one-off, without pulling in the shared
 // class (which assumes a full border box + backdrop-blur meant for a
 // larger panel, not a small round hit target).
+//
+// Positioning itself (not baked into this constant) is responsive: on a
+// narrow viewport the image box has little or no side space to sit in
+// (see the outer wrapper's own doc comment), so vertically-centered edge
+// buttons there just look like they're floating disconnected from
+// anything -- "make the arrows look better on mobile, maybe move the
+// arrows to inside the image on the bottom right and left in narrow
+// viewport." Below `sm`, they sit inside the image's own bottom corners
+// instead; `sm` and up switches to the side-space placement.
 const ARROW_BUTTON_CLASS =
-  "absolute top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full border border-[rgba(235,219,178,0.25)] bg-[rgba(40,40,40,0.55)] text-lg leading-none text-fg-primary transition-colors hover:bg-[rgba(40,40,40,0.8)] hover:text-accent-aqua focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-orange";
+  "absolute flex h-9 w-9 items-center justify-center rounded-full border border-[rgba(235,219,178,0.25)] bg-[rgba(40,40,40,0.55)] text-lg leading-none text-fg-primary transition-colors hover:bg-[rgba(40,40,40,0.8)] hover:text-accent-aqua focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-orange";
 
 // The real site is a desktop-width layout (header/content/footer, not a
 // screenshot) -- rendering the <iframe> at the slide's own small box size
@@ -166,43 +175,77 @@ export function ImageCarousel({ slides }: { slides: CarouselSlide[] }) {
     : 0;
 
   return (
-    <div className="relative w-full overflow-hidden rounded border border-border bg-bg-secondary">
-      <div
-        ref={trackRef}
-        className="flex aspect-video w-full touch-pan-y"
-        style={{
-          transform: `translateX(calc(${-index * 100}% + ${dragPercent}%))`,
-          transition:
-            isDragging || reducedMotionRef.current ? "none" : "transform 300ms ease-out",
-        }}
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={endDrag}
-        onPointerCancel={endDrag}
-      >
-        {slides.map((slide) => (
-          <div key={slide.alt} className="h-full w-full flex-shrink-0">
-            {slide.iframeSrc ? (
-              <IframeSlide src={slide.iframeSrc} alt={slide.alt} />
-            ) : slide.src ? (
-              <img
-                src={slide.src}
-                alt={slide.alt}
-                draggable={false}
-                className="h-full w-full select-none object-cover"
-              />
-            ) : (
-              // Placeholder panel -- see CarouselSlide's doc comment. No
-              // aspect-video here -- the track's OWN aspect-video already
-              // gives this flex child a real height via the default
-              // align-items:stretch, a second aspect-ratio on top of that
-              // would fight it.
-              <div className="flex h-full w-full select-none items-center justify-center px-4 text-center text-sm text-fg-muted">
-                {slide.alt}
-              </div>
-            )}
-          </div>
-        ))}
+    // Outer wrapper spans the card's FULL width, not just the (now
+    // height-capped, often narrower) image box -- the buttons anchor to
+    // THIS element's edges, not the image's, so on a short viewport where
+    // the aspect-video box shrinks narrower than the card, they land in
+    // the real empty space beside it instead of on top of the image
+    // itself ("now that there is space on the left and right, put the
+    // buttons there and not on the carousel item").
+    <div className="relative w-full">
+      {/* aspect-video + a height cap (max-h-[38dvh]), NOT a width-driven
+          aspect-video (w-full) -- the old width-driven version fixed this
+          box's height at 16:9 of the card's full width (~378px at the
+          card's max-w-2xl), which alone left almost no room for the
+          description on a shorter viewport ("the bottom text area is
+          ridiculously small, and the bottom border is cut"). Capping
+          height and letting the browser derive width from it
+          (aspect-ratio's normal sizing algorithm, given both an explicit
+          height and a max-width) means this box shrinks on a short
+          viewport instead of always claiming the same fixed height
+          regardless of how much is actually available; max-w-full keeps
+          it from exceeding the card's own width on a tall/wide viewport
+          where 38dvh would otherwise compute wider than that. */}
+      {/* min-h-[110px] -- a floor under the height cap above. Without it,
+          a short-AND-narrow viewport could shrink this box below the
+          arrow buttons' own height (h-9, 36px, sitting bottom-2/8px
+          inside it on mobile -- see ARROW_BUTTON_CLASS's doc comment),
+          which pushed them past the image's actual bottom edge into the
+          description text below it ("now the arrows overlap the text in
+          short viewport"). aspect-ratio + a min-height together just means
+          the box stops shrinking at this floor rather than breaking the
+          16:9 ratio in the other direction (getting wider than its
+          max-width to keep the ratio) -- a slightly-off ratio at extreme
+          sizes is a fine tradeoff for the buttons always actually fitting
+          inside it. */}
+      <div className="relative mx-auto aspect-video max-h-[38dvh] min-h-[110px] w-auto max-w-full overflow-hidden rounded border border-border bg-bg-secondary">
+        <div
+          ref={trackRef}
+          className="flex h-full w-full touch-pan-y"
+          style={{
+            transform: `translateX(calc(${-index * 100}% + ${dragPercent}%))`,
+            transition:
+              isDragging || reducedMotionRef.current ? "none" : "transform 300ms ease-out",
+          }}
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={endDrag}
+          onPointerCancel={endDrag}
+        >
+          {slides.map((slide) => (
+            <div key={slide.alt} className="h-full w-full flex-shrink-0">
+              {slide.iframeSrc ? (
+                <IframeSlide src={slide.iframeSrc} alt={slide.alt} />
+              ) : slide.src ? (
+                <img
+                  src={slide.src}
+                  alt={slide.alt}
+                  draggable={false}
+                  className="h-full w-full select-none object-cover"
+                />
+              ) : (
+                // Placeholder panel -- see CarouselSlide's doc comment. No
+                // aspect-video here -- the track's OWN aspect-video already
+                // gives this flex child a real height via the default
+                // align-items:stretch, a second aspect-ratio on top of that
+                // would fight it.
+                <div className="flex h-full w-full select-none items-center justify-center px-4 text-center text-sm text-fg-muted">
+                  {slide.alt}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
       </div>
       {slides.length > 1 && (
         <>
@@ -210,7 +253,7 @@ export function ImageCarousel({ slides }: { slides: CarouselSlide[] }) {
             type="button"
             aria-label="Previous image"
             onClick={() => goTo(index - 1)}
-            className={`${ARROW_BUTTON_CLASS} left-2`}
+            className={`${ARROW_BUTTON_CLASS} bottom-2 left-2 sm:bottom-auto sm:left-0 sm:top-1/2 sm:-translate-y-1/2`}
           >
             {"<"}
           </button>
@@ -218,7 +261,7 @@ export function ImageCarousel({ slides }: { slides: CarouselSlide[] }) {
             type="button"
             aria-label="Next image"
             onClick={() => goTo(index + 1)}
-            className={`${ARROW_BUTTON_CLASS} right-2`}
+            className={`${ARROW_BUTTON_CLASS} bottom-2 right-2 sm:bottom-auto sm:right-0 sm:top-1/2 sm:-translate-y-1/2`}
           >
             {">"}
           </button>
