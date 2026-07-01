@@ -91,8 +91,20 @@ export function MatrixRain({ className }: { className?: string }) {
       // instead of a transparent canvas (which let page content behind it
       // show through and shift as the page scrolled, reading as if the
       // "background" itself were moving rather than just the rain).
+      //
+      // Fills via the canvas's own (integer, device-pixel) width/height,
+      // not rect.width/rect.height under the dpr transform -- see
+      // ParticleLayer.tsx's identical fix for why: rect.width is a
+      // fractional CSS value that can drift slightly frame to frame, and
+      // filling based on it (through the dpr transform) can cover very
+      // slightly less than the actual backing store, leaving a sliver at
+      // the edge that's never repainted -- whatever was drawn there stays
+      // stuck instead of fading under the next frame's backdrop.
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.fillStyle = BACKDROP_COLOR;
-      ctx.fillRect(0, 0, rect.width, rect.height);
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.restore();
       ctx.font = `${CELL_SIZE * 0.85}px "JetBrains Mono", monospace`;
       ctx.textBaseline = "top";
 

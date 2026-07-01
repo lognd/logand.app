@@ -5,6 +5,7 @@ import { AsciiCanvas } from "../../ascii/AsciiCanvas";
 import { NAV_BRAND_CLASS, NAV_LINK_CLASS } from "../../styles/a11y";
 import { logout } from "../../api/auth";
 import { useMe } from "../../hooks/useMe";
+import { GlitchText } from "./GlitchText";
 
 function NavLinks({ className }: { className?: string }) {
   const { data: me, isLoading } = useMe();
@@ -26,11 +27,15 @@ function NavLinks({ className }: { className?: string }) {
   if (!me) {
     return (
       <>
-        <a href="/login" className={`${NAV_LINK_CLASS} ${className ?? ""}`}>
-          log in
+        <a href="/login" aria-label="log in" className={`${NAV_LINK_CLASS} ${className ?? ""}`}>
+          <GlitchText>log in</GlitchText>
         </a>
-        <a href="/register" className={`${NAV_LINK_CLASS} ${className ?? ""}`}>
-          register
+        <a
+          href="/register"
+          aria-label="register"
+          className={`${NAV_LINK_CLASS} ${className ?? ""}`}
+        >
+          <GlitchText>register</GlitchText>
         </a>
       </>
     );
@@ -38,31 +43,36 @@ function NavLinks({ className }: { className?: string }) {
 
   return (
     <>
+      {/* budget and inventory dropped from the top nav -- not meant to be
+          reachable straight from the front page; still real routes,
+          just not linked here. Only invoicing (renamed from "invoices")
+          stays. */}
       {me.role === "admin" && (
-        <>
-          <a href="/admin/invoices" className={`${NAV_LINK_CLASS} ${className ?? ""}`}>
-            invoices
-          </a>
-          <a href="/admin/budget" className={`${NAV_LINK_CLASS} ${className ?? ""}`}>
-            budget
-          </a>
-          <a href="/admin/inventory" className={`${NAV_LINK_CLASS} ${className ?? ""}`}>
-            inventory
-          </a>
-        </>
+        <a
+          href="/admin/invoices"
+          aria-label="invoicing"
+          className={`${NAV_LINK_CLASS} ${className ?? ""}`}
+        >
+          <GlitchText>invoicing</GlitchText>
+        </a>
       )}
       {me.role === "customer" && (
-        <a href="/invoices" className={`${NAV_LINK_CLASS} ${className ?? ""}`}>
-          my invoices
+        <a
+          href="/invoices"
+          aria-label="my invoices"
+          className={`${NAV_LINK_CLASS} ${className ?? ""}`}
+        >
+          <GlitchText>my invoices</GlitchText>
         </a>
       )}
       <button
         type="button"
+        aria-label="log out"
         className={`${NAV_LINK_CLASS} ${className ?? ""}`}
         onClick={() => logoutMutation.mutate()}
         disabled={logoutMutation.isPending}
       >
-        log out
+        <GlitchText>log out</GlitchText>
       </button>
     </>
   );
@@ -74,11 +84,11 @@ function NavLinks({ className }: { className?: string }) {
 function PrimaryLinks({ className }: { className?: string }) {
   return (
     <>
-      <a href="/projects" className={`${NAV_LINK_CLASS} ${className ?? ""}`}>
-        projects
+      <a href="/projects" aria-label="projects" className={`${NAV_LINK_CLASS} ${className ?? ""}`}>
+        <GlitchText>projects</GlitchText>
       </a>
-      <a href="/contact" className={`${NAV_LINK_CLASS} ${className ?? ""}`}>
-        contact
+      <a href="/contact" aria-label="contact" className={`${NAV_LINK_CLASS} ${className ?? ""}`}>
+        <GlitchText>contact</GlitchText>
       </a>
     </>
   );
@@ -118,8 +128,8 @@ export function Shell({ children }: { children: ReactNode }) {
       <AsciiCanvas className="pointer-events-none fixed inset-0 -z-10 opacity-10" />
       <header className="relative z-20 border-b border-border">
         <div className="flex items-center justify-between gap-4 p-4">
-          <a href="/" className={NAV_BRAND_CLASS}>
-            logand.app
+          <a href="/" aria-label="logand.app" className={NAV_BRAND_CLASS}>
+            <GlitchText>logand.app</GlitchText>
           </a>
           {/* Desktop/wide nav: everything inline in one row. Hidden below
               `sm` -- at phone widths this exact row is what wrapped onto a
@@ -148,10 +158,23 @@ export function Shell({ children }: { children: ReactNode }) {
           </button>
         </div>
         {mobileNavOpen && (
+          // `absolute` overlay, not normal flow -- a normal-flow dropdown
+          // grows the header's own box height while open, which (with
+          // several stacked links, e.g. an admin's full link list) could
+          // push the page's total height past the viewport, forcing a
+          // page-level scrollbar just from opening the menu ("I want menu
+          // to not extend the page and make it scrollable"). Positioned
+          // absolutely below the header instead, so opening it never
+          // changes any other element's layout; `max-h-[70dvh]` +
+          // `overflow-y-auto` make the PANEL ITSELF scrollable if its own
+          // content (an admin's full nav list, say) is taller than that,
+          // rather than the page growing to fit it. `bg-bg-primary` is
+          // solid/opaque since this now overlays real page content instead
+          // of sitting inline in the header's own row.
           <nav
             id="mobile-nav"
             aria-label="primary"
-            className="flex flex-col gap-1 border-t border-border p-4 sm:hidden"
+            className="absolute inset-x-0 top-full z-30 flex max-h-[70dvh] flex-col gap-1 overflow-y-auto border-t border-border bg-bg-primary p-4 sm:hidden"
           >
             <PrimaryLinks className="w-full" />
             <NavLinks className="w-full" />

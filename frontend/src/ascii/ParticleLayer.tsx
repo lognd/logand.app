@@ -93,11 +93,28 @@ export function ParticleLayer({
     const render = (now: number) => {
       const dtSeconds = Math.min((now - lastTime) / 1000, 0.05);
       lastTime = now;
-      const rect = canvas.getBoundingClientRect();
 
       // Transparent -- clearRect, not a backdrop fill, so this composites
       // over whatever background is currently mounted underneath it.
-      ctx.clearRect(0, 0, rect.width, rect.height);
+      //
+      // Clears via the canvas's own (integer, device-pixel) width/height,
+      // not `rect.width`/`rect.height` under the dpr transform -- canvas.width
+      // is always a whole number of device pixels (resize() below rounds
+      // rect.width * dpr when assigning it), but rect.width itself is a
+      // fractional CSS-pixel value that can drift slightly from frame to
+      // frame (layout jitter, sub-pixel positioning). clearRect(0, 0,
+      // rect.width, rect.height) run through the dpr transform can then
+      // cover very slightly less than the actual backing store, leaving a
+      // sliver of un-cleared pixels at the edge that never gets wiped on
+      // any later frame either -- exactly why trail characters right at
+      // the edge of the canvas were getting stuck instead of fading out.
+      // Resetting to the identity transform and clearing the literal
+      // backing-store dimensions guarantees the whole buffer is wiped
+      // every frame, with no rounding gap possible.
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.restore();
       ctx.font = `${CELL_SIZE * 0.85}px "JetBrains Mono", monospace`;
       ctx.textBaseline = "top";
 
