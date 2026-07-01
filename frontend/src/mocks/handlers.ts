@@ -245,6 +245,38 @@ export const handlers = [
     return HttpResponse.json(toListShape(invoice));
   }),
 
+  http.post("/api/admin/invoices/:id/payments/manual", async ({ params, request }) => {
+    const denied = requireRole("admin");
+    if (denied) return denied;
+    const invoice = invoices.find((i) => i.id === params.id);
+    if (!invoice) return HttpResponse.json({ detail: "not found" }, { status: 404 });
+    if (invoice.status !== "sent" && invoice.status !== "overdue") {
+      return HttpResponse.json(
+        { detail: "invoice is not in a state that allows this operation" },
+        { status: 409 },
+      );
+    }
+    const body = (await request.json()) as {
+      method: string;
+      amount: string;
+      note?: string;
+    };
+    const paymentId = mockId("pay");
+    invoice.payments.push({
+      id: paymentId,
+      method: body.method,
+      amount: body.amount,
+      status: "succeeded",
+      transactionId: null,
+      note: body.note ?? null,
+    });
+    const paidSoFar = invoice.payments.reduce((sum, p) => sum + Number(p.amount), 0);
+    if (paidSoFar >= Number(invoice.amountTotal)) {
+      invoice.status = "paid";
+    }
+    return HttpResponse.json({ id: paymentId });
+  }),
+
   // -- admin budget ------------------------------------------------------
   http.get("/api/admin/budget", () => {
     const denied = requireRole("admin");

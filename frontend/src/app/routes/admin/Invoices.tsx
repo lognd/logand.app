@@ -1,6 +1,141 @@
+import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { listAdminInvoices, sendInvoice, voidInvoice } from "../../../api/invoices";
-import { BUTTON_CLASS } from "../../../styles/a11y";
+import {
+  type Invoice,
+  type ManualPaymentMethod,
+  listAdminInvoices,
+  recordManualPayment,
+  sendInvoice,
+  voidInvoice,
+} from "../../../api/invoices";
+import { BUTTON_CLASS, INPUT_CLASS, LABEL_CLASS } from "../../../styles/a11y";
+
+const MANUAL_PAYMENT_METHODS: { value: ManualPaymentMethod; label: string }[] = [
+  { value: "zelle", label: "Zelle" },
+  { value: "paypal", label: "PayPal (sent directly)" },
+  { value: "in_person", label: "In person" },
+  { value: "other", label: "Other" },
+];
+
+// A visitor paying a customer's invoice via Stripe (the real /pay flow)
+// never touches this -- this is exclusively for an admin recording a
+// payment that already happened some other way (a Zelle transfer, cash
+// handed over, a PayPal payment sent customer-to-admin directly), so the
+// invoice's paid/unpaid state stays accurate even when the money moved
+// outside Stripe entirely. See backend's domain/invoices/service.py
+// record_manual_payment doc comment for why there's no provider API call
+// here at all.
+function ManualPaymentForm({
+  invoice,
+  onRecorded,
+}: {
+  invoice: Invoice;
+  onRecorded: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [method, setMethod] = useState<ManualPaymentMethod>("zelle");
+  const [amount, setAmount] = useState("");
+  const [note, setNote] = useState("");
+
+  const mutation = useMutation({
+    mutationFn: () => recordManualPayment(invoice.id, { method, amount, note: note || undefined }),
+    onSuccess: () => {
+      onRecorded();
+      setOpen(false);
+      setAmount("");
+      setNote("");
+    },
+  });
+
+  if (invoice.status !== "sent" && invoice.status !== "overdue") return null;
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        aria-label={`Record a manual payment for invoice ${invoice.id}`}
+        className={BUTTON_CLASS}
+      >
+        Record payment
+      </button>
+    );
+  }
+
+  return (
+    <form
+      className="flex w-full flex-col gap-2 rounded border border-border p-3 sm:w-auto sm:flex-row sm:items-end"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (!amount) return;
+        mutation.mutate();
+      }}
+    >
+      <div>
+        <label htmlFor={`method-${invoice.id}`} className={LABEL_CLASS}>
+          Method
+        </label>
+        <select
+          id={`method-${invoice.id}`}
+          value={method}
+          onChange={(e) => setMethod(e.target.value as ManualPaymentMethod)}
+          className={INPUT_CLASS}
+        >
+          {MANUAL_PAYMENT_METHODS.map((m) => (
+            <option key={m.value} value={m.value}>
+              {m.label}
+            </option>
+          ))}
+        </select>
+      </div>
+      <div>
+        <label htmlFor={`amount-${invoice.id}`} className={LABEL_CLASS}>
+          Amount
+        </label>
+        <input
+          id={`amount-${invoice.id}`}
+          type="number"
+          step="0.01"
+          min="0"
+          required
+          value={amount}
+          onChange={(e) => setAmount(e.target.value)}
+          className={INPUT_CLASS}
+        />
+      </div>
+      <div>
+        <label htmlFor={`note-${invoice.id}`} className={LABEL_CLASS}>
+          Note (optional)
+        </label>
+        <input
+          id={`note-${invoice.id}`}
+          type="text"
+          placeholder="e.g. Zelle confirmation #1234"
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          className={INPUT_CLASS}
+        />
+      </div>
+      <div className="flex gap-2">
+        <button
+          type="submit"
+          disabled={mutation.isPending}
+          className={BUTTON_CLASS}
+        >
+          {mutation.isPending ? "Recording..." : "Save"}
+        </button>
+        <button type="button" onClick={() => setOpen(false)} className={BUTTON_CLASS}>
+          Cancel
+        </button>
+      </div>
+      {mutation.isError && (
+        <p role="alert" className="text-base text-accent-red">
+          Could not record payment. Check the amount and try again.
+        </p>
+      )}
+    </form>
+  );
+}
 
 // TODO(logan): create-invoice form (React Hook Form + zod) is still missing --
 // this wires up list/send/void against real endpoints first since that's the
@@ -87,6 +222,7 @@ export function AdminInvoices() {
                     >
                       PDF
                     </a>
+                    <ManualPaymentForm invoice={invoice} onRecorded={invalidate} />
                   </td>
                 </tr>
               ))}

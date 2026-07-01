@@ -17,9 +17,11 @@ export interface MockInvoiceLineItem {
 
 export interface MockPayment {
   id: string;
+  method: string;
   amount: string;
   status: string;
   transactionId: string | null;
+  note?: string | null;
 }
 
 export interface MockInvoiceDetail extends Invoice {
@@ -92,6 +94,7 @@ export const invoices: MockInvoiceDetail[] = [
     payments: [
       {
         id: "pay-1",
+        method: "stripe",
         amount: "780.50",
         status: "succeeded",
         transactionId: "ch_mock_1",
