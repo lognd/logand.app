@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { BackgroundPicker, type BackgroundOption } from "../../../ascii/BackgroundPicker";
 import { MatrixRain } from "../../../ascii/MatrixRain";
 import { ParticleLayer } from "../../../ascii/ParticleLayer";
@@ -6,6 +6,7 @@ import { SpinningShape } from "../../../ascii/SpinningShape";
 import { randomShapeKind } from "../../../ascii/shapes";
 import { LINK_CLASS } from "../../../styles/a11y";
 import { GlitchText } from "../../layout/GlitchText";
+import { useBrightnessWave } from "../../layout/useBrightnessWave";
 
 // Public routes must render real semantic content -- crawlers and the
 // vite-ssg prerender pass (see docs/design/10) read this markup directly,
@@ -28,6 +29,8 @@ import { GlitchText } from "../../layout/GlitchText";
 // regardless of which background is showing.
 export function Landing() {
   const [background, setBackground] = useState<BackgroundOption>(() => randomShapeKind());
+  const contentRef = useRef<HTMLDivElement | null>(null);
+  useBrightnessWave(contentRef);
 
   return (
     // `isolate` for the same reason as Shell.tsx's root div -- without its
@@ -103,17 +106,24 @@ export function Landing() {
           className="pointer-events-none fixed inset-0 -z-[4]"
           muted={background !== "rain"}
         />
-        <div className="relative z-10 w-full max-w-2xl">
-          <h1 className="mb-4 text-3xl text-fg-primary">Logan Dapp</h1>
-          <p className="mb-6 text-base text-fg-primary">
+        {/* ref + data-wave-text below: useBrightnessWave (see its own doc
+            comment) brightens these specific elements in an outward wave
+            on click/first load -- "the text in the content should become
+            brighter in a wave lightly originating from the point that you
+            click and on first load". */}
+        <div ref={contentRef} className="relative z-10 w-full max-w-2xl">
+          <h1 data-wave-text className="mb-4 text-3xl text-fg-primary">
+            Logan Dapp
+          </h1>
+          <p data-wave-text className="mb-6 text-base text-fg-primary">
             Personal and professional site of Logan Dapp -- software engineer, builder of
             logand.app.
           </p>
           <nav aria-label="primary" className="flex flex-wrap gap-4">
-            <a href="/projects" aria-label="Projects" className={LINK_CLASS}>
+            <a href="/projects" aria-label="Projects" data-wave-text className={LINK_CLASS}>
               <GlitchText>Projects</GlitchText>
             </a>
-            <a href="/contact" aria-label="Contact" className={LINK_CLASS}>
+            <a href="/contact" aria-label="Contact" data-wave-text className={LINK_CLASS}>
               <GlitchText>Contact</GlitchText>
             </a>
           </nav>

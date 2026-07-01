@@ -25,3 +25,20 @@ body {
      page content should scroll normally. */
   overflow-x: hidden;
 }
+
+/* Used by useBrightnessWave.ts -- a light brightness pulse, staggered per
+   element by distance from the click/load origin so a whole content area
+   brightening at once reads as an outward-expanding wave rather than a
+   simultaneous flash. Deliberately subtle (1.25 peak, not a blown-out
+   flash) per "become brighter in a wave LIGHTLY". */
+@keyframes wave-brighten {
+  0% {
+    filter: brightness(1);
+  }
+  40% {
+    filter: brightness(1.25);
+  }
+  100% {
+    filter: brightness(1);
+  }
+}
