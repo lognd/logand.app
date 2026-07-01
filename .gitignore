@@ -16,6 +16,8 @@ __pycache__/
 # Node
 node_modules/
 frontend/dist/
+frontend/test-results/
+frontend/playwright-report/
 
 # Rust
 wasm-ascii/target/
