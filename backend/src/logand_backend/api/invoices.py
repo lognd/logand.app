@@ -17,8 +17,10 @@ from logand_backend.db.models.invoices import Invoice, InvoiceLineItem, Payment
 from logand_backend.domain.invoices.pdf.renderer import PdfRenderError
 from logand_backend.domain.invoices.service import (
     LineItemInput,
+    ManualPaymentInput,
     create_invoice,
     generate_invoice_pdf,
+    record_manual_payment,
     send_invoice,
     void_invoice,
 )
@@ -143,13 +145,29 @@ async def get_invoice(
         "payments": [
             {
                 "id": str(p.id),
+                "method": p.method,
                 "amount": str(p.amount),
                 "status": p.status,
                 "transaction_id": p.transaction_id,
+                "note": p.note,
+                "recorded_by": str(p.recorded_by) if p.recorded_by else None,
             }
             for p in payments
         ],
     }
+
+
+@router.post("/{invoice_id}/payments/manual")
+async def record_manual_invoice_payment(
+    invoice_id: UUID,
+    payment: ManualPaymentInput,
+    admin: SessionInfo = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, str]:
+    result = await record_manual_payment(db, invoice_id, admin.user_id, payment)
+    if result.is_err:
+        raise to_http_exception(result.danger_err)
+    return {"id": str(result.danger_ok)}
 
 
 @router.get("/{invoice_id}/pdf")

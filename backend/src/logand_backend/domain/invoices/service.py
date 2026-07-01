@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from decimal import Decimal
+from typing import Literal
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel
@@ -10,13 +11,32 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from typani.result import Err, Ok, Result
 
 from logand_backend.app.config import AppConfig
-from logand_backend.db.models.invoices import Invoice, InvoiceLineItem
+from logand_backend.db.models.invoices import Invoice, InvoiceLineItem, Payment
 from logand_backend.db.models.users import User
 from logand_backend.domain.invoices.pdf.renderer import (
     build_invoice_pdf_data,
     render_invoice_pdf,
 )
 from logand_backend.errors import InvoiceError
+
+# Every method an admin can record BY HAND -- "stripe" is deliberately
+# excluded (that one only ever gets created automatically, from a real
+# Stripe webhook, see api/webhooks.py) and so is a real PayPal-API capture
+# (domain/payments/providers/paypal.py creates its own Payment row once
+# that's hooked up). "paypal" here means "the customer already sent a
+# PayPal payment some other way (their own PayPal app, e.g.) and an admin
+# is just recording that it happened" -- same `method` value either way,
+# distinguished by paypal_order_id being set or not (see
+# db/models/invoices.py's Payment.paypal_order_id doc comment).
+ManualPaymentMethod = Literal["paypal", "zelle", "in_person", "other"]
+
+
+class ManualPaymentInput(BaseModel):
+    model_config = {}
+
+    method: ManualPaymentMethod
+    amount: Decimal
+    note: str | None = None
 
 
 class LineItemInput(BaseModel):
@@ -100,6 +120,60 @@ async def void_invoice(
     invoice.status = "void"
     await db.flush()
     return Ok(None)
+
+
+async def record_manual_payment(
+    db: AsyncSession, invoice_id: UUID, admin_id: UUID, payment: ManualPaymentInput
+) -> Result[UUID, InvoiceError]:
+    """Records a payment an admin observed happening OUTSIDE this system
+    -- a Zelle transfer, cash handed over in person, a PayPal payment sent
+    directly customer-to-admin, or anything else that isn't the Stripe
+    PaymentIntent flow (api/invoices_public.py's /pay). There is no
+    provider API call here at all, by design: this is bookkeeping, not
+    payment processing -- see docs/design/04 and this module's own
+    ManualPaymentMethod doc comment for why "paypal" specifically can mean
+    either this OR a real PayPal API capture depending on whether
+    paypal_order_id ends up set.
+
+    Marks the invoice "paid" only once recorded payments cover the full
+    amount_total -- a partial manual payment (an admin recording a partial
+    Zelle transfer, say) is still recorded for the record, but the invoice
+    stays payable (sent/overdue) for the remaining balance rather than
+    being incorrectly marked fully paid.
+    """
+    invoice = await db.get(Invoice, invoice_id)
+    if invoice is None or invoice.deleted_at is not None:
+        return Err(InvoiceError.NotFound)
+    if invoice.status not in ("sent", "overdue"):
+        return Err(InvoiceError.InvalidState)
+
+    payment_id = uuid4()
+    db.add(
+        Payment(
+            id=payment_id,
+            invoice_id=invoice_id,
+            method=payment.method,
+            amount=payment.amount,
+            status="succeeded",
+            recorded_by=admin_id,
+            note=payment.note,
+        )
+    )
+    await db.flush()
+
+    existing_total = (
+        await db.execute(
+            select(Payment).where(
+                Payment.invoice_id == invoice_id, Payment.status == "succeeded"
+            )
+        )
+    ).scalars()
+    paid_so_far = sum((p.amount for p in existing_total), Decimal(0))
+    if paid_so_far >= invoice.amount_total:
+        invoice.status = "paid"
+    await db.flush()
+
+    return Ok(payment_id)
 
 
 async def generate_invoice_pdf(

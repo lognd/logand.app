@@ -16,6 +16,16 @@ _RECURRENCE_CHECK = (
     "or recurrence_interval is null"
 )
 _PAYMENT_STATUS_CHECK = "status in ('pending','succeeded','failed','refunded')"
+# "stripe" stays the implicit default for the existing Stripe PaymentIntent
+# flow (api/invoices_public.py's /pay + api/webhooks.py) -- the other four
+# are all recorded manually by an admin (domain/invoices/service.py's
+# record_manual_payment) except "paypal", which can be EITHER a real
+# PayPal Orders API payment (once configured, see
+# domain/payments/providers/paypal.py) OR a manually-recorded one (if an
+# admin just marks a customer's already-completed PayPal transfer as
+# paid instead) -- same "method" value either way, distinguished by
+# whether paypal_order_id is set.
+_PAYMENT_METHOD_CHECK = "method in ('stripe','paypal','zelle','in_person','other')"
 
 
 class Invoice(Base):
@@ -80,6 +90,7 @@ class Payment(Base):
     __tablename__ = "payments"
     __table_args__ = (
         CheckConstraint(_PAYMENT_STATUS_CHECK, name="ck_payments_status"),
+        CheckConstraint(_PAYMENT_METHOD_CHECK, name="ck_payments_method"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -90,7 +101,28 @@ class Payment(Base):
         ForeignKey("invoices.id", ondelete="RESTRICT"),
         nullable=False,
     )
-    stripe_payment_intent_id: Mapped[str] = mapped_column(Text, nullable=False)
+    method: Mapped[str] = mapped_column(Text, nullable=False, default="stripe")
+    # Nullable now (was NOT NULL) -- only ever set for method="stripe" rows;
+    # a manually-recorded Zelle/in-person/other payment has no Stripe
+    # object to reference at all.
+    stripe_payment_intent_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Set only for method="paypal" rows created via the real PayPal Orders
+    # API (domain/payments/providers/paypal.py) -- null for a manually-
+    # recorded PayPal payment, same reasoning as stripe_payment_intent_id.
+    paypal_order_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Which admin recorded this -- only ever set for manually-recorded
+    # payments (method != "stripe" with no processor reference above);
+    # null for anything created automatically from a real Stripe webhook
+    # or PayPal capture, since there's no admin action to attribute there.
+    recorded_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    # Free-form reference an admin enters for a manual payment -- a Zelle
+    # confirmation number, "handed cash at the Jan 5 meeting," etc. Never
+    # required (a manual payment can be recorded with none), never
+    # LaTeX/HTML-escaped here (that's the PDF renderer's job when this
+    # ever shows up in an invoice PDF, not this model's).
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
     amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     status: Mapped[str] = mapped_column(Text, nullable=False, default="pending")
     transaction_id: Mapped[str | None] = mapped_column(Text, nullable=True)
