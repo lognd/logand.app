@@ -5,6 +5,7 @@ import { ParticleLayer } from "../../../ascii/ParticleLayer";
 import { SpinningShape } from "../../../ascii/SpinningShape";
 import { randomShapeKind } from "../../../ascii/shapes";
 import { LINK_CLASS } from "../../../styles/a11y";
+import { GlitchText } from "../../layout/GlitchText";
 
 // Public routes must render real semantic content -- crawlers and the
 // vite-ssg prerender pass (see docs/design/10) read this markup directly,
@@ -109,11 +110,11 @@ export function Landing() {
             logand.app.
           </p>
           <nav aria-label="primary" className="flex flex-wrap gap-4">
-            <a href="/projects" className={LINK_CLASS}>
-              Projects
+            <a href="/projects" aria-label="Projects" className={LINK_CLASS}>
+              <GlitchText>Projects</GlitchText>
             </a>
-            <a href="/contact" className={LINK_CLASS}>
-              Contact
+            <a href="/contact" aria-label="Contact" className={LINK_CLASS}>
+              <GlitchText>Contact</GlitchText>
             </a>
           </nav>
         </div>
