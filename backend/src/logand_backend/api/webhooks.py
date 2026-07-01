@@ -74,7 +74,16 @@ async def _handle_payment_intent_event(db: AsyncSession, event: dict) -> None:
             stripe_payment_intent_id=intent_id,
             amount=intent["amount"] / 100,
             status="succeeded" if succeeded else "failed",
-            transaction_id=intent.get("latest_charge"),
+            # NOT intent.get(...) -- `intent` is a stripe.StripeObject, not
+            # a plain dict, and this SDK version's StripeObject doesn't
+            # implement .get() (only __getitem__/__contains__), so
+            # intent.get("latest_charge") raised AttributeError on every
+            # single successful webhook delivery that reached this line --
+            # found by tests/system/test_stripe_webhooks.py actually
+            # exercising this path instead of mocking it away.
+            transaction_id=intent["latest_charge"]
+            if "latest_charge" in intent
+            else None,
         )
     )
     if succeeded:
