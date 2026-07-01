@@ -1,16 +1,15 @@
 """add inventory full-text search column and GIN index
 
 Revision ID: 0001_inventory_fts
-Revises:
+Revises: 0000_initial_schema
 Create Date: 2026-06-30
 
-NOTE(logan): there is no initial-schema migration yet -- db/models/*.py
-exist but nobody has run `alembic revision --autogenerate -m "initial
-schema"` against a live Postgres to capture them. This migration is
-written standalone (down_revision=None) so it isn't lost, but it is NOT
-safe to run until an initial-schema migration exists ahead of it. Once
-that's generated, rename this file's down_revision to point at it and
-bump this file's own revision id so it's no longer "first".
+Follows 0000_initial_schema, which now exists (`alembic revision
+--autogenerate -m "initial schema"` run against a live Postgres, capturing
+every table in db/models/*.py) -- `alembic upgrade head` from a genuinely
+empty database previously failed outright (ALTER TABLE inventory_items ...
+against a database with no inventory_items table at all, since this was
+the only migration and it assumes the ORM's tables already exist).
 
 The tsvector column here can't be expressed as a plain SQLAlchemy
 mapped_column (see db/models/inventory.py's NOTE and
@@ -27,7 +26,7 @@ import sqlalchemy.dialects.postgresql
 from alembic import op
 
 revision: str = "0001_inventory_fts"
-down_revision: Union[str, None] = None
+down_revision: Union[str, None] = "0000_initial_schema"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
