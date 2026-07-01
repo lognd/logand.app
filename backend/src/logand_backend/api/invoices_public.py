@@ -5,14 +5,21 @@ from uuid import UUID
 
 import stripe
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from logand_backend.api.errors import to_http_exception
 from logand_backend.app.config import AppConfig
 from logand_backend.auth.rate_limit import CUSTOMER_PAY, RateLimiter
 from logand_backend.auth.sessions import SessionInfo, require_customer
 from logand_backend.db.base import get_db
 from logand_backend.db.models.invoices import Invoice
+from logand_backend.domain.invoices.pdf.renderer import PdfRenderError
+from logand_backend.domain.invoices.service import generate_invoice_pdf
+from logand_backend.logging import get_logger
+
+_log = get_logger(__name__)
 
 router = APIRouter(prefix="/api/invoices", tags=["customer", "invoices"])
 # redis_url wired from config -- see api/auth.py's identical NOTE for why
@@ -75,6 +82,42 @@ async def get_my_invoice(
 ) -> dict:
     invoice = await _get_owned_invoice(db, invoice_id, customer.user_id)
     return _invoice_summary(invoice)
+
+
+@router.get("/{invoice_id}/pdf")
+async def get_my_invoice_pdf(
+    invoice_id: UUID,
+    customer: SessionInfo = Depends(require_customer),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    # _get_owned_invoice (not generate_invoice_pdf's own NotFound check)
+    # is what actually enforces ownership here -- generate_invoice_pdf
+    # takes a bare invoice_id and doesn't know who's asking, by design
+    # (it's shared with the admin route below, which has no ownership
+    # restriction at all). This 404s on someone else's invoice before
+    # ever reaching the PDF-generation step.
+    await _get_owned_invoice(db, invoice_id, customer.user_id)
+    cfg = AppConfig.from_external(argparse.Namespace())
+    try:
+        result = await generate_invoice_pdf(db, invoice_id, cfg)
+    except PdfRenderError as exc:
+        # The LaTeX compiler's own log is exactly what a real failure
+        # (e.g. a LaTeX toolchain package missing from the deployed
+        # image) needs to actually diagnose -- logged server-side, never
+        # returned to the client (it's compiler internals, not something
+        # a customer/admin should have to read to understand "PDF
+        # generation failed").
+        _log.error("invoice PDF generation failed", extra={"log": exc.log})
+        raise HTTPException(
+            status_code=500, detail="failed to generate invoice PDF"
+        ) from exc
+    if result.is_err:
+        raise to_http_exception(result.danger_err)
+    return Response(
+        content=result.danger_ok,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="invoice-{invoice_id}.pdf"'},
+    )
 
 
 @router.post("/{invoice_id}/pay")

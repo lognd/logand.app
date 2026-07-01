@@ -46,6 +46,19 @@ class AppConfig(BaseModel):
     # ensure_admin_seeded docstring for why this is opt-in, not automatic).
     seed_admin_email: str | None = None
     seed_admin_password: str | None = None
+    # Used to build absolute links in generated invoice PDFs (see
+    # domain/invoices/pdf/renderer.py) -- a downloaded PDF has no browser
+    # origin of its own to resolve a relative "/invoices/x/pay" against,
+    # unlike the frontend's own api/client.ts calls (see that module's doc
+    # comment on why THOSE stay relative).
+    public_base_url: str = "https://logand.app"
+    invoice_business_name: str = "logand.app"
+    # Free-form -- address/tax ID/phone, whatever the invoice's letterhead
+    # should show under the business name. Empty by default (not every
+    # deployment needs one), never templated with fake placeholder-looking
+    # content that could be mistaken for real business info.
+    invoice_business_details: str = ""
+    invoice_contact_email: str = "billing@logand.app"
     host: str = "127.0.0.1"
     port: int = 8000
 
@@ -76,6 +89,10 @@ class AppConfig(BaseModel):
             "PAYPAL_MODE": "paypal_mode",
             "SEED_ADMIN_EMAIL": "seed_admin_email",
             "SEED_ADMIN_PASSWORD": "seed_admin_password",
+            "PUBLIC_BASE_URL": "public_base_url",
+            "INVOICE_BUSINESS_NAME": "invoice_business_name",
+            "INVOICE_BUSINESS_DETAILS": "invoice_business_details",
+            "INVOICE_CONTACT_EMAIL": "invoice_contact_email",
             "HOST": "host",
             "PORT": "port",
         }

@@ -1,0 +1,60 @@
+\documentclass{logandinvoice}
+
+\companyname{\VAR{business_name}}
+\companydetails{\VAR{business_details}}
+\invoicenumber{\VAR{invoice_number}}
+\invoicedatevalue{\VAR{invoice_date}}
+\invoiceduedate{\VAR{due_date}}
+\invoicestatus{\VAR{status}}
+\billto{\VAR{bill_to}}
+
+\hypersetup{pdftitle={Invoice \VAR{invoice_number}}, pdfauthor={\VAR{business_name}}}
+
+\begin{document}
+\thispagestyle{fancy}
+
+\invoiceheader
+\billtoblock
+
+\begin{tabularx}{\textwidth}{@{}X r r r@{}}
+\invoicetableheader
+\BLOCK{ for item in line_items }
+\VAR{item.description} & \VAR{item.quantity} & \VAR{currency_symbol}\VAR{item.unit_price} & \VAR{currency_symbol}\VAR{item.amount} \\
+\BLOCK{ endfor }
+\bottomrule
+\end{tabularx}
+
+\invoicetotals{%
+\begin{tabular}{@{}r r@{}}
+\textbf{Total (\VAR{currency_upper}):} & \textbf{\VAR{currency_symbol}\VAR{amount_total}} \\
+\end{tabular}%
+}
+
+\vspace{24pt}
+
+\textbf{\color{invoiceaccent}Payment}
+
+\vspace{6pt}
+\noindent
+\BLOCK{ if pay_url }
+Pay online: \href{\VAR{pay_url}}{\VAR{pay_url}}\\[6pt]
+\BLOCK{ endif }
+Alternative payment methods accepted: Zelle, PayPal, or in person by prior
+arrangement -- contact \href{mailto:\VAR{contact_email}}{\VAR{contact_email}}
+to arrange one of these instead.
+
+\BLOCK{ if memo }
+\vspace{18pt}
+\textbf{\color{invoiceaccent}Notes}
+
+\vspace{6pt}
+\noindent \VAR{memo}
+\BLOCK{ endif }
+
+\vfill
+\begin{center}
+\small\color{invoicegray}
+Thank you for your business.
+\end{center}
+
+\end{document}

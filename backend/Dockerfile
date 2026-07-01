@@ -8,6 +8,21 @@ RUN uv sync --frozen --no-dev || uv sync --no-dev
 
 FROM python:3.12-slim
 
+# LaTeX toolchain for professional invoice PDFs (see
+# domain/invoices/pdf/renderer.py's doc comment for why LaTeX over a
+# pure-Python PDF library) -- latexmk drives the compile, the three
+# texlive-* packages cover logandinvoice.cls's own \RequirePackage list
+# (geometry, xcolor, tabularx, booktabs, hyperref, fancyhdr, lmodern).
+# This is a genuinely large image layer (order of ~1GB) -- an accepted
+# tradeoff for PDF output quality the user explicitly asked to look "as
+# professional as possible," not an oversight.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    latexmk \
+    texlive-latex-recommended \
+    texlive-latex-extra \
+    texlive-fonts-recommended \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN useradd --create-home --shell /bin/false appuser
 WORKDIR /app
 COPY --from=build /app /app

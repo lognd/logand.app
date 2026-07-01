@@ -1,22 +1,30 @@
 from __future__ import annotations
 
+import argparse
 from datetime import date
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from logand_backend.api.errors import to_http_exception
+from logand_backend.app.config import AppConfig
 from logand_backend.auth.sessions import SessionInfo, require_admin
 from logand_backend.db.base import get_db
 from logand_backend.db.models.invoices import Invoice, InvoiceLineItem, Payment
+from logand_backend.domain.invoices.pdf.renderer import PdfRenderError
 from logand_backend.domain.invoices.service import (
     LineItemInput,
     create_invoice,
+    generate_invoice_pdf,
     send_invoice,
     void_invoice,
 )
+from logand_backend.logging import get_logger
+
+_log = get_logger(__name__)
 
 router = APIRouter(prefix="/api/admin/invoices", tags=["admin", "invoices"])
 
@@ -142,3 +150,29 @@ async def get_invoice(
             for p in payments
         ],
     }
+
+
+@router.get("/{invoice_id}/pdf")
+async def get_invoice_pdf(
+    invoice_id: UUID,
+    _admin: SessionInfo = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    # No ownership check here (unlike invoices_public.py's identical
+    # route) -- an admin can generate a PDF for any customer's invoice,
+    # by design.
+    cfg = AppConfig.from_external(argparse.Namespace())
+    try:
+        result = await generate_invoice_pdf(db, invoice_id, cfg)
+    except PdfRenderError as exc:
+        _log.error("invoice PDF generation failed", extra={"log": exc.log})
+        raise HTTPException(
+            status_code=500, detail="failed to generate invoice PDF"
+        ) from exc
+    if result.is_err:
+        raise to_http_exception(result.danger_err)
+    return Response(
+        content=result.danger_ok,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="invoice-{invoice_id}.pdf"'},
+    )
