@@ -157,8 +157,8 @@ export function Landing() {
             Logan Dapp
           </h1>
           <p data-wave-text className="mb-6 text-base text-fg-primary">
-            Software, computer, and mechanical engineer -- I design, build, and ship real
-            systems end to end. This site included.
+            Software, computer, and mechanical engineer. Designing, building, and shipping
+            real systems end to end. This site included.
           </p>
           <nav aria-label="primary" className="flex flex-wrap gap-4">
             <a href="/projects" aria-label="Projects" data-wave-text className={LINK_CLASS}>

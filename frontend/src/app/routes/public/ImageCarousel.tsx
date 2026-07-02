@@ -121,6 +121,13 @@ export interface CarouselSlide {
   // one of these and the same slide renders the actual media with no
   // other changes needed.
   src?: string;
+  // When a slide has no media, the placeholder panel shows `alt` as
+  // visible text by default -- set this true for a genuinely blank
+  // panel instead (still no broken <img>, just no label either). `alt`
+  // itself stays meaningful either way (used as this slide's React key,
+  // and for real media's actual alt/title attributes if a src is added
+  // later) -- this only affects what the PLACEHOLDER shows, never a11y.
+  blankPlaceholder?: boolean;
   // Renders a live <iframe> instead of a static image -- used for the
   // logand.app project entry itself, which can just embed the real
   // running site rather than a screenshot of it.
@@ -355,7 +362,7 @@ export function ImageCarousel({ slides }: { slides: CarouselSlide[] }) {
                 // align-items:stretch, a second aspect-ratio on top of that
                 // would fight it.
                 <div className="flex h-full w-full select-none items-center justify-center px-4 text-center text-sm text-fg-muted">
-                  {slide.alt}
+                  {slide.blankPlaceholder ? "" : slide.alt}
                 </div>
               )}
             </div>

@@ -217,7 +217,7 @@ const PROJECTS: Project[] = [
     period: "Aug 2024 - Jun 2025",
     description:
       "I ended up in this lab by chance: a conversation on the street about research led to a position applying signal processing and deep learning to rat neurological data. Used the synchro-squeezing transform to sharpen time-frequency structure in raw brainwave recordings, then designed a Longformer-based variational autoencoder to learn a latent space capturing long- and short-term brainwave relationships, trained remotely via SLURM on HiPerGator, UF's supercomputer. My involvement wound down as other commitments picked up, but the modeling work itself stands on its own.",
-    slides: [{ alt: "Mears' Neuroscience Lab" }],
+    slides: [{ alt: "Mears' Neuroscience Lab", blankPlaceholder: true }],
     githubRepos: [{ owner: "lognd", repo: "bwave" }],
   },
 ];
