@@ -153,7 +153,14 @@ jobs:
         # VPS_USER should be the non-root 'logand' service account (see
         # ops/setup-vps.sh) -- not root -- and its home is where the repo
         # actually lives, not /srv (an earlier, never-deployed assumption).
-        uses: easingthemes/ssh-deploy@v5
+        #
+        # @v5 stopped resolving -- the maintainer never kept a floating v5
+        # tag (only point releases like v5.1.2), and has since moved on to
+        # v6 as the current floating major tag. Inputs are unchanged
+        # (SSH_PRIVATE_KEY/REMOTE_HOST/REMOTE_USER/SOURCE/TARGET all still
+        # exist in v6.0.3's action.yml), so this is a version-pin fix, not
+        # a behavior change.
+        uses: easingthemes/ssh-deploy@v6
         with:
           SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_KEY }}
           REMOTE_HOST: ${{ secrets.VPS_HOST }}
