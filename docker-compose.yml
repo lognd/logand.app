@@ -96,6 +96,12 @@ services:
   # this image's non-root appuser to somehow gain crontab-management
   # privileges it deliberately doesn't have).
   scheduler:
+    # Same dual build/image fields as the backend service above, for the
+    # same reason: `image:` is what makes `docker compose pull` (deploy.yml)
+    # fetch the exact image ci.yml's build-and-push job already built,
+    # instead of `docker compose up` silently falling back to a full
+    # from-source rebuild on the VPS itself every deploy.
+    image: ghcr.io/lognd/logand.app/backend:latest
     build:
       context: ./backend
     command: ["uv", "run", "python", "-m", "logand_backend.scripts.scheduler"]

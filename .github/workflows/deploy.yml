@@ -175,6 +175,6 @@ jobs:
           key: ${{ secrets.VPS_SSH_KEY }}
           script: |
             cd /home/logand/logand.app
-            docker compose pull backend
+            docker compose pull backend scheduler
             docker compose --profile migrate run --rm migrate
-            docker compose up -d backend caddy
+            docker compose up -d backend caddy scheduler
