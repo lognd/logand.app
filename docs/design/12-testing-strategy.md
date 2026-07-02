@@ -71,6 +71,44 @@ backend/tests/
   runs all of it, this is what CI gates on (see
   [11-deployment.md](11-deployment.md)).
 
+### Coverage: current numbers, honestly
+
+`make coverage` (`pytest --cov --cov-report=term-missing -n auto`), last
+measured against every payment-critical route explicitly: **92% overall**
+(1516 statements, 120 missed). The remaining gaps are all one of two
+kinds, not untested business logic:
+
+1. **Gated on real infrastructure this environment doesn't always have**:
+   `domain/invoices/pdf/renderer.py` and the routes that call it
+   (`api/invoices.py`'s admin PDF route, `api/invoices_public.py`'s
+   customer PDF route) require a real `latexmk` toolchain --
+   `tests/system/test_invoice_pdf_generation.py` covers these fully and
+   passes in CI/the real Docker image, but skips cleanly
+   (`shutil.which("latexmk") is None`) wherever that toolchain isn't
+   installed, which is most local dev machines. `auth/rate_limit.py`'s
+   Redis-backed path is similar -- covered when a real Redis is reachable,
+   falls back untested locally otherwise.
+2. **Genuinely dead branches under current business rules** -- a handful
+   of `result.is_err` checks (e.g. `create_invoice`, `create_entry`,
+   `search_items`) guard `Result` types whose domain function never
+   actually returns `Err` today. Left in place (removing the check would
+   silently start trusting an invariant the type system doesn't enforce),
+   not force-tested with contrived mocks that don't correspond to a real
+   failure mode.
+
+One coverage-tool pitfall worth recording for next time: **coverage.py
+under-reports lines executed after an `await db.execute(...)` inside a
+SQLAlchemy async session** unless `[tool.coverage.run] concurrency =
+["greenlet"]` is set (SQLAlchemy's asyncio support bridges to sync DBAPI
+calls via `greenlet_spawn`, and coverage's tracer doesn't follow across
+that switch by default). Before this was set, `api/webhooks.py` looked
+like 63% covered with the entire webhook handler body "missing" despite
+passing tests that clearly exercised it (confirmed by temporarily adding
+`print()`s inside the "uncovered" lines) -- fixing the config, not adding
+tests, closed that entire apparent gap. Worth checking for this class of
+false negative before writing tests to chase a suspiciously large
+"uncovered" block in any `async def` that touches the DB.
+
 ## Frontend
 
 ```

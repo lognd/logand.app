@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from uuid import uuid4
+
 from httpx import AsyncClient
 
 
@@ -77,6 +79,76 @@ async def test_duplicate_location_name_rejected(
         headers=headers,
     )
     assert second.status_code == 409
+
+
+async def test_move_and_update_quantity_of_nonexistent_item_returns_404(
+    db_client: AsyncClient, make_user, login_as
+) -> None:
+    admin = await make_user(role="admin", password="pw")
+    await login_as(db_client, admin.email, "pw")
+    headers = _csrf_headers(db_client)
+
+    loc = await db_client.post(
+        "/api/admin/inventory/locations",
+        params={"name": "nowhere"},
+        headers=headers,
+    )
+
+    move_resp = await db_client.patch(
+        f"/api/admin/inventory/items/{uuid4()}",
+        params={"location_id": loc.json()["id"]},
+        headers=headers,
+    )
+    assert move_resp.status_code == 404
+
+    qty_resp = await db_client.patch(
+        f"/api/admin/inventory/items/{uuid4()}",
+        params={"quantity": 5},
+        headers=headers,
+    )
+    assert qty_resp.status_code == 404
+
+
+async def test_update_item_quantity_and_delete(
+    db_client: AsyncClient, make_user, login_as
+) -> None:
+    admin = await make_user(role="admin", password="pw")
+    await login_as(db_client, admin.email, "pw")
+    headers = _csrf_headers(db_client)
+
+    loc = await db_client.post(
+        "/api/admin/inventory/locations",
+        params={"name": "the-only-shelf"},
+        headers=headers,
+    )
+    item_resp = await db_client.post(
+        "/api/admin/inventory/items",
+        params={"name": "widget", "location_id": loc.json()["id"], "quantity": 1},
+        headers=headers,
+    )
+    item_id = item_resp.json()["id"]
+
+    qty_resp = await db_client.patch(
+        f"/api/admin/inventory/items/{item_id}",
+        params={"quantity": 42},
+        headers=headers,
+    )
+    assert qty_resp.status_code == 200
+
+    search_resp = await db_client.get(
+        "/api/admin/inventory/items", params={"q": "widget"}
+    )
+    assert any(i["id"] == item_id and i["quantity"] == 42 for i in search_resp.json())
+
+    delete_resp = await db_client.delete(
+        f"/api/admin/inventory/items/{item_id}", headers=headers
+    )
+    assert delete_resp.status_code == 200
+
+    delete_again_resp = await db_client.delete(
+        f"/api/admin/inventory/items/{item_id}", headers=headers
+    )
+    assert delete_again_resp.status_code == 404
 
 
 async def test_inventory_routes_require_admin_role(

@@ -56,6 +56,14 @@ dev = [
 
 [tool.coverage.run]
 source = ["src/logand_backend"]
+# concurrency = ["greenlet"] -- SQLAlchemy's asyncio support bridges to
+# sync DBAPI calls via greenlet_spawn; without telling coverage.py about
+# that, lines executed after an `await db.execute(...)` inside a coroutine
+# were silently reported as NOT covered even when the test genuinely
+# exercised them (confirmed with debug prints reaching those exact "missing"
+# lines) -- coverage's tracer wasn't following execution across the
+# greenlet switch used to run that awaited call.
+concurrency = ["greenlet"]
 # The two testing/fake_*.py doubles exist purely to be driven BY tests
 # (see their own doc comments) -- they're test infrastructure, not
 # application code, so they're excluded from the coverage target the same

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from uuid import uuid4
+
 from httpx import AsyncClient
 
 
@@ -64,6 +66,121 @@ async def test_admin_invoice_list_filters_by_status(
 
     sent_only = await db_client.get("/api/admin/invoices", params={"status": "sent"})
     assert all(inv["id"] != invoice_id for inv in sent_only.json())
+
+
+async def test_admin_invoice_list_filters_by_customer_and_date(
+    db_client: AsyncClient, make_user, login_as
+) -> None:
+    admin = await make_user(role="admin", password="pw")
+    customer = await make_user(role="customer", password="pw")
+    other_customer = await make_user(role="customer", password="pw")
+    await login_as(db_client, admin.email, "pw")
+    headers = _csrf_headers(db_client)
+
+    create_resp = await db_client.post(
+        "/api/admin/invoices",
+        params={"customer_id": str(customer.id)},
+        json=[],
+        headers=headers,
+    )
+    invoice_id = create_resp.json()["id"]
+
+    by_customer = await db_client.get(
+        "/api/admin/invoices", params={"customer_id": str(customer.id)}
+    )
+    assert any(inv["id"] == invoice_id for inv in by_customer.json())
+
+    by_other_customer = await db_client.get(
+        "/api/admin/invoices", params={"customer_id": str(other_customer.id)}
+    )
+    assert all(inv["id"] != invoice_id for inv in by_other_customer.json())
+
+    by_date = await db_client.get(
+        "/api/admin/invoices",
+        params={"date_from": "2000-01-01", "date_to": "2999-01-01"},
+    )
+    assert isinstance(by_date.json(), list)
+
+
+async def test_send_nonexistent_invoice_returns_404(
+    db_client: AsyncClient, make_user, login_as
+) -> None:
+    admin = await make_user(role="admin", password="pw")
+    await login_as(db_client, admin.email, "pw")
+    headers = _csrf_headers(db_client)
+
+    resp = await db_client.post(
+        f"/api/admin/invoices/{uuid4()}/send", headers=headers
+    )
+    assert resp.status_code == 404
+
+
+async def test_send_already_sent_invoice_returns_409(
+    db_client: AsyncClient, make_user, login_as
+) -> None:
+    admin = await make_user(role="admin", password="pw")
+    customer = await make_user(role="customer", password="pw")
+    await login_as(db_client, admin.email, "pw")
+    headers = _csrf_headers(db_client)
+
+    create_resp = await db_client.post(
+        "/api/admin/invoices",
+        params={"customer_id": str(customer.id)},
+        json=[],
+        headers=headers,
+    )
+    invoice_id = create_resp.json()["id"]
+    await db_client.post(f"/api/admin/invoices/{invoice_id}/send", headers=headers)
+
+    resp = await db_client.post(
+        f"/api/admin/invoices/{invoice_id}/send", headers=headers
+    )
+    assert resp.status_code == 409
+
+
+async def test_void_nonexistent_invoice_returns_404(
+    db_client: AsyncClient, make_user, login_as
+) -> None:
+    admin = await make_user(role="admin", password="pw")
+    await login_as(db_client, admin.email, "pw")
+    headers = _csrf_headers(db_client)
+
+    resp = await db_client.post(
+        f"/api/admin/invoices/{uuid4()}/void", headers=headers
+    )
+    assert resp.status_code == 404
+
+
+async def test_void_draft_invoice_returns_409(
+    db_client: AsyncClient, make_user, login_as
+) -> None:
+    admin = await make_user(role="admin", password="pw")
+    customer = await make_user(role="customer", password="pw")
+    await login_as(db_client, admin.email, "pw")
+    headers = _csrf_headers(db_client)
+
+    create_resp = await db_client.post(
+        "/api/admin/invoices",
+        params={"customer_id": str(customer.id)},
+        json=[],
+        headers=headers,
+    )
+    invoice_id = create_resp.json()["id"]  # still draft, never sent
+
+    resp = await db_client.post(
+        f"/api/admin/invoices/{invoice_id}/void", headers=headers
+    )
+    assert resp.status_code == 409
+
+
+async def test_admin_get_nonexistent_invoice_returns_404(
+    db_client: AsyncClient, make_user, login_as
+) -> None:
+    admin = await make_user(role="admin", password="pw")
+    await login_as(db_client, admin.email, "pw")
+
+    resp = await db_client.get(f"/api/admin/invoices/{uuid4()}")
+    assert resp.status_code == 404
 
 
 async def test_customer_cannot_see_another_customers_invoice(

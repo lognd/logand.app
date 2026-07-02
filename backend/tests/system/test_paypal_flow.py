@@ -176,3 +176,86 @@ async def test_capture_with_bogus_order_id_still_succeeds_against_fake_server(
         headers=headers,
     )
     assert resp.status_code == 200
+
+
+async def test_pay_via_paypal_rejects_non_payable_invoice(
+    db_client: AsyncClient,
+    make_user,
+    login_as,
+    fake_paypal_server: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _configure_paypal(monkeypatch, fake_paypal_server)
+    admin = await make_user(role="admin", password="pw")
+    customer = await make_user(role="customer", password="pw")
+    await login_as(db_client, admin.email, "pw")
+    admin_headers = _csrf_headers(db_client)
+    create_resp = await db_client.post(
+        "/api/admin/invoices",
+        params={"customer_id": str(customer.id)},
+        json=[{"description": "widget", "quantity": "1", "unit_price": "10.00"}],
+        headers=admin_headers,
+    )
+    invoice_id = create_resp.json()["id"]  # never sent -- still draft
+    await db_client.post("/api/auth/logout", headers=admin_headers)
+
+    await login_as(db_client, customer.email, "pw")
+    resp = await db_client.post(
+        f"/api/invoices/{invoice_id}/pay/paypal", headers=_csrf_headers(db_client)
+    )
+    assert resp.status_code == 409
+
+
+async def test_capture_rejects_non_payable_invoice(
+    db_client: AsyncClient,
+    make_user,
+    login_as,
+    fake_paypal_server: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _configure_paypal(monkeypatch, fake_paypal_server)
+    admin = await make_user(role="admin", password="pw")
+    customer = await make_user(role="customer", password="pw")
+    await login_as(db_client, admin.email, "pw")
+    admin_headers = _csrf_headers(db_client)
+    create_resp = await db_client.post(
+        "/api/admin/invoices",
+        params={"customer_id": str(customer.id)},
+        json=[{"description": "widget", "quantity": "1", "unit_price": "10.00"}],
+        headers=admin_headers,
+    )
+    invoice_id = create_resp.json()["id"]  # never sent -- still draft
+    await db_client.post("/api/auth/logout", headers=admin_headers)
+
+    await login_as(db_client, customer.email, "pw")
+    resp = await db_client.post(
+        f"/api/invoices/{invoice_id}/pay/paypal/capture",
+        json={"order_id": "FAKE-ORDER-WHATEVER"},
+        headers=_csrf_headers(db_client),
+    )
+    assert resp.status_code == 409
+
+
+async def test_capture_returns_502_when_paypal_request_fails(
+    db_client: AsyncClient,
+    make_user,
+    login_as,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Real client credentials configured, but PAYPAL_API_BASE points at
+    # nothing listening -- exercises capture_order's real httpx.HTTPError
+    # handling (PaymentProviderError.RequestFailed -> 502), not a mocked
+    # error, same "real infra" convention as the rest of this file.
+    monkeypatch.setenv("PAYPAL_CLIENT_ID", "fake-client-id")
+    monkeypatch.setenv("PAYPAL_CLIENT_SECRET", "fake-client-secret")
+    monkeypatch.setenv("PAYPAL_API_BASE", "http://127.0.0.1:1")
+
+    invoice_id, _customer = await _sent_invoice_as_customer(
+        db_client, make_user, login_as
+    )
+    resp = await db_client.post(
+        f"/api/invoices/{invoice_id}/pay/paypal/capture",
+        json={"order_id": "FAKE-ORDER-WHATEVER"},
+        headers=_csrf_headers(db_client),
+    )
+    assert resp.status_code == 502
