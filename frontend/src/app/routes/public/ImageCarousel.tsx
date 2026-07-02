@@ -75,6 +75,7 @@ function IframeSlide({ src, alt }: { src: string; alt: string }) {
         // there's no non-deprecated CSS-only equivalent that reaches
         // into a cross-document iframe's own scrollbar.
         scrolling="no"
+        loading="lazy"
         className="pointer-events-none origin-top-left border-0"
         style={{
           width: PREVIEW_WIDTH_PX,
@@ -205,6 +206,23 @@ export function ImageCarousel({ slides }: { slides: CarouselSlide[] }) {
     setIndex(((i % slides.length) + slides.length) % slides.length);
   }
 
+  // Real media (img/video/iframe) only mounts for the current slide and
+  // its immediate neighbors -- everything else renders as an empty
+  // placeholder box instead. Without this, the track's translate-based
+  // layout means EVERY slide of EVERY project's carousel is mounted at
+  // once (just visually off to the side), so autoplaying backdrop videos
+  // and iframes (the live logand.app preview, YouTube embeds) all start
+  // loading/playing simultaneously the instant the Projects page renders,
+  // regardless of which project or slide is actually visible. Neighbors
+  // (not just the current slide) stay mounted so a swipe/arrow-click mid-
+  // transition doesn't reveal an empty box before the new slide finishes
+  // sliding in.
+  function isNearCurrent(i: number): boolean {
+    const len = slides.length;
+    const dist = Math.min(Math.abs(i - index), len - Math.abs(i - index));
+    return dist <= 1;
+  }
+
   function onPointerDown(e: React.PointerEvent<HTMLDivElement>) {
     if (slides.length <= 1) return;
     dragStartRef.current = { x: e.clientX, width: trackRef.current?.clientWidth || 1 };
@@ -278,9 +296,17 @@ export function ImageCarousel({ slides }: { slides: CarouselSlide[] }) {
           onPointerUp={endDrag}
           onPointerCancel={endDrag}
         >
-          {slides.map((slide) => (
+          {slides.map((slide, i) => (
             <div key={slide.alt} className="h-full w-full flex-shrink-0">
-              {slide.element ? (
+              {!isNearCurrent(i) ? (
+                // Not near the current slide -- render an empty box (same
+                // size/background as a real slide, no media at all) rather
+                // than paying for a video/iframe/image load that's nowhere
+                // near visible yet. Swapped for the real content once a
+                // swipe/arrow-click brings this slide within one step of
+                // current (see isNearCurrent's own doc comment).
+                <div className="h-full w-full bg-bg-secondary" />
+              ) : slide.element ? (
                 <div className="h-full w-full overflow-hidden">{slide.element}</div>
               ) : slide.iframeSrc ? (
                 <IframeSlide src={slide.iframeSrc} alt={slide.alt} />
@@ -288,6 +314,7 @@ export function ImageCarousel({ slides }: { slides: CarouselSlide[] }) {
                 <iframe
                   src={slide.embedSrc}
                   title={slide.alt}
+                  loading="lazy"
                   className="h-full w-full border-0"
                   allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
                   allowFullScreen
@@ -334,16 +361,28 @@ export function ImageCarousel({ slides }: { slides: CarouselSlide[] }) {
                     src={slide.src}
                     alt={slide.alt}
                     draggable={false}
+                    loading="lazy"
+                    decoding="async"
                     className="h-full w-full select-none object-cover"
                   />
                 ) : (
                   <LetterboxFrame
-                    backdrop={<img src={slide.src} alt="" className="h-full w-full object-cover" />}
+                    backdrop={
+                      <img
+                        src={slide.src}
+                        alt=""
+                        loading="lazy"
+                        decoding="async"
+                        className="h-full w-full object-cover"
+                      />
+                    }
                   >
                     <img
                       src={slide.src}
                       alt={slide.alt}
                       draggable={false}
+                      loading="lazy"
+                      decoding="async"
                       className="max-h-full max-w-full select-none object-contain"
                     />
                   </LetterboxFrame>
