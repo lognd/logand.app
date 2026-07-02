@@ -52,7 +52,7 @@ def test_build_invoice_pdf_data_escapes_every_free_text_field() -> None:
         created_at="2026-07-01",
         memo="50% off & a $5 fee",
         customer_email="customer@example.com",
-        line_items=[("Widget & gadget", Decimal("2"), Decimal("25.00"))],
+        line_items=[("Widget & gadget", Decimal("2"), Decimal("25.00"), "ea")],
         business_name="logand.app",
         business_details="",
         contact_email="billing@logand.app",
@@ -62,6 +62,7 @@ def test_build_invoice_pdf_data_escapes_every_free_text_field() -> None:
     assert data.memo == r"50\% off \& a \$5 fee"
     assert data.line_items[0].description == r"Widget \& gadget"
     assert data.line_items[0].amount == "50.00"
+    assert data.line_items[0].unit == "ea"
     assert data.status == "Sent"
 
 
@@ -127,7 +128,7 @@ def test_template_renders_without_compiling() -> None:
         created_at="2026-07-01",
         memo="Net 30",
         customer_email="customer@example.com",
-        line_items=[("Widget", Decimal("3"), Decimal("25.00"))],
+        line_items=[("Widget", Decimal("3"), Decimal("25.00"), None)],
         business_name="logand.app",
         business_details="123 Example St",
         contact_email="billing@logand.app",
@@ -141,10 +142,36 @@ def test_template_renders_without_compiling() -> None:
     assert "Widget" in tex_source
     assert r"\href{https://logand.app/invoices/abc-123/pay}" in tex_source
     assert "Net 30" in tex_source
+    # No unit given (None -> "") -- the plain "$25.00" branch, not the
+    # "$25.00 / <unit>" one.
+    assert "/ " not in tex_source.split("Widget")[1].split("\\\\")[0]
     # Balanced braces is a cheap but real sanity check -- a template bug
     # that drops a closing brace on one branch (e.g. the `if memo`
     # conditional) would show up here even without a full LaTeX compile.
     assert tex_source.count("{") == tex_source.count("}")
+
+
+def test_template_renders_unit_price_with_unit_suffix() -> None:
+    data = build_invoice_pdf_data(
+        invoice_id="abc-123",
+        status="sent",
+        currency="usd",
+        amount_total=Decimal("75.00"),
+        due_date="2026-08-01",
+        created_at="2026-07-01",
+        memo=None,
+        customer_email="customer@example.com",
+        line_items=[("Consulting", Decimal("3"), Decimal("25.00"), "hr")],
+        business_name="logand.app",
+        business_details="",
+        contact_email="billing@logand.app",
+        pay_url=None,
+    )
+    env = _template_env()
+    template = env.get_template("invoice.tex.jinja")
+    tex_source = template.render(**data.__dict__)
+
+    assert r"\$25.00 / hr" in tex_source
 
 
 def test_template_omits_pay_online_line_when_pay_url_is_none() -> None:

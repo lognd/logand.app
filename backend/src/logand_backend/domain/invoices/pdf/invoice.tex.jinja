@@ -19,7 +19,7 @@
 \begin{tabularx}{\textwidth}{@{}X r r r@{}}
 \invoicetableheader
 \BLOCK{ for item in line_items }
-\VAR{item.description} & \VAR{item.quantity} & \VAR{currency_symbol}\VAR{item.unit_price} & \VAR{currency_symbol}\VAR{item.amount} \\
+\VAR{item.description} & \VAR{item.quantity} & \BLOCK{ if item.unit }\VAR{currency_symbol}\VAR{item.unit_price} / \VAR{item.unit}\BLOCK{ else }\VAR{currency_symbol}\VAR{item.unit_price}\BLOCK{ endif } & \VAR{currency_symbol}\VAR{item.amount} \\
 \BLOCK{ endfor }
 \bottomrule
 \end{tabularx}

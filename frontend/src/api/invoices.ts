@@ -1,4 +1,4 @@
-import { apiGet, apiPost } from "./client";
+import { apiGet, apiGetBlob, apiPost } from "./client";
 
 // A raw line item request body, matching api/invoices.py's LineItemInput
 // pydantic model field-for-field -- description/quantity/unit_price, not
@@ -9,6 +9,12 @@ export interface CreateInvoiceLineItem {
   description: string;
   quantity: string;
   unit_price: string;
+  // Free-form unit label ("hr", "ea", "ft", "kg"...) shown next to the
+  // unit price on the admin form, the customer view, and the PDF -- e.g.
+  // "$45.00 / hr" instead of a bare "$45.00" that leaves what's actually
+  // being priced ambiguous. Optional/blank is fine (a flat one-off charge
+  // has no natural unit).
+  unit: string;
 }
 
 // TODO(logan): replace with generated type once backend/openapi.json exists.
@@ -28,6 +34,10 @@ export interface Invoice {
   currency: string;
   memo: string | null;
   due_date: string | null;
+  // ISO 8601 timestamp, set once when status first flips to "paid" (see
+  // db/models/invoices.py::Invoice.paid_at's own doc comment) -- null
+  // for anything not yet paid.
+  paid_at: string | null;
 }
 
 // Customer-scoped (/api/invoices, see api/invoices_public.py).
@@ -72,6 +82,28 @@ export function createInvoice(
   return apiPost<{ id: string }>(`/api/admin/invoices?${params.toString()}`, lineItems);
 }
 
+// Fetches the PDF as a real Blob first (via apiGetBlob, see that
+// function's own doc comment for why a plain <a href> can't surface a
+// server-side failure) and only THEN opens it in a new tab -- preserves
+// the original design's actual goal (the browser's own PDF viewer
+// handles print/save/zoom, not a forced Save-As) while fixing the real
+// bug: a plain <a href="/api/.../pdf" target="_blank"> against a failing
+// endpoint just opened a blank/raw-JSON tab with no usable feedback
+// ("the PDF option doesn't work"). Throws with the server's real error
+// detail on failure (e.g. "failed to generate invoice PDF" when latexmk
+// isn't installed in the serving environment -- see docs/deployment.md's
+// health-check section), which callers should catch and show inline
+// instead of ever letting a broken tab open at all.
+export async function openInvoicePdf(path: string): Promise<void> {
+  const blob = await apiGetBlob(path);
+  const url = URL.createObjectURL(blob);
+  // Deliberately not revoked immediately (the opened tab needs the URL to
+  // stay valid while it renders/streams the PDF) -- a real, if small,
+  // leak per download, but tied to a user-initiated action, not a loop;
+  // the tab itself and its blob URL both go away together on close.
+  window.open(url, "_blank", "noopener,noreferrer");
+}
+
 export function sendInvoice(id: string): Promise<Invoice> {
   return apiPost<Invoice>(`/api/admin/invoices/${id}/send`);
 }
@@ -104,10 +136,44 @@ export function recordManualPayment(
 export interface PaymentMethodsAvailability {
   stripe: boolean;
   paypal: boolean;
+  // null when unconfigured (see backend AppConfig.zelle_handle's own doc
+  // comment) -- Pay.tsx only shows a Zelle option once this is a real
+  // value.
+  zelle_handle: string | null;
 }
 
 export function getPaymentMethods(): Promise<PaymentMethodsAvailability> {
   return apiGet<PaymentMethodsAvailability>("/api/invoices/payment-methods");
+}
+
+// Real multipart/form-data upload -- matches api/invoices_public.py's
+// upload_payment_proof route, same pattern as api/budget.ts's
+// uploadBudgetEvidence. "An optional place to put a screenshot or
+// something to show that they sent something."
+export function uploadPaymentProof(
+  invoiceId: string,
+  file: File,
+): Promise<{ id: string }> {
+  const formData = new FormData();
+  formData.append("file", file);
+  return apiPost<{ id: string }>(
+    `/api/invoices/${invoiceId}/payment-proof`,
+    formData,
+  );
+}
+
+export interface PaymentProof {
+  id: string;
+  content_type: string;
+  created_at: string;
+}
+
+export function listPaymentProof(invoiceId: string): Promise<PaymentProof[]> {
+  return apiGet<PaymentProof[]>(`/api/admin/invoices/${invoiceId}/payment-proof`);
+}
+
+export function paymentProofFileUrl(invoiceId: string, proofId: string): string {
+  return `/api/admin/invoices/${invoiceId}/payment-proof/${proofId}/file`;
 }
 
 // Deliberately snake_case fields here (order_id/approval_url), not this

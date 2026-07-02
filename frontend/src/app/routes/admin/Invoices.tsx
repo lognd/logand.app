@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { getBomCostBreakdown, listBoms } from "../../../api/bom";
 import { listCustomers } from "../../../api/customers";
 import {
   type CreateInvoiceLineItem,
@@ -7,11 +8,19 @@ import {
   type ManualPaymentMethod,
   createInvoice,
   listAdminInvoices,
+  listPaymentProof,
+  openInvoicePdf,
+  paymentProofFileUrl,
   recordManualPayment,
   sendInvoice,
   voidInvoice,
 } from "../../../api/invoices";
-import { BUTTON_CLASS, INPUT_CLASS, LABEL_CLASS } from "../../../styles/a11y";
+import {
+  BUTTON_CLASS,
+  CHIP_LINK_CLASS,
+  INPUT_CLASS,
+  LABEL_CLASS,
+} from "../../../styles/a11y";
 
 const MANUAL_PAYMENT_METHODS: { value: ManualPaymentMethod; label: string }[] = [
   { value: "zelle", label: "Zelle" },
@@ -28,6 +37,59 @@ const MANUAL_PAYMENT_METHODS: { value: ManualPaymentMethod; label: string }[] = 
 // outside Stripe entirely. See backend's domain/invoices/service.py
 // record_manual_payment doc comment for why there's no provider API call
 // here at all.
+// Lets an admin actually see what a customer uploaded (Pay.tsx's
+// optional screenshot-as-proof upload) before deciding whether to
+// record a manual payment -- "something to show that they sent
+// something." A plain <a href> (not a fetch+blob dance like the PDF
+// download fix) is fine here: this always opens successfully once a
+// proof exists (no server-side rendering step that can fail the way PDF
+// compilation can), and the browser's own image/PDF viewer handles
+// display.
+function PaymentProofViewer({ invoiceId }: { invoiceId: string }) {
+  const [open, setOpen] = useState(false);
+  const proofQuery = useQuery({
+    queryKey: ["admin", "invoices", invoiceId, "payment-proof"],
+    queryFn: () => listPaymentProof(invoiceId),
+    enabled: open,
+  });
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className={BUTTON_CLASS}
+      >
+        {open ? "Hide" : "View"} payment proof
+      </button>
+      {open && (
+        <div className="mt-2 flex flex-wrap gap-2">
+          {proofQuery.isLoading && (
+            <p className="text-sm text-fg-muted">Loading...</p>
+          )}
+          {proofQuery.data?.length === 0 && (
+            <p className="text-sm text-fg-muted">
+              No proof uploaded by the customer yet.
+            </p>
+          )}
+          {proofQuery.data?.map((proof) => (
+            <a
+              key={proof.id}
+              href={paymentProofFileUrl(invoiceId, proof.id)}
+              target="_blank"
+              rel="noreferrer"
+              className={CHIP_LINK_CLASS}
+            >
+              {proof.content_type === "application/pdf" ? "PDF" : "Image"} (
+              {new Date(proof.created_at).toLocaleString()})
+            </a>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ManualPaymentForm({
   invoice,
   onRecorded,
@@ -144,6 +206,7 @@ const EMPTY_LINE_ITEM: CreateInvoiceLineItem = {
   description: "",
   quantity: "1",
   unit_price: "",
+  unit: "",
 };
 
 // Plain useState, not React Hook Form + zod -- the ManualPaymentForm
@@ -151,22 +214,60 @@ const EMPTY_LINE_ITEM: CreateInvoiceLineItem = {
 // pattern; introducing a form library for just this one form would be
 // inconsistent without buying much, given the field count here is small
 // and fixed-shape (no dynamic validation schema worth the dependency).
+// How long to wait after the last keystroke before actually querying the
+// server -- an admin typing "alice" fires this once, not once per
+// letter. 250ms is short enough to still feel instant, long enough to
+// skip a query for every single keypress of a fast typist.
+const CUSTOMER_SEARCH_DEBOUNCE_MS = 250;
+
 function CreateInvoiceForm({ onCreated }: { onCreated: () => void }) {
   const [open, setOpen] = useState(false);
   const [customerId, setCustomerId] = useState("");
+  // The text actually in the search box -- separate from customerId,
+  // since what's typed doesn't necessarily resolve to a real customer
+  // yet (still typing, or a typo). Seeded to "" and resolved to a real
+  // email once a customer is actually picked (see the datalist onChange
+  // handler below).
+  const [customerQuery, setCustomerQuery] = useState("");
+  const [debouncedCustomerQuery, setDebouncedCustomerQuery] = useState("");
   const [memo, setMemo] = useState("");
   const [lineItems, setLineItems] = useState<CreateInvoiceLineItem[]>([
     { ...EMPTY_LINE_ITEM },
   ]);
 
+  useEffect(() => {
+    const timer = setTimeout(
+      () => setDebouncedCustomerQuery(customerQuery),
+      CUSTOMER_SEARCH_DEBOUNCE_MS,
+    );
+    return () => clearTimeout(timer);
+  }, [customerQuery]);
+
   const customersQuery = useQuery({
-    queryKey: ["admin", "customers"],
-    queryFn: listCustomers,
+    // Keyed by the debounced query itself -- a new key per distinct
+    // search means TanStack Query caches each search's results
+    // separately (retyping "alice" after searching something else
+    // doesn't refetch), instead of one shared cache entry the next
+    // keystroke would just overwrite.
+    queryKey: ["admin", "customers", debouncedCustomerQuery],
+    queryFn: () => listCustomers(debouncedCustomerQuery || undefined),
     // Only fetch once the form is actually open -- an admin might never
     // open this on a given visit, and the customer list isn't needed
     // for anything else on this page.
     enabled: open,
   });
+
+  // Reacts to customersQuery.data itself, not just to onChange keystrokes
+  // -- resolving the id only inside the input's onChange handler would
+  // match against whatever data happened to be cached at THAT keystroke,
+  // which is stale (the debounced, server-filtered search for what was
+  // just typed hasn't necessarily resolved yet). This re-checks whenever
+  // either the typed text or the fetched results change, so the id
+  // reliably resolves once a real match actually arrives, however late.
+  useEffect(() => {
+    const match = customersQuery.data?.find((c) => c.email === customerQuery);
+    setCustomerId(match?.id ?? "");
+  }, [customerQuery, customersQuery.data]);
 
   const mutation = useMutation({
     mutationFn: () =>
@@ -179,6 +280,7 @@ function CreateInvoiceForm({ onCreated }: { onCreated: () => void }) {
       onCreated();
       setOpen(false);
       setCustomerId("");
+      setCustomerQuery("");
       setMemo("");
       setLineItems([{ ...EMPTY_LINE_ITEM }]);
     },
@@ -197,6 +299,66 @@ function CreateInvoiceForm({ onCreated }: { onCreated: () => void }) {
   function removeLineItem(index: number) {
     setLineItems((items) => items.filter((_, i) => i !== index));
   }
+
+  const [importBomId, setImportBomId] = useState("");
+  const [importBuildQuantity, setImportBuildQuantity] = useState("1");
+  const bomsQuery = useQuery({
+    queryKey: ["admin", "boms"],
+    queryFn: listBoms,
+    // Same lazy-load-once-open convention as customersQuery above.
+    enabled: open,
+  });
+  const importMutation = useMutation({
+    mutationFn: () =>
+      getBomCostBreakdown(importBomId, Math.max(1, Number(importBuildQuantity) || 1)),
+    onSuccess: (breakdown) => {
+      // "It would be nice to give a price breakdown of material and time
+      // and overhead" -- directly, as real separate invoice line items,
+      // not a single lump sum that hides where the number came from. Each
+      // material line keeps its own real quantity/unit price (so it
+      // still reads as "12 resistors @ $0.10"); labor and overhead are
+      // each their own single line since they don't have a natural
+      // per-unit quantity the way a material does.
+      const bom = bomsQuery.data?.find((b) => b.id === importBomId);
+      const materialLines: CreateInvoiceLineItem[] = breakdown.material_lines.map(
+        (line) => ({
+          description: line.item_name,
+          quantity: String(line.quantity),
+          unit_price: line.unit_cost,
+          unit: "ea",
+        }),
+      );
+      const laborLine: CreateInvoiceLineItem | null =
+        Number(breakdown.labor_hours) > 0
+          ? {
+              description: `Labor${bom ? ` (${bom.name})` : ""}`,
+              quantity: breakdown.labor_hours,
+              unit_price: bom?.labor_rate ?? "0",
+              unit: "hr",
+            }
+          : null;
+      const overheadLine: CreateInvoiceLineItem | null =
+        Number(breakdown.overhead_cost) > 0
+          ? {
+              description: `Overhead (${breakdown.overhead_percent}%)`,
+              quantity: "1",
+              unit_price: breakdown.overhead_cost,
+              unit: "",
+            }
+          : null;
+      const imported = [
+        ...materialLines,
+        ...(laborLine ? [laborLine] : []),
+        ...(overheadLine ? [overheadLine] : []),
+      ];
+      // Replaces the current (still-blank, in practice) line items
+      // rather than appending -- importing from a BOM is meant to BE the
+      // invoice's line items, not mixed in with whatever was already
+      // half-typed. An admin who wants both can always click "Add line
+      // item" afterward to add more by hand.
+      setLineItems(imported.length > 0 ? imported : [{ ...EMPTY_LINE_ITEM }]);
+    },
+  });
 
   const hasAtLeastOneRealLineItem = lineItems.some(
     (li) => li.description && li.unit_price,
@@ -225,22 +387,39 @@ function CreateInvoiceForm({ onCreated }: { onCreated: () => void }) {
         <label htmlFor="new-invoice-customer" className={LABEL_CLASS}>
           Bill to
         </label>
-        <select
+        {/* A native <input list> + <datalist> combobox, not a plain
+            <select> -- a flat alphabetical dropdown of every customer
+            doesn't scale ("customer dropdown needs to have some filter
+            in case I have a lot of people"). This gets real
+            type-to-filter, keyboard navigation, and screen-reader
+            support for free from the browser, without hand-building a
+            custom ARIA combobox from scratch. The actual filtering
+            happens server-side (debounced, see customersQuery above) --
+            the datalist's own options are just whatever that search
+            already narrowed down to, not a client-side filter over a
+            full customer list that may not even be loaded. */}
+        <input
           id="new-invoice-customer"
+          type="text"
           required
-          value={customerId}
-          onChange={(e) => setCustomerId(e.target.value)}
+          autoComplete="off"
+          list="new-invoice-customer-options"
+          placeholder="Type to search customers..."
+          value={customerQuery}
+          onChange={(e) => setCustomerQuery(e.target.value)}
           className={INPUT_CLASS}
-        >
-          <option value="">
-            {customersQuery.isLoading ? "Loading customers..." : "Select a customer"}
-          </option>
-          {customersQuery.data?.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.email}
-            </option>
-          ))}
-        </select>
+        />
+        <datalist id="new-invoice-customer-options">
+          {customersQuery.data?.map((c) => <option key={c.id} value={c.email} />)}
+        </datalist>
+        {customersQuery.isLoading && (
+          <p className="mt-1 text-sm text-fg-muted">Searching...</p>
+        )}
+        {customerQuery && !customersQuery.isLoading && !customerId && (
+          <p className="mt-1 text-sm text-fg-muted">
+            No exact match yet -- pick a customer from the list.
+          </p>
+        )}
         {customersQuery.isError && (
           <p role="alert" className="mt-1 text-base text-accent-red">
             Could not load customer list.
@@ -248,11 +427,66 @@ function CreateInvoiceForm({ onCreated }: { onCreated: () => void }) {
         )}
       </div>
 
+      {bomsQuery.data && bomsQuery.data.length > 0 && (
+        <div className="flex flex-wrap items-end gap-2 rounded border border-border p-3">
+          <div className="min-w-[10rem] flex-1">
+            <label htmlFor="import-bom" className={LABEL_CLASS}>
+              Import from bill of materials
+            </label>
+            <select
+              id="import-bom"
+              value={importBomId}
+              onChange={(e) => setImportBomId(e.target.value)}
+              className={INPUT_CLASS}
+            >
+              <option value="">Select a BOM...</option>
+              {bomsQuery.data.map((bom) => (
+                <option key={bom.id} value={bom.id}>
+                  {bom.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="w-24">
+            <label htmlFor="import-build-qty" className={LABEL_CLASS}>
+              Build qty
+            </label>
+            <input
+              id="import-build-qty"
+              type="number"
+              min={1}
+              value={importBuildQuantity}
+              onChange={(e) => setImportBuildQuantity(e.target.value)}
+              className={INPUT_CLASS}
+            />
+          </div>
+          <button
+            type="button"
+            disabled={!importBomId || importMutation.isPending}
+            onClick={() => importMutation.mutate()}
+            className={BUTTON_CLASS}
+          >
+            Import as line items
+          </button>
+          {importMutation.isError && (
+            <p role="alert" className="w-full text-sm text-accent-red">
+              Could not import -- every material line needs a real unit_cost set
+              first.
+            </p>
+          )}
+        </div>
+      )}
+
       <div className="flex flex-col gap-3">
         <span className={LABEL_CLASS}>Line items</span>
         {lineItems.map((item, index) => (
-          <div key={index} className="flex flex-wrap items-end gap-2">
-            <div className="min-w-[10rem] flex-1">
+          // items-end -> items-stretch isn't needed here; the row itself
+          // just needed more breathing room per-field ("the manual input
+          // is too small") -- widened every fixed-width column below and
+          // bumped to text-lg so entering several line items in a row
+          // doesn't mean squinting at 80px-wide number fields.
+          <div key={index} className="flex flex-wrap items-end gap-3">
+            <div className="min-w-[14rem] flex-1">
               <label htmlFor={`li-description-${index}`} className={LABEL_CLASS}>
                 Description
               </label>
@@ -261,10 +495,10 @@ function CreateInvoiceForm({ onCreated }: { onCreated: () => void }) {
                 type="text"
                 value={item.description}
                 onChange={(e) => updateLineItem(index, { description: e.target.value })}
-                className={INPUT_CLASS}
+                className={`${INPUT_CLASS} text-lg`}
               />
             </div>
-            <div className="w-20">
+            <div className="w-28">
               <label htmlFor={`li-quantity-${index}`} className={LABEL_CLASS}>
                 Qty
               </label>
@@ -275,10 +509,23 @@ function CreateInvoiceForm({ onCreated }: { onCreated: () => void }) {
                 min="0"
                 value={item.quantity}
                 onChange={(e) => updateLineItem(index, { quantity: e.target.value })}
-                className={INPUT_CLASS}
+                className={`${INPUT_CLASS} text-lg`}
               />
             </div>
-            <div className="w-28">
+            <div className="w-24">
+              <label htmlFor={`li-unit-${index}`} className={LABEL_CLASS}>
+                Unit
+              </label>
+              <input
+                id={`li-unit-${index}`}
+                type="text"
+                placeholder="hr, ea..."
+                value={item.unit}
+                onChange={(e) => updateLineItem(index, { unit: e.target.value })}
+                className={`${INPUT_CLASS} text-lg`}
+              />
+            </div>
+            <div className="w-36">
               <label htmlFor={`li-unit-price-${index}`} className={LABEL_CLASS}>
                 Unit price
               </label>
@@ -289,7 +536,7 @@ function CreateInvoiceForm({ onCreated }: { onCreated: () => void }) {
                 min="0"
                 value={item.unit_price}
                 onChange={(e) => updateLineItem(index, { unit_price: e.target.value })}
-                className={INPUT_CLASS}
+                className={`${INPUT_CLASS} text-lg`}
               />
             </div>
             <button
@@ -362,6 +609,9 @@ export function AdminInvoices() {
     queryClient.invalidateQueries({ queryKey: ["admin", "invoices"] });
   const sendMutation = useMutation({ mutationFn: sendInvoice, onSuccess: invalidate });
   const voidMutation = useMutation({ mutationFn: voidInvoice, onSuccess: invalidate });
+  const pdfMutation = useMutation({
+    mutationFn: (id: string) => openInvoicePdf(`/api/admin/invoices/${id}/pdf`),
+  });
 
   return (
     <main className="mx-auto w-full max-w-4xl px-4 py-8">
@@ -384,6 +634,7 @@ export function AdminInvoices() {
                 <th className="p-2">Status</th>
                 <th className="p-2">Amount</th>
                 <th className="p-2">Due</th>
+                <th className="p-2">Paid</th>
                 <th className="p-2">Memo</th>
                 <th className="p-2">Actions</th>
               </tr>
@@ -396,6 +647,9 @@ export function AdminInvoices() {
                     {invoice.amount_total} {invoice.currency}
                   </td>
                   <td className="p-2">{invoice.due_date ?? "-"}</td>
+                  <td className="p-2">
+                    {invoice.paid_at ? new Date(invoice.paid_at).toLocaleDateString() : "-"}
+                  </td>
                   <td className="p-2">{invoice.memo ?? "-"}</td>
                   <td className="flex flex-wrap gap-2 p-2">
                     <button
@@ -416,21 +670,33 @@ export function AdminInvoices() {
                     >
                       Void
                     </button>
-                    {/* Same plain-<a>-not-fetch approach as
-                        customer/Invoices.tsx -- see that file's identical
-                        comment. Admins can preview a draft's PDF too (the
-                        backend route has no status restriction), unlike
-                        Pay/the customer view. */}
-                    <a
-                      href={`/api/admin/invoices/${invoice.id}/pdf`}
-                      target="_blank"
-                      rel="noreferrer"
+                    {/* A real fetch+blob open, not a plain <a href> -- see
+                        openInvoicePdf's own doc comment ("the PDF option
+                        doesn't work" was a real bug: a failing endpoint
+                        just opened a blank/raw-error tab with no usable
+                        feedback). Admins can preview a draft's PDF too
+                        (the backend route has no status restriction),
+                        unlike Pay/the customer view. */}
+                    <button
+                      type="button"
+                      onClick={() => pdfMutation.mutate(invoice.id)}
+                      disabled={pdfMutation.isPending && pdfMutation.variables === invoice.id}
                       aria-label={`Download PDF for invoice ${invoice.id}`}
                       className={BUTTON_CLASS}
                     >
-                      PDF
-                    </a>
+                      {pdfMutation.isPending && pdfMutation.variables === invoice.id
+                        ? "Opening..."
+                        : "PDF"}
+                    </button>
+                    {pdfMutation.isError && pdfMutation.variables === invoice.id && (
+                      <p role="alert" className="w-full text-sm text-accent-red">
+                        {pdfMutation.error instanceof Error
+                          ? pdfMutation.error.message
+                          : "Could not open the PDF."}
+                      </p>
+                    )}
                     <ManualPaymentForm invoice={invoice} onRecorded={invalidate} />
+                    <PaymentProofViewer invoiceId={invoice.id} />
                   </td>
                 </tr>
               ))}

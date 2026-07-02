@@ -5,7 +5,7 @@ from datetime import date
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import Response
+from fastapi.responses import RedirectResponse, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,6 +20,8 @@ from logand_backend.domain.invoices.service import (
     ManualPaymentInput,
     create_invoice,
     generate_invoice_pdf,
+    get_payment_proof,
+    list_payment_proofs,
     record_manual_payment,
     send_invoice,
     void_invoice,
@@ -28,6 +30,7 @@ from logand_backend.domain.notifications.notify import (
     notify_invoice_sent,
     notify_payment_received,
 )
+from logand_backend.domain.storage.factory import get_storage_backend
 from logand_backend.logging import get_logger
 
 _log = get_logger(__name__)
@@ -45,6 +48,7 @@ def _invoice_summary(invoice: Invoice) -> dict:
         "memo": invoice.memo,
         "due_date": invoice.due_date.isoformat() if invoice.due_date else None,
         "is_recurring": invoice.is_recurring,
+        "paid_at": invoice.paid_at.isoformat() if invoice.paid_at else None,
     }
 
 
@@ -147,6 +151,7 @@ async def get_invoice(
                 "description": li.description,
                 "quantity": str(li.quantity),
                 "unit_price": str(li.unit_price),
+                "unit": li.unit,
             }
             for li in line_items
         ],
@@ -206,3 +211,47 @@ async def get_invoice_pdf(
         media_type="application/pdf",
         headers={"Content-Disposition": f'inline; filename="invoice-{invoice_id}.pdf"'},
     )
+
+
+@router.get("/{invoice_id}/payment-proof")
+async def list_payment_proof(
+    invoice_id: UUID,
+    _admin: SessionInfo = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+) -> list[dict]:
+    """What an admin sees next to the manual-payment form -- every
+    screenshot/receipt a customer has uploaded for this invoice, so
+    there's something real to go on when deciding whether to record the
+    payment."""
+    result = await list_payment_proofs(db, invoice_id)
+    if result.is_err:
+        raise to_http_exception(result.danger_err)
+    return [
+        {
+            "id": str(p.id),
+            "content_type": p.content_type,
+            "created_at": p.created_at.isoformat(),
+        }
+        for p in result.danger_ok
+    ]
+
+
+@router.get("/{invoice_id}/payment-proof/{proof_id}/file")
+async def download_payment_proof(
+    invoice_id: UUID,
+    proof_id: UUID,
+    _admin: SessionInfo = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    result = await get_payment_proof(db, invoice_id, proof_id)
+    if result.is_err:
+        raise to_http_exception(result.danger_err)
+    proof = result.danger_ok
+
+    cfg = AppConfig.from_external(argparse.Namespace())
+    storage = get_storage_backend(cfg)
+    url = await storage.url(proof.file_path)
+    if url is not None:
+        return RedirectResponse(url)
+    data = await storage.get(proof.file_path)
+    return Response(content=data, media_type=proof.content_type)

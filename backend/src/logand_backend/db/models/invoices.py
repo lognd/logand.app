@@ -66,6 +66,15 @@ class Invoice(Base):
     stripe_payment_intent_id: Mapped[str | None] = mapped_column(
         Text, unique=True, nullable=True
     )
+    # Set exactly once, at the moment status flips to "paid" (see the
+    # three call sites: domain/invoices/service.py's record_manual_payment,
+    # api/invoices_public.py's PayPal capture route, and api/webhooks.py's
+    # Stripe webhook handler) -- never touched again after that, even if
+    # the invoice is later voided, so "when did this actually get paid"
+    # stays answerable regardless of what happens to it afterward.
+    paid_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     deleted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -90,6 +99,13 @@ class InvoiceLineItem(Base):
     )
     description: Mapped[str] = mapped_column(Text, nullable=False)
     quantity: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False, default=1)
+    # Free-form ("hr", "ea", "ft"...) -- blank/null for a flat one-off
+    # charge with no natural unit. Purely display: "$45.00 / hr" instead
+    # of a bare "$45.00" next to unit_price, on the admin form, the
+    # customer-facing view, and the PDF. Never used in amount_total math
+    # (that's always quantity * unit_price regardless of what the unit
+    # label says).
+    unit: Mapped[str | None] = mapped_column(Text, nullable=True)
     unit_price: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
@@ -160,6 +176,38 @@ class Payment(Base):
     amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     status: Mapped[str] = mapped_column(Text, nullable=False, default="pending")
     transaction_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class PaymentProof(Base):
+    """A customer-uploaded screenshot/receipt showing they sent a manual
+    payment (Zelle, PayPal-sent-directly, etc.) -- "an optional place to
+    put a screenshot or something to show that they sent something."
+    Deliberately separate from Payment: a customer can upload proof
+    BEFORE an admin has recorded anything (the whole point is to give
+    the admin something to go on when deciding whether to record the
+    payment at all), so this can't be a field on a Payment row that
+    might not exist yet.
+    """
+
+    __tablename__ = "payment_proofs"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    invoice_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("invoices.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    uploaded_by: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    file_path: Mapped[str] = mapped_column(Text, nullable=False)
+    content_type: Mapped[str] = mapped_column(Text, nullable=False)
+    file_hash: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

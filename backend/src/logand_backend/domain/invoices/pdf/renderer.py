@@ -72,6 +72,10 @@ class InvoiceLineItemData:
     quantity: str
     unit_price: str
     amount: str
+    # Already LaTeX-escaped, empty string (not None) when there isn't
+    # one -- the template can then just always render "\VAR{unit_price}
+    # / \VAR{unit}" style text without a None-check of its own.
+    unit: str
 
 
 @dataclass(frozen=True)
@@ -102,7 +106,7 @@ def build_invoice_pdf_data(
     created_at: str,
     memo: str | None,
     customer_email: str,
-    line_items: list[tuple[str, Decimal, Decimal]],
+    line_items: list[tuple[str, Decimal, Decimal, str | None]],
     business_name: str,
     business_details: str,
     contact_email: str,
@@ -125,8 +129,9 @@ def build_invoice_pdf_data(
             quantity=latex_escape(str(quantity)),
             unit_price=latex_escape(f"{unit_price:.2f}"),
             amount=latex_escape(f"{(quantity * unit_price):.2f}"),
+            unit=latex_escape(unit) if unit else "",
         )
-        for description, quantity, unit_price in line_items
+        for description, quantity, unit_price, unit in line_items
     ]
     return InvoicePdfData(
         invoice_number=latex_escape(invoice_id),

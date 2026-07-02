@@ -3,7 +3,9 @@ from __future__ import annotations
 from datetime import date, timedelta
 from decimal import Decimal
 
-from logand_backend.db.models.invoices import Invoice
+from sqlalchemy import select
+
+from logand_backend.db.models.invoices import Invoice, InvoiceLineItem
 from logand_backend.domain.invoices.recurrence import generate_due_recurring_invoices
 from logand_backend.domain.invoices.service import (
     LineItemInput,
@@ -117,7 +119,10 @@ async def test_generate_due_recurring_invoices_creates_next_draft(
     customer = await make_user(role="customer")
     line_items = [
         LineItemInput(
-            description="subscription", quantity=Decimal(1), unit_price=Decimal("9.99")
+            description="subscription",
+            quantity=Decimal(1),
+            unit_price=Decimal("9.99"),
+            unit="mo",
         ),
     ]
     invoice_id = (await create_invoice(db_session, customer.id, line_items)).danger_ok
@@ -135,6 +140,18 @@ async def test_generate_due_recurring_invoices_creates_next_draft(
     assert new_invoice.due_date == date(2026, 2, 1)
     assert new_invoice.amount_total == Decimal("9.99")
     assert new_invoice.customer_id == customer.id
+
+    new_line_items = (
+        await db_session.execute(
+            select(InvoiceLineItem).where(InvoiceLineItem.invoice_id == created[0])
+        )
+    ).scalars().all()
+    assert len(new_line_items) == 1
+    # The unit label ("mo") must carry over to the new draft too -- a real
+    # bug caught here: the copy loop in recurrence.py originally only
+    # copied description/quantity/unit_price, silently dropping unit on
+    # every auto-generated recurring invoice.
+    assert new_line_items[0].unit == "mo"
 
 
 async def test_generate_due_recurring_invoices_skips_non_recurring(

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Literal
 from uuid import UUID, uuid4
@@ -11,7 +13,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from typani.result import Err, Ok, Result
 
 from logand_backend.app.config import AppConfig
-from logand_backend.db.models.invoices import Invoice, InvoiceLineItem, Payment
+from logand_backend.db.models.invoices import (
+    Invoice,
+    InvoiceLineItem,
+    Payment,
+    PaymentProof,
+)
 from logand_backend.db.models.users import User
 from logand_backend.domain.invoices.pdf.renderer import (
     build_invoice_pdf_data,
@@ -45,6 +52,7 @@ class LineItemInput(BaseModel):
     description: str
     quantity: Decimal = Decimal(1)
     unit_price: Decimal
+    unit: str | None = None
 
 
 async def lock_invoice_for_update(db: AsyncSession, invoice_id: UUID) -> Invoice | None:
@@ -107,6 +115,7 @@ async def create_invoice(
                 description=item.description,
                 quantity=item.quantity,
                 unit_price=item.unit_price,
+                unit=item.unit,
             )
         )
     await db.flush()
@@ -203,6 +212,7 @@ async def record_manual_payment(
     paid_so_far = sum((p.amount for p in existing_total), Decimal(0))
     if paid_so_far >= invoice.amount_total:
         invoice.status = "paid"
+        invoice.paid_at = datetime.now(timezone.utc)
     await db.flush()
 
     return Ok(payment_id)
@@ -243,7 +253,9 @@ async def generate_invoice_pdf(
         created_at=invoice.created_at.date().isoformat(),
         memo=invoice.memo,
         customer_email=customer_email,
-        line_items=[(li.description, li.quantity, li.unit_price) for li in line_items],
+        line_items=[
+            (li.description, li.quantity, li.unit_price, li.unit) for li in line_items
+        ],
         business_name=cfg.invoice_business_name,
         business_details=cfg.invoice_business_details,
         contact_email=cfg.invoice_contact_email,
@@ -262,3 +274,71 @@ async def generate_invoice_pdf(
     # concurrent request while one PDF compiles.
     pdf_bytes = await asyncio.to_thread(render_invoice_pdf, data)
     return Ok(pdf_bytes)
+
+
+async def attach_payment_proof(
+    db: AsyncSession,
+    invoice_id: UUID,
+    uploaded_by: UUID,
+    file_bytes: bytes,
+    file_path: str,
+    content_type: str,
+) -> Result[UUID, InvoiceError]:
+    """A customer-uploaded screenshot/receipt showing they sent a manual
+    payment -- deliberately NOT gated on invoice status the way
+    record_manual_payment is: a customer uploads this hoping to speed up
+    an admin marking the invoice paid, so it must work for a "sent" or
+    "overdue" invoice (the whole point) but there's no reason to reject
+    it for an already-"paid" invoice either (a late/duplicate upload is
+    harmless, not an error). Only draft/void invoices -- which were never
+    payable in the first place -- make no sense to attach proof to.
+    """
+    invoice = await db.get(Invoice, invoice_id)
+    if invoice is None or invoice.deleted_at is not None:
+        return Err(InvoiceError.NotFound)
+    if invoice.status in ("draft", "void"):
+        return Err(InvoiceError.InvalidState)
+
+    file_hash = hashlib.sha256(file_bytes).hexdigest()
+    proof_id = uuid4()
+    db.add(
+        PaymentProof(
+            id=proof_id,
+            invoice_id=invoice_id,
+            uploaded_by=uploaded_by,
+            file_path=file_path,
+            content_type=content_type,
+            file_hash=file_hash,
+        )
+    )
+    await db.flush()
+    return Ok(proof_id)
+
+
+async def list_payment_proofs(
+    db: AsyncSession, invoice_id: UUID
+) -> Result[list[PaymentProof], InvoiceError]:
+    invoice = await db.get(Invoice, invoice_id)
+    if invoice is None or invoice.deleted_at is not None:
+        return Err(InvoiceError.NotFound)
+    rows = (
+        (
+            await db.execute(
+                select(PaymentProof)
+                .where(PaymentProof.invoice_id == invoice_id)
+                .order_by(PaymentProof.created_at.desc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return Ok(list(rows))
+
+
+async def get_payment_proof(
+    db: AsyncSession, invoice_id: UUID, proof_id: UUID
+) -> Result[PaymentProof, InvoiceError]:
+    proof = await db.get(PaymentProof, proof_id)
+    if proof is None or proof.invoice_id != invoice_id:
+        return Err(InvoiceError.NotFound)
+    return Ok(proof)

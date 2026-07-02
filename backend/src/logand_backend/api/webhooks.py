@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 from decimal import Decimal
 
 import stripe
@@ -118,6 +119,7 @@ async def _handle_payment_intent_event(
 
     if succeeded:
         invoice.status = "paid"
+        invoice.paid_at = datetime.now(timezone.utc)
         await db.flush()
         await notify_payment_received(
             db, cfg, invoice, Decimal(str(intent["amount"] / 100))

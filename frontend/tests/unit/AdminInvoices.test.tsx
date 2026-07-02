@@ -17,6 +17,7 @@ const draftInvoice: Invoice = {
   currency: "usd",
   memo: "first invoice",
   due_date: "2026-07-01",
+  paid_at: null,
 };
 
 function jsonResponse(body: unknown): Response {
@@ -106,7 +107,12 @@ describe("AdminInvoices (integration)", () => {
     // single invoice object, not an array, from exactly this ordering
     // mismatch).
     const fetchMock = vi.fn((url: string) => {
-      if (url === "/api/admin/customers") {
+      // startsWith, not an exact match -- the customer picker is now a
+      // debounced search combobox (see Invoices.tsx's
+      // CUSTOMER_SEARCH_DEBOUNCE_MS), so this fires as
+      // "/api/admin/customers" on open and again as
+      // "/api/admin/customers?q=..." once the admin types.
+      if (url.startsWith("/api/admin/customers")) {
         return Promise.resolve(
           jsonResponse([{ id: "cust-123", email: "customer@example.com" }]),
         );
@@ -123,10 +129,21 @@ describe("AdminInvoices (integration)", () => {
     renderPage();
 
     await user.click(await screen.findByRole("button", { name: "New invoice" }));
-    await user.selectOptions(
-      await screen.findByLabelText("Bill to"),
-      "customer@example.com",
-    );
+    // Types the exact email (a real datalist doesn't support
+    // userEvent.selectOptions -- typing the full value is exactly how a
+    // real admin picking from the browser's native datalist popup ends
+    // up with this same input value) and waits for the debounced search
+    // + the id-resolution effect to actually resolve a real customer id
+    // before moving on, since submitting too early would send an empty
+    // customer_id.
+    const customerInput = await screen.findByLabelText("Bill to");
+    await user.type(customerInput, "customer@example.com");
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/admin/customers?q=customer%40example.com",
+        expect.anything(),
+      );
+    });
     await user.type(screen.getByLabelText("Description"), "Consulting");
     await user.clear(screen.getByLabelText("Qty"));
     await user.type(screen.getByLabelText("Qty"), "2");
@@ -143,8 +160,73 @@ describe("AdminInvoices (integration)", () => {
       const [url, init] = createCall!;
       expect(url).toBe("/api/admin/invoices?customer_id=cust-123&memo=Test+memo");
       expect(JSON.parse(String(init.body))).toEqual([
-        { description: "Consulting", quantity: "2", unit_price: "50" },
+        { description: "Consulting", quantity: "2", unit_price: "50", unit: "" },
       ]);
     });
+  });
+
+  it("importing from a BOM populates material/labor/overhead line items with a real cost breakdown", async () => {
+    const bom = {
+      id: "bom-1",
+      name: "Widget Assembly",
+      description: null,
+      labor_hours: "2.0",
+      labor_rate: "25.00",
+      overhead_percent: "10.00",
+    };
+    const breakdown = {
+      material_lines: [
+        {
+          item_id: "item-1",
+          item_name: "resistor",
+          quantity: 20,
+          unit_cost: "0.10",
+          line_cost: "2.00",
+        },
+      ],
+      material_cost: "2.00",
+      labor_hours: "2.0",
+      labor_cost: "50.00",
+      overhead_percent: "10.00",
+      overhead_cost: "5.20",
+      total_cost: "57.20",
+    };
+    const fetchMock = vi.fn((url: string) => {
+      if (url.startsWith("/api/admin/customers")) {
+        return Promise.resolve(jsonResponse([]));
+      }
+      if (url === "/api/admin/boms") {
+        return Promise.resolve(jsonResponse([bom]));
+      }
+      if (url.startsWith("/api/admin/boms/bom-1/cost")) {
+        return Promise.resolve(jsonResponse(breakdown));
+      }
+      return Promise.resolve(jsonResponse([draftInvoice]));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: "New invoice" }));
+    const bomSelect = await screen.findByLabelText("Import from bill of materials");
+    await user.selectOptions(bomSelect, "bom-1");
+    await user.click(screen.getByRole("button", { name: "Import as line items" }));
+
+    // The material line, imported with its real quantity/unit price --
+    // not collapsed into one lump sum.
+    await waitFor(() => {
+      expect(screen.getByDisplayValue("resistor")).toBeInTheDocument();
+    });
+    expect(screen.getByDisplayValue("20")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("0.10")).toBeInTheDocument();
+    // A separate labor line (2.0 hrs @ the BOM's real $25.00/hr rate)
+    // and a separate overhead line (the computed $5.20) -- the real
+    // "price breakdown of material and time and overhead" the user
+    // asked for, as genuine invoice line items, not one lump sum.
+    expect(screen.getByDisplayValue(/Labor/)).toBeInTheDocument();
+    expect(screen.getByDisplayValue("25.00")).toBeInTheDocument();
+    expect(screen.getByDisplayValue(/Overhead \(10.00%\)/)).toBeInTheDocument();
+    expect(screen.getByDisplayValue("5.20")).toBeInTheDocument();
   });
 });

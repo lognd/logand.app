@@ -70,6 +70,38 @@ export function apiGet<T>(path: string): Promise<T> {
   return request<T>(path, { method: "GET" });
 }
 
+// For binary responses (invoice PDFs) -- request<T>() above always calls
+// .json() on success, which would throw on a real PDF byte stream. Shares
+// the same credentials/CSRF/401 handling as request<T>, but on failure
+// reads the server's actual JSON error detail (FastAPI's HTTPException
+// body) instead of just the status text, so a PDF-generation failure
+// surfaces as a real message ("failed to generate invoice PDF") instead
+// of a generic "500 Internal Server Error" -- this is what previously
+// showed up as a raw, unstyled browser error page when the download link
+// was a plain <a href>, not a fetch ("the PDF option doesn't work").
+export async function apiGetBlob(path: string): Promise<Blob> {
+  const res = await fetch(path, {
+    method: "GET",
+    headers: { Accept: "application/pdf" },
+    credentials: "same-origin",
+  });
+
+  if (res.status === 401) {
+    window.location.assign("/login");
+    throw new Error("unauthenticated");
+  }
+
+  if (!res.ok) {
+    const detail = await res
+      .json()
+      .then((body: { detail?: string }) => body.detail)
+      .catch(() => null);
+    throw new Error(detail || `request failed: ${res.status} ${res.statusText}`);
+  }
+
+  return res.blob();
+}
+
 export function apiPost<T>(path: string, body?: unknown): Promise<T> {
   return request<T>(path, {
     method: "POST",
@@ -87,4 +119,8 @@ export function apiPatch<T>(path: string, body?: unknown): Promise<T> {
     method: "PATCH",
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
+}
+
+export function apiDelete<T>(path: string): Promise<T> {
+  return request<T>(path, { method: "DELETE" });
 }

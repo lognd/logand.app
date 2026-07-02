@@ -1,7 +1,7 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { listInvoices } from "../../../api/invoices";
-import { LINK_CLASS } from "../../../styles/a11y";
+import { listInvoices, openInvoicePdf } from "../../../api/invoices";
+import { BUTTON_CLASS, LINK_CLASS } from "../../../styles/a11y";
 
 export function CustomerInvoices() {
   const {
@@ -11,6 +11,15 @@ export function CustomerInvoices() {
   } = useQuery({
     queryKey: ["invoices"],
     queryFn: listInvoices,
+  });
+
+  // A single mutation instance, keyed by `variables` (the invoice id) to
+  // know which row is currently loading/erred -- realistically only one
+  // PDF is being opened at a time, so this is simpler than per-row state
+  // for the same practical behavior (matches AdminInvoices.tsx's
+  // send/void mutations).
+  const pdfMutation = useMutation({
+    mutationFn: (id: string) => openInvoicePdf(`/api/invoices/${id}/pdf`),
   });
 
   return (
@@ -30,6 +39,7 @@ export function CustomerInvoices() {
                 <th className="p-2">Status</th>
                 <th className="p-2">Amount</th>
                 <th className="p-2">Due</th>
+                <th className="p-2">Paid</th>
                 <th className="p-2">Action</th>
                 <th className="p-2">PDF</th>
               </tr>
@@ -42,6 +52,9 @@ export function CustomerInvoices() {
                     {invoice.amount_total} {invoice.currency}
                   </td>
                   <td className="p-2">{invoice.due_date ?? "-"}</td>
+                  <td className="p-2">
+                    {invoice.paid_at ? new Date(invoice.paid_at).toLocaleDateString() : "-"}
+                  </td>
                   <td className="p-2">
                     {invoice.status === "sent" || invoice.status === "overdue" ? (
                       <Link
@@ -56,22 +69,28 @@ export function CustomerInvoices() {
                     )}
                   </td>
                   <td className="p-2">
-                    {/* Plain <a>, not a fetch+blob download -- the browser
-                        already sends the session cookie on a same-origin
-                        navigation, and letting it open the PDF directly
-                        (Content-Disposition: inline, see
-                        invoices_public.py) lets the browser's own PDF
-                        viewer handle print/save/zoom instead of this app
-                        reimplementing any of that. */}
-                    <a
-                      href={`/api/invoices/${invoice.id}/pdf`}
-                      target="_blank"
-                      rel="noreferrer"
-                      className={LINK_CLASS}
+                    {/* A real fetch+blob open, not a plain <a href> -- see
+                        openInvoicePdf's own doc comment for why: a plain
+                        link against a failing endpoint just opened a
+                        blank/raw-error tab with no usable feedback. */}
+                    <button
+                      type="button"
+                      onClick={() => pdfMutation.mutate(invoice.id)}
+                      disabled={pdfMutation.isPending && pdfMutation.variables === invoice.id}
+                      className={BUTTON_CLASS}
                       aria-label={`Download PDF for invoice ${invoice.id}`}
                     >
-                      Download PDF
-                    </a>
+                      {pdfMutation.isPending && pdfMutation.variables === invoice.id
+                        ? "Opening..."
+                        : "Download PDF"}
+                    </button>
+                    {pdfMutation.isError && pdfMutation.variables === invoice.id && (
+                      <p role="alert" className="mt-1 text-sm text-accent-red">
+                        {pdfMutation.error instanceof Error
+                          ? pdfMutation.error.message
+                          : "Could not open the PDF."}
+                      </p>
+                    )}
                   </td>
                 </tr>
               ))}

@@ -192,12 +192,13 @@ convention as the Postgres-testcontainers skip.
 
 ## Recurring invoices
 
-A scheduled job (see [11-deployment.md](11-deployment.md) for the cron
-mechanism) walks `invoices WHERE is_recurring AND status = 'sent'` past
-their `recurrence_interval` and creates the next draft automatically.
-This is a backend domain function (`domain/invoices/recurrence.py`),
-not logic embedded in the cron entrypoint, so it's unit-testable without
-a scheduler.
+A scheduled job (see [11-deployment.md](11-deployment.md)'s `scheduler`
+service -- a daily sleep-loop, not system cron) walks
+`invoices WHERE is_recurring AND status = 'sent'` past their
+`recurrence_interval` and creates the next draft automatically. This is
+a backend domain function (`domain/invoices/recurrence.py`), not logic
+embedded in the scheduler entrypoint, so it's unit-testable without a
+scheduler.
 
 ## Email notifications
 

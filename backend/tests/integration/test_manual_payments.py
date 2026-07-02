@@ -52,6 +52,7 @@ async def test_record_manual_payment_marks_invoice_paid_when_amount_covers_total
 
     invoice = await db_session.get(Invoice, invoice_id)
     assert invoice.status == "paid"
+    assert invoice.paid_at is not None
 
     payment = await db_session.get(Payment, result.danger_ok)
     assert payment.method == "zelle"
@@ -79,6 +80,7 @@ async def test_record_manual_payment_leaves_invoice_payable_when_partial(
     invoice = await db_session.get(Invoice, invoice_id)
     # Still "sent", not "paid" -- $40 of $100 owed isn't the full amount.
     assert invoice.status == "sent"
+    assert invoice.paid_at is None
 
 
 async def test_record_manual_payment_sums_multiple_partial_payments_to_mark_paid(
@@ -96,6 +98,7 @@ async def test_record_manual_payment_sums_multiple_partial_payments_to_mark_paid
     )
     invoice = await db_session.get(Invoice, invoice_id)
     assert invoice.status == "sent"
+    assert invoice.paid_at is None
 
     await record_manual_payment(
         db_session,
@@ -105,6 +108,7 @@ async def test_record_manual_payment_sums_multiple_partial_payments_to_mark_paid
     )
     invoice = await db_session.get(Invoice, invoice_id)
     assert invoice.status == "paid"
+    assert invoice.paid_at is not None
 
     rows = (
         (
