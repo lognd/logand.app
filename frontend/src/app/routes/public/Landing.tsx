@@ -10,6 +10,31 @@ import { useBrightnessWave } from "../../layout/useBrightnessWave";
 
 const BACKGROUND_OPTIONS: BackgroundOption[] = ["donut", "cube", "sphere", "rain"];
 
+// Person schema per docs/design/10-seo-and-agent-accessibility.md -- lets
+// crawlers/agents resolve who this site belongs to and where the
+// authoritative profiles live, without scraping the rendered page for
+// social links. ContactPoint mirrors Contact.tsx's real entries rather
+// than living as a separate page-level schema (per that doc's own
+// guidance -- "embedded in the Person schema", not standalone).
+const PERSON_JSON_LD = {
+  "@context": "https://schema.org",
+  "@type": "Person",
+  name: "Logan Dapp",
+  url: "https://logand.app",
+  jobTitle: "Software Engineer",
+  sameAs: [
+    "https://github.com/lognd",
+    "https://www.youtube.com/@logandapp7542",
+    "https://instagram.com/logan.dapp",
+    "https://www.linkedin.com/in/logandapp",
+  ],
+  contactPoint: {
+    "@type": "ContactPoint",
+    email: "logan@logand.app",
+    contactType: "personal",
+  },
+};
+
 // A regular site visit randomizes among all four backgrounds ("I want the
 // regular site visit to randomize donut/cube/globe/rain") -- "?bg=..."
 // still overrides this with one specific choice (used by the Projects
@@ -85,6 +110,10 @@ export function Landing() {
     // scroll to ("the overflow is busted on mobile"). flex-1 already
     // sizes this correctly down to whatever height is actually available.
     <main className="relative isolate flex flex-1 flex-col">
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(PERSON_JSON_LD) }}
+      />
       {/* flex-1 + items-center/justify-center centers the heading block
           within the space actually left over after the footer below --
           the footer used to be `fixed inset-x-0 bottom-0`, floating on

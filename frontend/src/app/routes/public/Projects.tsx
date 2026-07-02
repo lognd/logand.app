@@ -2,86 +2,234 @@ import { useEffect, useRef, useState } from "react";
 import { MatrixRain } from "../../../ascii/MatrixRain";
 import { ParticleLayer } from "../../../ascii/ParticleLayer";
 import { useBrightnessWave } from "../../layout/useBrightnessWave";
+import { GithubRepoCard, LinkChip } from "./GithubRepoCard";
 import { ImageCarousel, type CarouselSlide } from "./ImageCarousel";
+import { TerminalWindow } from "./TerminalWindow";
+
+// Public base URL for real project-showcase media, uploaded via
+// backend/src/logand_backend/scripts/upload_public_asset.py to R2 (see
+// docs/secrets.md's STORAGE_BACKEND section) -- unset in production until
+// that upload actually happens, in which case every `media()` call below
+// returns undefined and CarouselSlide's own "no src" fallback renders a
+// labeled placeholder instead of a broken <img>.
+//
+// For local dev preview, frontend/.env.local (gitignored) sets this to
+// "/local-media", matching the gitignored frontend/public/local-media/
+// directory -- real files, never committed, see .gitignore's own note.
+const MEDIA_BASE_URL = import.meta.env.VITE_MEDIA_BASE_URL;
+
+function media(key: string): string | undefined {
+  return MEDIA_BASE_URL ? `${MEDIA_BASE_URL.replace(/\/$/, "")}/${key}` : undefined;
+}
+
+interface GithubRef {
+  owner: string;
+  repo: string;
+}
 
 interface Project {
   title: string;
+  // One standardized format for every entry: "Mon YYYY", "Mon YYYY - Mon
+  // YYYY", or "Mon YYYY - Present" -- no season names (Spring/Fall), so
+  // every entry reads on the same scale instead of mixing granularities.
+  period: string;
   description: string;
   slides: CarouselSlide[];
+  // Live-fetched GitHub stats cards (see GithubRepoCard) -- for repos I
+  // own/maintain, preferred over a plain link since it's real, current
+  // data (stars/language/last-push) rather than a static label.
+  githubRepos?: GithubRef[];
+  // Anything that isn't a fetchable owned-repo card: a PDF writeup, a
+  // YouTube channel, a groupmate-owned repo credit.
+  links?: { label: string; href: string }[];
 }
 
-// TODO(logan): replace with real project list (CreativeWork/SoftwareSourceCode
-// JSON-LD per docs/design/10) once content is provided -- these entries and
-// their carousel slides are placeholders (see ImageCarousel.tsx's
-// CarouselSlide doc comment: a slide without a real `src` renders a
-// labeled placeholder panel instead of a broken <img>), just enough to
-// demonstrate the actual feed/carousel/scroll behavior end to end.
+// Real project list, newest-first by actual start date -- verified against
+// github.com/lognd's real repos (`gh api users/lognd/repos`, real
+// created_at/pushed_at timestamps), real EXIF capture dates pulled from
+// the original source photos, and dates given directly.
 const PROJECTS: Project[] = [
   {
     title: "logand.app",
+    period: "Nov 2025 - Present",
     description:
-      "This site -- a FastAPI + Postgres backend, a React/TypeScript frontend, and a Rust/WASM ASCII renderer, all in one monorepo. Session-cookie auth, Stripe-backed invoicing, and the animated ASCII backgrounds you're looking at right now were all built and iterated on live with a lot of back-and-forth on the exact look and feel. Deployed as a single-VPS Docker Compose stack behind Caddy.",
+      "This site, and also its own case study: FastAPI + Postgres backend, React/TypeScript frontend, a Rust/WASM ASCII renderer for the animated background you're looking at right now, and a native Android companion app, all in one monorepo. I built it end to end, deploy pipeline included, on purpose: session-cookie auth, Stripe/PayPal invoicing with generated PDF letterheads, a swappable local-disk/Cloudflare-R2 storage layer, and a pre-deploy health-check tool that actually exercises every subsystem instead of trusting that config is correct. It runs as a single-VPS Docker Compose stack behind Caddy with real off-box backups, not a toy deployment.",
     slides: [
-      // "/?bg=donut" -- root-relative, not a hardcoded "https://logand.app"
-      // or "http://localhost:..." -- so this embeds whatever domain/origin
-      // the app itself is actually being served from (dev, staging,
-      // production) rather than only ever working in one of them.
-      // "?bg=donut" pins the embedded landing page to a specific
-      // background (see Landing.tsx's backgroundFromSearchParams) --
-      // a regular site visit randomizes among all four, but this preview
-      // should reliably show the same good-looking background every time
-      // rather than whatever a fresh random pick happens to land on.
+      // "/?bg=donut" -- root-relative so this embeds whatever origin the
+      // app is actually served from, pinned to one background so the
+      // preview looks the same every time rather than a random pick.
       { alt: "logand.app (embedded live)", iframeSrc: "/?bg=donut" },
-      { alt: "Screenshot placeholder -- admin invoice dashboard" },
-      { alt: "Screenshot placeholder -- spinning ASCII globe" },
     ],
   },
   {
-    title: "Project two",
+    title: "Malmberg: Self-Hosted Photo & Video Wall",
+    period: "Jun 2026",
     description:
-      "Placeholder description for a second project -- replace with real project copy once it's available. Long enough text to demonstrate the description area's own internal scroll independent of the page-level card feed.",
-    slides: [{ alt: "Screenshot placeholder -- project two" }],
+      "Built for a friend whose photo library had outgrown what cloud storage could hold onto affordably: decades of photos deserve a real home, not a subscription. A low-power Linux/ZFS server holds the actual library; Raspberry Pi displays auto-discover it over LAN, pair with a quick 6-digit PIN, and cross-fade through it with an EXIF-derived, reverse-geocoded overlay. If the server ever drops offline, the displays fall back to a local cache instead of just going blank.",
+    slides: [{ alt: "Malmberg display wall" }],
+    githubRepos: [{ owner: "lognd", repo: "malmberg" }],
   },
   {
-    title: "Project three",
-    description: "Placeholder description for a third project.",
+    title: "frob: Agentic Dev Workflow CLI",
+    period: "Jun 2026",
+    description:
+      "I kept watching an AI coding agent burn its context window reading entire files just to change one function, so I built the tool I actually wanted: directory maps with line counts, symbol cross-referencing, token-cost estimation before a file gets read at all, an aggregate quality gate, and an atomic single-symbol edit/commit flow. This whole site was built and maintained with it, day to day.",
     slides: [
-      { alt: "Screenshot placeholder -- project three, view A" },
-      { alt: "Screenshot placeholder -- project three, view B" },
+      {
+        alt: "frob map + frob check, run against this site's own storage module",
+        element: (
+          <TerminalWindow
+            title="frob: backend/src/logand_backend/domain/storage"
+            lines={[
+              { kind: "prompt", text: "$ frob map backend/src/logand_backend/domain/storage" },
+              { kind: "out", text: "backend/src/logand_backend/domain/storage  (5 files, 276 lines)" },
+              { kind: "accent", text: "  __init__.py                       1L  ~    1 tok" },
+              {
+                kind: "accent",
+                text: "  base.py                          67L  ~  822 tok  StorageBackend, StorageObjectNotFound",
+              },
+              { kind: "accent", text: "  factory.py                       37L  ~  438 tok  get_storage_backend" },
+              { kind: "accent", text: "  local.py                         68L  ~  699 tok  LocalFilesystemStorage" },
+              { kind: "accent", text: "  r2.py                           103L  ~ 1040 tok  CloudflareR2Storage" },
+              { kind: "prompt", text: "$ frob check backend/src/logand_backend/domain/storage" },
+              {
+                kind: "out",
+                text: "frob check backend/src/logand_backend/domain/storage  [PASS]  0 errors  0 warnings",
+              },
+              { kind: "out", text: "  pass  ruff-check              no issues" },
+              { kind: "out", text: "  pass  ruff-format             all files formatted" },
+              { kind: "out", text: "  pass  frob-cycle              no cycles" },
+              { kind: "out", text: "  pass  frob-dup                no duplicates" },
+              { kind: "out", text: "  pass  frob-arch               5 suggestions" },
+            ]}
+          />
+        ),
+      },
     ],
+    githubRepos: [{ owner: "lognd", repo: "frob" }],
+  },
+  {
+    title: "typani: Result/Option/ErrorSet Library",
+    period: "Jun 2026",
+    description:
+      "I kept writing the same Result/Option boilerplate across projects, so I pulled it out into its own library: Rust/Zig-style explicit error handling for Python, Result, Option, and ErrorSet types instead of bare exceptions you have to trace back to find. It's what this site's own FastAPI backend is built on, and it's small enough that adopting it doesn't mean signing up for a whole framework.",
+    slides: [
+      {
+        alt: "A real typani Result/Option session",
+        element: (
+          <TerminalWindow
+            title="python3: typani"
+            lines={[
+              { kind: "prompt", text: ">>> from typani import Ok, Err, Some, Nothing" },
+              { kind: "prompt", text: ">>> divide(10, 2)" },
+              { kind: "out", text: "Ok(5.0)" },
+              { kind: "prompt", text: ">>> divide(10, 0)" },
+              { kind: "out", text: "Err(division by zero)" },
+              { kind: "prompt", text: ">>> r1.map(lambda x: x * 2)" },
+              { kind: "out", text: "Ok(10.0)" },
+              { kind: "prompt", text: ">>> r2.map_err(str.upper)" },
+              { kind: "out", text: "Err(DIVISION BY ZERO)" },
+              { kind: "prompt", text: ">>> first_positive([-3, -1, 0, 4, 7])" },
+              { kind: "out", text: "Some(4)" },
+            ]}
+          />
+        ),
+      },
+    ],
+    githubRepos: [{ owner: "lognd", repo: "typani" }],
+  },
+  {
+    title: "STPONE: Coreless Paper Winder Electronics",
+    period: "May 2026",
+    description:
+      "Built for Swedish Tracing Paper (STP), LLC to replace decades of manual switching and measuring on their coreless paper-winder machine with real electronics: designed the PCB, wrote the ATmega32U4 firmware from the interrupt vectors up, and built a desktop debug application to actually watch what the board was doing over serial instead of guessing from LED blinks. More is in the works.",
+    slides: [
+      { alt: "STPONE electronics demo", videoSrc: media("stpone-electronics-demo.mp4") },
+      { alt: "STPONE PCB design", src: media("stpone-pcb-design.png") },
+      { alt: "STPONE electronic schematic", src: media("stpone-electronic-schematic.png") },
+      { alt: "STPONE soldering timelapse", videoSrc: media("stpone-soldering-timelapse.mp4") },
+    ],
+    githubRepos: [{ owner: "lognd", repo: "stpone" }],
+  },
+  {
+    title: "Finite Element Analysis: Torque Arm Optimization",
+    period: "Apr 2026",
+    description:
+      "A structural-optimization project for UF's EML4507 (Finite Element Analysis), built around a question the course itself doesn't hand you: once you have a finite-element model, how do you actually search the design space instead of hand-tuning it? I wrote a gradient-based optimizer that drives ABAQUS directly, finite-difference gradients, a backtracking line search, penalty scheduling for the constraints, and let it run until it converged on a design the 550 MPa allowable stress would actually permit, cutting mass from 2.49kg to 2.13kg.",
+    slides: [
+      { alt: "Torque arm: Q8-element stress field, final design", src: media("fea2-q8.png") },
+      { alt: "Torque arm: mass reduction over the optimization trajectory", src: media("fea2-mass-reduction.jpg") },
+    ],
+    githubRepos: [{ owner: "lognd", repo: "eml4507-project-2" }],
+    links: [
+      { label: "Torque arm writeup (PDF)", href: media("fea2-writeup.pdf") ?? "#" },
+      { label: "Bike frame writeup (PDF)", href: media("fea1-writeup.pdf") ?? "#" },
+    ],
+  },
+  {
+    title: "Design & Manufacture Lab: Air Engine & Food Slicer",
+    period: "Oct 2025 - Dec 2025",
+    description:
+      "Two hands-on design-and-build projects for UF's Design & Manufacture Lab course: a small air engine (machining, welding, assembly, all the way to a running build) and a food slicer, designed and detailed through CAD and formal part/assembly drawings.",
+    slides: [
+      { alt: "Design & Manufacture Lab team", src: media("air-engine-group-holding-engines.jpg") },
+      { alt: "Team welding", src: media("air-engine-group-welding-masks.jpg") },
+      { alt: "Food slicer: part drawing", src: media("manufacturing-example-part-drawing.png") },
+      { alt: "Food slicer: exploded assembly", src: media("manufacturing-example-exploded-assembly.png") },
+      { alt: "Air engine manufacturing demo", videoSrc: media("air-engine-manufacture-demo.mp4") },
+    ],
+  },
+  {
+    title: "AIAA: Skipper, LQR Control of a Thrust-Vectored VTOL",
+    period: "2025",
+    description:
+      "As part of the Avionics and GNC team on Florida Rocket Lab (FRL), I co-authored an AIAA paper deriving the full 6-DOF nonlinear equations of motion for Skipper, a mono-propelled VTOL vehicle steered by a 2-DOF gimbaled thrust vector. Linearized the dynamics into a state-space model and designed an LQR controller (solved via the Continuous Algebraic Riccati Equation) with automatic gain scheduling: the controller re-linearizes around a new base point whenever the linear and nonlinear state predictions diverge past tolerance, rather than relying on pre-flight lookup tables. Validated in Simulink against constant crosswind disturbances and 3D reference-tracking.",
+    slides: [{ alt: "AIAA student presentation", src: media("aiaa-student-presentation.jpg") }],
+    links: [{ label: "Paper (AIAA ARC)", href: "https://arc.aiaa.org/doi/10.2514/6.2025-99754" }],
+  },
+  {
+    title: "Head TA: Advanced Programming Fundamentals",
+    period: "Aug 2025 - Present",
+    description:
+      "As Head TA of UF's Advanced Programming Fundamentals, I authored the exams and nearly all of the course content: 60+ modules, each with around 4 activities and an assignment. Grading that much material by hand doesn't scale, so I also built the tooling behind it. lograder is a Python autograder library built around a composable Input -> Check -> Mixin -> Build -> Test pipeline, with Gradescope-compatible scoring. aprog-public holds the public course problem sets I maintain (Python/C++/Jinja).",
+    slides: [{ alt: "Selfie with a fellow TA during an exam", src: media("head-ta-selfie.jpg") }],
+    githubRepos: [
+      { owner: "lognd", repo: "lograder" },
+      { owner: "lognd", repo: "aprog-public" },
+    ],
+  },
+  {
+    title: "Oops, All Collisions!: Collision-Detection Engine",
+    period: "Jul 2025",
+    description:
+      "A COP3530 (Data Structures & Algorithms) group project built around a real empirical question: which broad-phase collision strategy actually wins, and when? We implemented and benchmarked four: brute-force naive comparison as the baseline, a spatial hash (Minecraft-chunk-style bucketing), a multi-level grid, and sweep-and-prune. I wrote the code solo for the group; the repo lives under a groupmate's account.",
+    slides: [
+      {
+        alt: "Oops, All Collisions! demo (YouTube)",
+        embedSrc: "https://www.youtube.com/embed/fO_JSi4XxXk",
+      },
+    ],
+    githubRepos: [{ owner: "elleburkhalter", repo: "Oops-All-Collisions" }],
+    links: [{ label: "Demo video (YouTube)", href: "https://www.youtube.com/watch?v=fO_JSi4XxXk" }],
+  },
+  {
+    title: "Mears' Neuroscience Lab: Researcher & ML Model Architect",
+    period: "Aug 2024 - Jun 2025",
+    description:
+      "I ended up in this lab by chance: a conversation on the street about research led to a position applying signal processing and deep learning to rat neurological data. Used the synchro-squeezing transform to sharpen time-frequency structure in raw brainwave recordings, then designed a Longformer-based variational autoencoder to learn a latent space capturing long- and short-term brainwave relationships, trained remotely via SLURM on HiPerGator, UF's supercomputer. My involvement wound down as other commitments picked up, but the modeling work itself stands on its own.",
+    slides: [{ alt: "Mears' Neuroscience Lab" }],
   },
 ];
 
 // Same MatrixRain background + ParticleLayer (mouse-drag/explosion)
-// interaction as Landing's "Rain" option -- per explicit feedback ("I
-// actually really like the mouse drag and explosion, can we make that
-// appear on the other landing pages?") this isn't picker-selectable here
-// (no donut/cube/globe alternative on this page), just always on.
+// interaction as Landing's "Rain" option, always on here (no picker).
 //
-// Layout: a vertical snap-scroll feed, one project per "page" -- "make the
-// projects page infinitely scrollable until the last card of course."
-// Genuinely scrollable (mouse wheel/touch drag/keyboard), just with the
-// scrollbar itself hidden ("I don't want scroll bars," see tailwind.css's
-// .no-scrollbar). The feed is the ONLY thing that scrolls -- <main> itself
-// is sized to exactly fill the space below the header (same flex-1
-// pattern as every other public route) and never overflows on its own, so
-// the header stays fixed in place the whole time ("I want the header to
-// stay glued to the top") without needing any position:sticky/fixed trick
-// of its own -- it's simply never inside a scrolling container.
+// Layout: a vertical snap-scroll feed, one project per "page," genuinely
+// scrollable with the scrollbar hidden. See useEffect below for why the
+// feed's height is measured in JS rather than left to CSS.
 export function Projects() {
   const feedRef = useRef<HTMLDivElement | null>(null);
   useBrightnessWave(feedRef);
-  // flex-1 alone doesn't reliably cap this div's height: Shell.tsx's root
-  // uses min-h-dvh (a floor, not a ceiling -- see that file's comment,
-  // load-bearing for admin/customer table pages that rely on natural
-  // page-level scroll), so once real content is taller than the viewport
-  // (true here for the first time, with 3 stacked full-page project
-  // sections), nothing in the ancestor chain stops <main> from just
-  // growing to fit it -- the whole document scrolls instead of only this
-  // feed, breaking "I want the header to stay glued to the top."
-  // Measuring this div's own actual available height in JS and applying
-  // it as an explicit pixel height sidesteps that ambiguous CSS chain
-  // entirely, without touching Shell.tsx's sizing model at all.
   const [feedHeight, setFeedHeight] = useState<number | null>(null);
   useEffect(() => {
     function measure() {
@@ -100,148 +248,73 @@ export function Projects() {
   }, []);
 
   return (
-    // No min-h-[480px] floor -- see Landing.tsx's identical fix; it forced
-    // overflow whenever the real available height dropped below 480px.
-    // flex-1 (not h-full) for the same reason as Landing.tsx's <main> --
-    // see Shell.tsx's content-wrapper comment.
     <main className="relative isolate flex flex-1 flex-col">
       <MatrixRain className="absolute inset-0 -z-[5]" />
-      {/* -z-[4] (behind content), not z-20 -- Landing.tsx's footer needed
-          a higher z-index specifically because its footer has an opaque
-          background that otherwise occluded particles painted behind it
-          (see that file's comment); there's no such element here, and
-          keeping this behind the actual project titles/descriptions is
-          what makes it read as background decoration rather than
-          something drawn over text the user is trying to read. */}
       <ParticleLayer className="pointer-events-none fixed inset-0 -z-[4]" />
       <div
         ref={feedRef}
-        className="relative z-10 snap-y snap-mandatory overflow-y-auto no-scrollbar"
+        // snap-proximity (not snap-mandatory) -- mandatory forces a hard
+        // jump to the nearest snap point on every scroll event, which a
+        // mouse wheel's large discrete deltaY-per-notch turns into a
+        // violent full-card lurch ("mouse scroll wheel is violent"). A
+        // touchpad's small, continuous deltaY events already land near a
+        // snap point on their own, so proximity's softer "only snap once
+        // you're already close" behavior doesn't change how that feels
+        // ("touchpad is very smooth, don't change it") -- it only removes
+        // the forced full jump a single hard wheel notch was triggering.
+        className="relative z-10 snap-y snap-proximity overflow-y-auto no-scrollbar"
         style={feedHeight != null ? { height: feedHeight } : undefined}
       >
         {PROJECTS.map((project, i) => (
           <section
             key={project.title}
             className={`flex h-full min-h-full shrink-0 snap-start flex-col items-center gap-2 overflow-hidden px-4 ${
-              i === 0 ? "py-6" : "py-12"
+              i === 0 ? "py-4" : "py-6"
             }`}
           >
-            {/* justify-start (the flex default), NOT justify-center: when
-                a section's content (title + card, for the first one) is
-                taller than the section's own box, justify-center
-                overflows it EQUALLY above and below to keep it visually
-                centered -- the overflow above the box is exactly what's
-                clipped by the outer feed's overflow-y-auto (with
-                snap-mandatory refusing to scroll up past this section's
-                own snap point to reveal it), which is what made the
-                title read as completely invisible ("the Projects header
-                is not visible"). The overflow below the box is what
-                visually spilled into the NEXT section's territory
-                ("the cards overlap"). Top-aligning fixes both, since any
-                overflow then only ever happens on the bottom.
-                overflow-hidden, not overflow-y-auto -- auto tried and
-                reverted once already: it makes the section a genuinely
-                scrollable ancestor, and even with nothing of its own to
-                scroll, some browsers still spend one whole wheel/
-                trackpad gesture "realizing" that before chaining to the
-                outer feed, which is exactly what made it take two
-                scrolls to advance one card. But different real browser
-                zoom/font-rendering combinations DO sometimes make a
-                card's content taller than the section (confirmed: cards
-                overlapping again on an actual browser at a size this
-                headless testing hadn't hit), so some form of containment
-                is still needed -- overflow-hidden clips instead of
-                scrolling, which isn't a wheel-scroll target at all (there's
-                nothing to scroll to), so it can't re-introduce the
-                two-scroll bug the way overflow-y-auto did. Any content
-                that's genuinely too tall for one screen is clipped at the
-                card's own max-h-40 description scroll (see below), which
-                is the one place actually meant to hold overflow.
-                "Projects" title lives on the FIRST card's own section,
-                not as a separate snap point above the feed -- a
-                persistent title outside the feed turned out to
-                permanently cover the top of the first card ("the
-                Projects header is stuck... it blocks the top of the top
-                card"), while giving it its OWN separate snap point left
-                it as the only thing on screen with the card entirely
-                below the fold. Rendering it INSIDE the first project's
-                own section, stacked above that card in the same flex
-                column, means it's part of the one thing that's already
-                guaranteed to be reachable on load. */}
-            {/* text-2xl (down from text-3xl) and this section's own
-                reduced py-6 (other sections keep py-12) -- the title
-                eats into the same fixed section height every other
-                card's content alone gets, so the first card was ending
-                up with noticeably less room for everything below it
-                ("the first panel only gets two lines of viewing space
-                because of the title"). Shrinking the title's own
-                footprint (font size, section padding it doesn't need
-                since the title already provides visual separation from
-                the header above) gives that space back without removing
-                the title itself. */}
             {i === 0 && (
               <h1 data-wave-text className="shrink-0 text-center text-2xl text-fg-primary">
                 Projects
               </h1>
             )}
-            {/* One bordered card per project -- carousel, title, and
-                description all inside the same box, rather than loose
-                stacked elements -- "make sure the grouping of carousel
-                with text makes intuitive sense." glass-panel (see
-                tailwind.css) is the exact same translucent treatment as
-                Shell.tsx's mobile nav dropdown -- "I would prefer that we
-                use the same glass look for the card as we did for the
-                menu." */}
-            {/* flex min-h-0 flex-col: the card used to size its
-                description to a flat max-h-40 (160px) regardless of how
-                much room the section actually had -- fine on a tall
-                viewport, but on a shorter one (different browser chrome,
-                zoom level, etc) the section's overflow-hidden (see above)
-                just clipped straight through the description AND its own
-                bottom border ("the bottom text area is ridiculously
-                small, and the bottom border is cut"). Making the card a
-                flex column that itself fills the section's real leftover
-                height (min-h-0 is load-bearing here -- without it a flex
-                item won't shrink below its content's natural size, which
-                defeats the whole point) means the description below can
-                flex to whatever space is ACTUALLY left after the image
-                and title, rather than a fixed guess that sometimes
-                doesn't fit. */}
             <div className="glass-panel flex w-full min-h-0 max-w-2xl flex-1 flex-col overflow-hidden rounded border p-4 sm:p-6">
               <div className="shrink-0">
                 <ImageCarousel slides={project.slides} />
               </div>
-              {/* data-wave-text: see useBrightnessWave's doc comment. */}
-              <h2
-                data-wave-text
-                className="mb-2 mt-4 shrink-0 text-2xl text-fg-primary"
-              >
-                {project.title}
-              </h2>
-              {/* The card itself is capped to the feed's own height (one
-                  "page" per project), so a description longer than the
-                  remaining space scrolls on its own -- "a scrollable
-                  description and title" -- independent of the outer
-                  snap-scroll feed. NOT overscroll-contain -- "when the
-                  bottom of the text in the scrollable card is reached, the
-                  background should scroll," i.e. once this inner scroll
-                  runs out of room, the gesture should chain through to the
-                  outer feed (advancing to the next/previous project)
-                  rather than being swallowed here; that chaining is the
-                  browser's default overscroll-behavior, which
-                  overscroll-contain would have blocked.
-                  flex-1 min-h-0 (replacing max-h-40) -- fills whatever
-                  space is actually left in the card instead of a fixed
-                  guess. border-y (thin, matching --border) marks the
-                  actual scrollable region's boundary -- without it the
-                  text just starts/stops abruptly at the card's padding
-                  with no visual cue that this specific bit, and not the
-                  whole card, is what scrolls. */}
-              <div
-                data-wave-text
-                className="min-h-0 flex-1 overflow-y-auto no-scrollbar border-y border-border py-2 pr-1 text-base text-fg-primary"
-              >
-                {project.description}
+              <div className="mt-4 flex shrink-0 flex-wrap items-baseline justify-between gap-x-3">
+                <h2 data-wave-text className="text-2xl text-fg-primary">
+                  {project.title}
+                </h2>
+                <span data-wave-text className="text-sm text-fg-muted">
+                  {project.period}
+                </span>
+              </div>
+              {/* Description + repo cards + links all live in ONE
+                  scrollable region now, not split into a flex-1
+                  description fighting a separate shrink-0 row below it --
+                  that split let the repo-cards row (which can be 1-2
+                  cards tall) claim whatever space it needed first, often
+                  squeezing the description down to a sliver ("the
+                  description is hidden"). A single scrollable block means
+                  the description is always readable top-to-bottom by
+                  scrolling, with the repo cards/links simply appearing
+                  after it rather than competing for a fixed slice of
+                  height. */}
+              <div className="mt-2 min-h-[7rem] flex-1 overflow-y-auto no-scrollbar border-y border-border py-2 pr-1">
+                <p data-wave-text className="text-base text-fg-primary">
+                  {project.description}
+                </p>
+                {((project.githubRepos && project.githubRepos.length > 0) ||
+                  (project.links && project.links.length > 0)) && (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {project.githubRepos?.map((r) => (
+                      <GithubRepoCard key={`${r.owner}/${r.repo}`} owner={r.owner} repo={r.repo} />
+                    ))}
+                    {project.links?.map((link) => (
+                      <LinkChip key={link.href + link.label} label={link.label} href={link.href} />
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           </section>

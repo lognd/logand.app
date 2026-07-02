@@ -38,6 +38,20 @@ export const NAV_LINK_CLASS =
   "focus-visible:outline-2 focus-visible:outline-offset-2 " +
   "focus-visible:outline-accent-orange";
 
+// A compact "chip" for secondary reference links (GitHub repo, PDF
+// writeup, external demo) sitting below a block of body copy -- LINK_CLASS
+// itself is meant for a link inline within a sentence; a row of several
+// LINK_CLASS links back-to-back reads as a wall of underlined aqua text
+// competing with the real copy above it ("the links make the content
+// unreadable"). This is deliberately quieter (bordered box, no permanent
+// underline, smaller text) so it reads as a distinct "further reading"
+// affordance rather than more body text.
+export const CHIP_LINK_CLASS =
+  "inline-flex min-h-9 items-center gap-2 rounded border border-border px-3 py-1 " +
+  "text-sm text-fg-secondary no-underline transition-colors hover:border-accent-aqua " +
+  "hover:text-accent-aqua focus-visible:outline focus-visible:outline-2 " +
+  "focus-visible:outline-offset-2 focus-visible:outline-accent-orange";
+
 // The brand/wordmark link specifically -- same interaction affordances as
 // NAV_LINK_CLASS but visually distinct (brighter, no tracking) so it reads
 // as the site's identity rather than just another nav item.

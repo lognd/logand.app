@@ -22,6 +22,13 @@ frontend/test-results/
 frontend/playwright-report/
 frontend/coverage/
 
+# Local-only dev preview copies of project-showcase media -- the real
+# public copies live in R2 (see backend/src/logand_backend/scripts/
+# upload_public_asset.py), never committed to git. This lets
+# VITE_MEDIA_BASE_URL point at a local dev-server path to preview
+# Projects.tsx with real images before anything is actually uploaded.
+frontend/public/local-media/
+
 # Rust
 wasm-ascii/target/
 wasm-ascii/pkg/

@@ -86,17 +86,73 @@ function IframeSlide({ src, alt }: { src: string; alt: string }) {
   );
 }
 
+// A flat bg-bg-secondary letterbox behind a contained (non-cropped) photo
+// or video reads as an empty gap, not a deliberate frame ("doesn't look
+// professional"). This gives it a real backdrop instead: the same media,
+// blown up and blurred to fill the box completely, sitting behind the
+// crisp, fully-visible foreground copy -- the same "blurred album art
+// backdrop" treatment music apps use for non-square covers. `backdrop` is
+// itself an <img>/<video> (not a CSS background-image), so it works for
+// both media kinds with one component.
+function LetterboxFrame({
+  backdrop,
+  children,
+}: {
+  backdrop: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="relative h-full w-full overflow-hidden bg-bg-secondary">
+      <div
+        aria-hidden
+        className="absolute inset-0 scale-125 opacity-40 blur-2xl brightness-75"
+      >
+        {backdrop}
+      </div>
+      <div className="relative flex h-full w-full items-center justify-center">{children}</div>
+    </div>
+  );
+}
+
 export interface CarouselSlide {
   alt: string;
-  // Optional -- real project screenshots aren't provided yet (see
-  // Projects.tsx's TODO), so a slide without one renders a labeled
-  // placeholder panel instead of a broken <img>. Swap in a real `src` and
-  // the same slide renders the actual image with no other changes needed.
+  // Optional -- a slide without any of src/iframeSrc/videoSrc renders a
+  // labeled placeholder panel instead of a broken <img>. Swap in a real
+  // one of these and the same slide renders the actual media with no
+  // other changes needed.
   src?: string;
   // Renders a live <iframe> instead of a static image -- used for the
   // logand.app project entry itself, which can just embed the real
   // running site rather than a screenshot of it.
   iframeSrc?: string;
+  // Renders a real <video controls> element -- for local demo/timelapse
+  // clips (see Projects.tsx's media() helper). Checked after iframeSrc,
+  // before src, since a slide should never define more than one of these.
+  videoSrc?: string;
+  // Renders a normal, INTERACTIVE responsive iframe (pointer events left
+  // enabled, no fixed-desktop-width scale hack) -- for third-party embeds
+  // that are natively responsive and meant to be played, like a YouTube
+  // "/embed/<id>" URL. Distinct from `iframeSrc`, which is specifically
+  // the logand.app self-preview hack (fixed 1280px width scaled down,
+  // pointer-events-none) -- reusing it here would both mis-size a
+  // YouTube embed (it's already responsive, doesn't want the 16:9-at-
+  // 1280px-then-shrink treatment) and make the video unplayable (its
+  // pointer-events-none is load-bearing for that hack's own drag-to-swipe
+  // requirement, but this slide type needs real Play-button clicks to
+  // reach the iframe instead).
+  embedSrc?: string;
+  // "contain" (default) always shows the whole photo, letterboxed against
+  // the box's own background if its aspect ratio isn't 16:9 -- cropping
+  // to fill (object-cover) was cutting real content out of most of these
+  // source photos, which weren't shot/exported at 16:9 to begin with.
+  // "cover" opts back into fill-and-crop for a slide where that's
+  // actually fine (a busy background photo with no important edges).
+  fit?: "cover" | "contain";
+  // An arbitrary React element for a slide (a <TerminalWindow>, say) --
+  // for real, live-rendered content instead of a static screenshot image.
+  // Checked first: an element slide should never also define src/
+  // iframeSrc/videoSrc/embedSrc.
+  element?: React.ReactNode;
 }
 
 // Below this horizontal drag distance (px), a touch/pointer gesture is
@@ -208,7 +264,7 @@ export function ImageCarousel({ slides }: { slides: CarouselSlide[] }) {
           max-width to keep the ratio) -- a slightly-off ratio at extreme
           sizes is a fine tradeoff for the buttons always actually fitting
           inside it. */}
-      <div className="relative mx-auto aspect-video max-h-[38dvh] min-h-[110px] w-auto max-w-full overflow-hidden rounded border border-border bg-bg-secondary">
+      <div className="relative mx-auto aspect-video max-h-[32dvh] min-h-[110px] w-auto max-w-full overflow-hidden rounded border border-border bg-bg-secondary">
         <div
           ref={trackRef}
           className="flex h-full w-full touch-pan-y"
@@ -224,15 +280,74 @@ export function ImageCarousel({ slides }: { slides: CarouselSlide[] }) {
         >
           {slides.map((slide) => (
             <div key={slide.alt} className="h-full w-full flex-shrink-0">
-              {slide.iframeSrc ? (
+              {slide.element ? (
+                <div className="h-full w-full overflow-hidden">{slide.element}</div>
+              ) : slide.iframeSrc ? (
                 <IframeSlide src={slide.iframeSrc} alt={slide.alt} />
-              ) : slide.src ? (
-                <img
-                  src={slide.src}
-                  alt={slide.alt}
-                  draggable={false}
-                  className="h-full w-full select-none object-cover"
+              ) : slide.embedSrc ? (
+                <iframe
+                  src={slide.embedSrc}
+                  title={slide.alt}
+                  className="h-full w-full border-0"
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                  allowFullScreen
                 />
+              ) : slide.videoSrc ? (
+                slide.fit === "cover" ? (
+                  <video
+                    src={slide.videoSrc}
+                    controls
+                    playsInline
+                    preload="metadata"
+                    className="h-full w-full select-none object-cover"
+                  >
+                    <track kind="captions" />
+                  </video>
+                ) : (
+                  <LetterboxFrame
+                    backdrop={
+                      <video
+                        src={slide.videoSrc}
+                        muted
+                        loop
+                        autoPlay
+                        playsInline
+                        preload="metadata"
+                        className="h-full w-full object-cover"
+                      />
+                    }
+                  >
+                    <video
+                      src={slide.videoSrc}
+                      controls
+                      playsInline
+                      preload="metadata"
+                      className="max-h-full max-w-full select-none"
+                    >
+                      <track kind="captions" />
+                    </video>
+                  </LetterboxFrame>
+                )
+              ) : slide.src ? (
+                slide.fit === "cover" ? (
+                  <img
+                    src={slide.src}
+                    alt={slide.alt}
+                    draggable={false}
+                    className="h-full w-full select-none object-cover"
+                  />
+                ) : (
+                  <LetterboxFrame
+                    backdrop={<img src={slide.src} alt="" className="h-full w-full object-cover" />}
+                  >
+                    <img
+                      src={slide.src}
+                      alt={slide.alt}
+                      draggable={false}
+                      className="max-h-full max-w-full select-none object-contain"
+                    />
+                  </LetterboxFrame>
+                )
               ) : (
                 // Placeholder panel -- see CarouselSlide's doc comment. No
                 // aspect-video here -- the track's OWN aspect-video already
