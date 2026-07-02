@@ -1,9 +1,9 @@
-# Nightly pg_dump + budget-evidence tarball, pushed off-box. See docs/design/11-deployment.md.
-# NOTE(logan): this is a stub -- backup.sh needs a real off-box destination (object storage
-# bucket or second VPS) wired in before this is trustworthy. Do not rely on it yet.
+# Nightly pg_dump + storage-volume tarball, pushed off-box via rclone to
+# R2. See docs/design/11-deployment.md and docs/secrets.md's BACKUP_R2_*
+# section for the credentials this needs.
 FROM postgres:16-alpine
 
-RUN apk add --no-cache tar gzip dcron
+RUN apk add --no-cache tar gzip dcron rclone
 
 COPY backup.sh /usr/local/bin/backup.sh
 RUN chmod +x /usr/local/bin/backup.sh

@@ -128,18 +128,22 @@ to the repo's **Settings > Secrets and variables > Actions** so
 GitHub Actions section) -- this is a one-time setup, not a
 per-deploy step.
 
-## Known limitation: backups aren't off-box yet
+## Backups
 
 `ops/backup.sh` runs nightly (see the `backup` service in
-`docker-compose.yml`) and stages a `pg_dump` + evidence-volume tarball
-locally, but does **not** yet push that staged backup anywhere off the
-VPS (see the `TODO` at the top of that script). A single-VPS deployment
-with only on-box backups is not resilient against losing the VPS
-itself. Until this is wired up (`rclone`/`aws s3 cp` to real off-box
-storage), treat this as: backups protect against "I fat-fingered a
-DELETE," not "the VPS provider had an outage that ate the disk." See
-[runbooks/restore.md](runbooks/restore.md) for the restore procedure
-once you do have a real backup file, staged locally or otherwise.
+`docker-compose.yml`): `pg_dump` + a tarball of the storage volume,
+staged locally, then pushed off-box to R2 via `rclone` -- see
+[secrets.md](secrets.md)'s `BACKUP_R2_*` section for the credentials
+this needs. **Set `BACKUP_R2_*` before you consider backups real** --
+without it, the script still stages a local copy (logged loudly as a
+warning every run) but a VPS-level failure takes that local copy down
+with everything else, same as no backup at all. Retention: the 30 most
+recent backups are kept in R2, older ones pruned automatically; local
+staging only ever keeps the most recent 3 runs (it's a short buffer for
+"the push itself broke," not the real retention store).
+
+See [runbooks/restore.md](runbooks/restore.md) for the restore
+procedure.
 
 ## Redeploying / restarting after config changes
 

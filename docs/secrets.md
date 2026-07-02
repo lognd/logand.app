@@ -217,6 +217,44 @@ update `backend/.env`/GitHub Actions, restart `backend`. Rotating does
 NOT invalidate already-stored files -- only the credentials used to
 access them.
 
+### `BACKUP_R2_BUCKET` / `BACKUP_R2_ENDPOINT_URL` / `BACKUP_R2_ACCESS_KEY_ID` / `BACKUP_R2_SECRET_ACCESS_KEY`
+
+Deliberately separate from the `R2_*` set above, even though they're
+both R2 credentials -- these are `ops/backup.sh`'s off-box push
+destination (nightly `pg_dump` + storage tarball), used regardless of
+whether `STORAGE_BACKEND` is `local` or `r2`. Keeping them as separate
+credentials/bucket means a bug or compromise in one can't touch the
+other (the app can't accidentally overwrite backups, a backup-script
+bug can't corrupt live application files).
+
+**Set these before you consider the deployment's backups real** -- see
+[deployment.md](deployment.md)'s Backups section. Without them,
+`ops/backup.sh` still runs nightly and stages a local copy (logged as a
+loud warning every run, visible in `docker compose logs backup`), but a
+VPS-level failure takes that local copy down with everything else.
+
+Setup: create a **second** R2 bucket (separate from any
+`STORAGE_BACKEND=r2` bucket) in the Cloudflare dashboard specifically
+for backups, create an API token scoped to only that bucket, then set:
+
+```
+BACKUP_R2_BUCKET=your-backup-bucket-name
+BACKUP_R2_ENDPOINT_URL=https://<account-id>.r2.cloudflarestorage.com
+BACKUP_R2_ACCESS_KEY_ID=<from the API token>
+BACKUP_R2_SECRET_ACCESS_KEY=<from the API token>
+```
+
+Verify it's actually working after setup:
+`docker compose logs backup` after the next nightly run (03:00) should
+show `backup pushed to r2://...`, not the "not fully configured"
+warning. To test immediately rather than waiting:
+`docker compose exec backup /usr/local/bin/backup.sh`.
+
+Rotating: revoke and recreate the API token in the Cloudflare
+dashboard, update `backend/.env`, restart the `backup` service
+(`docker compose up -d backup`). Rotating does NOT invalidate
+already-pushed backups.
+
 ## GitHub Actions secrets specifically
 
 `.github/workflows/deploy.yml` reads `VPS_SSH_KEY` and copies of the
