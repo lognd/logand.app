@@ -11,16 +11,20 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.logand.mobile.LogandApplication
+import app.logand.mobile.logging.ShareLogsAction
 import app.logand.mobile.ui.theme.AccentRed
 import app.logand.mobile.ui.theme.MinTouchTarget
 import app.logand.mobile.ui.theme.SpacingLarge
@@ -29,6 +33,7 @@ import app.logand.mobile.ui.theme.SpacingMedium
 @Composable
 fun LoginScreen(viewModel: LoginViewModel) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val context = LocalContext.current
 
     Column(
         modifier = Modifier
@@ -94,6 +99,23 @@ fun LoginScreen(viewModel: LoginViewModel) {
                 } else {
                     Text("Sign in", modifier = Modifier.padding(vertical = (MinTouchTarget - 20.dp) / 2))
                 }
+            }
+
+            // Reachable even logged out -- a login failure IS a real crash-
+            // adjacent problem worth reporting, and this is the one screen
+            // guaranteed reachable regardless of session state. Same
+            // "always available, not just after a crash" convention as the
+            // frontend's ReportProblemButton.tsx.
+            TextButton(
+                onClick = {
+                    val app = context.applicationContext as LogandApplication
+                    ShareLogsAction.share(context, app.container.logger)
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .semantics { contentDescription = "share app logs" },
+            ) {
+                Text("Share app logs")
             }
         }
     }

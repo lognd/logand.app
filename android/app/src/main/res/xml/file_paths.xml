@@ -8,4 +8,13 @@
          confirmed by a real test failure ("Name must not be empty") when
          the android: prefix was tried instead. -->
     <cache-path name="receipt_photos" path="receipts/" />
+    <!-- Matches ShareLogsAction's export location, the concatenated log
+         file handed to the share sheet. -->
+    <cache-path name="logs_export" path="logs_export/" />
+    <!-- The real, live log directory (FileLogger writes here via
+         AppContainer.logger, see LogandApplication) is under filesDir,
+         not cacheDir, so it survives across app restarts rather than
+         being clearable by the OS under storage pressure the way cache
+         files can be. -->
+    <files-path name="app_logs" path="logs/" />
 </paths>
