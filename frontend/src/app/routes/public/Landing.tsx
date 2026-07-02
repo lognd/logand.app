@@ -78,6 +78,7 @@ export function Landing() {
   const [background, setBackground] = useState<BackgroundOption>(
     () => backgroundFromSearchParams(searchParams) ?? randomBackground(),
   );
+  const [bgMenuOpen, setBgMenuOpen] = useState(false);
   const contentRef = useRef<HTMLDivElement | null>(null);
   useBrightnessWave(contentRef);
 
@@ -182,20 +183,60 @@ export function Landing() {
           animated background belongs to the content area above it, not
           behind the footer's own controls.
 
-          pb-20 (below sm; back to a plain pb-4 at sm+) reserves the exact
-          footprint ReportProblemButton's `fixed bottom-4 right-4` occupies
-          (its own height plus the 1rem gap from the viewport edge) --
-          without it, this row and that fixed button both land in the same
-          bottom-of-viewport band on a narrow screen, so the "Rain" option
-          (the row's rightmost/last item) rendered directly underneath
-          "Report a problem." ReportProblemButton is `fixed` (viewport-
-          relative, needed since most other pages have no footer at all to
-          anchor to), which means normal document flow has no idea that
-          corner is spoken for -- reserving the clearance here, rather than
-          hoping the row happens to wrap clear of it, is what keeps this
-          fixed the next time an option is added to BackgroundPicker too. */}
-      <footer className="relative z-10 shrink-0 border-t border-border bg-bg-primary px-4 pb-20 pt-4 sm:pb-4">
-        <BackgroundPicker value={background} onChange={setBackground} />
+          Reserving bottom padding here to clear ReportProblemButton's
+          `fixed bottom-4 right-4` footprint was tried first and didn't
+          hold up -- the exact clearance needed depends on how many rows
+          BackgroundPicker's flex-wrap ends up on at a given width, which
+          isn't a fixed number to reserve against. Collapsing it behind a
+          toggle on mobile (below) sidesteps the problem instead of
+          chasing it: the footer's resting height is always just the
+          toggle button, nowhere near the fixed corner, and the open
+          panel expands UPWARD (`bottom-full`, absolutely positioned)
+          over the content area rather than downward into that corner --
+          same pattern Shell.tsx's own mobile nav dropdown already uses
+          for the equivalent problem at the top of the page. */}
+      <footer className="relative z-10 shrink-0 border-t border-border bg-bg-primary px-4 py-4">
+        {/* Desktop/wide: always visible inline, matching the original
+            "kind of hidden" quiet-footer-row feel -- there's no overlap
+            risk at this width, plenty of horizontal room next to the
+            fixed corner button. */}
+        {/* A wrapper toggles visibility, not a className passed straight into
+            BackgroundPicker -- it already hardcodes `flex` in its own class
+            list, and `hidden` + `flex` on the SAME element is a same-
+            specificity conflict Tailwind resolves by generated stylesheet
+            order, not source order, which isn't something to rely on. */}
+        <div className="hidden sm:block">
+          <BackgroundPicker value={background} onChange={setBackground} />
+        </div>
+        {/* Mobile: collapsed behind a toggle, same aria-expanded/
+            aria-controls/glass-panel pattern as Shell.tsx's header
+            hamburger. */}
+        <div className="sm:hidden">
+          <button
+            type="button"
+            className="min-h-11 min-w-11 rounded px-3 py-2 text-sm text-fg-muted hover:text-fg-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-orange"
+            aria-expanded={bgMenuOpen}
+            aria-controls="background-picker-panel"
+            onClick={() => setBgMenuOpen((open) => !open)}
+          >
+            {bgMenuOpen ? "Close" : "Background"}
+          </button>
+          <div
+            id="background-picker-panel"
+            aria-hidden={!bgMenuOpen}
+            className={`glass-panel absolute inset-x-0 bottom-full z-30 ${
+              bgMenuOpen ? "flex" : "hidden"
+            } flex-col gap-1 border-b border-t p-4`}
+          >
+            <BackgroundPicker
+              value={background}
+              onChange={(next) => {
+                setBackground(next);
+                setBgMenuOpen(false);
+              }}
+            />
+          </div>
+        </div>
       </footer>
       {/* Moved out here as `main`'s LAST child (a sibling of both the
           content div above and the footer), not nested inside the content
