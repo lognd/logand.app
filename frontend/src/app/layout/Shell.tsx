@@ -6,6 +6,7 @@ import { NAV_BRAND_CLASS, NAV_LINK_CLASS } from "../../styles/a11y";
 import { logout } from "../../api/auth";
 import { useMe } from "../../hooks/useMe";
 import { GlitchText } from "./GlitchText";
+import { ReportProblemButton } from "./ReportProblemButton";
 
 function NavLinks({ className }: { className?: string }) {
   const { data: me, isLoading } = useMe();
@@ -145,6 +146,7 @@ export function Shell({ children }: { children: ReactNode }) {
           combined background (this + Landing's SpinningShape stacked on
           top) read as distracting. */}
       <AsciiCanvas className="pointer-events-none fixed inset-0 -z-10 opacity-10" />
+      <ReportProblemButton />
       <header className="relative z-20 border-b border-border">
         <div className="flex items-center justify-between gap-4 p-4">
           <a href="/" aria-label="logand.app" className={NAV_BRAND_CLASS}>

@@ -52,7 +52,8 @@ describe("AdminData (integration)", () => {
         editable: true,
       },
     ];
-    const fetchMock = vi.fn((url: string) => {
+    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+      void init;
       if (url.startsWith("/api/admin/data/tables/inventory_items/rows/item-1")) {
         if (url.includes("change_id")) return Promise.resolve(jsonResponse({}));
         return Promise.resolve(jsonResponse(row));

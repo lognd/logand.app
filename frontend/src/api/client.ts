@@ -2,6 +2,8 @@
 // Session cookie is HttpOnly and never touched here; only the non-HttpOnly
 // CSRF cookie is read, per docs/design/02-auth-and-security.md.
 
+import { logError, logWarn } from "../lib/logging";
+
 export class RateLimitedError extends Error {
   constructor(public readonly retryAfterSeconds: number) {
     super(`Rate limited, retry after ${retryAfterSeconds}s`);
@@ -59,6 +61,16 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
 
   if (!res.ok) {
+    // x-request-id (set by the backend's own logging middleware, see
+    // app/app.py) is the thread that ties THIS entry in the client's
+    // exportable log to the exact backend log line for the same request
+    // -- hand both to support and the failure is traceable end-to-end.
+    const requestId = res.headers.get("x-request-id") ?? "unknown";
+    const log = res.status >= 500 ? logError : logWarn;
+    log(
+      `request failed: ${init.method ?? "GET"} ${path}`,
+      `status=${res.status} request_id=${requestId}`,
+    );
     throw new Error(`request failed: ${res.status} ${res.statusText}`);
   }
 

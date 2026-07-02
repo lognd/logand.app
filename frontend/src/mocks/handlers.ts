@@ -997,4 +997,41 @@ export const handlers = [
     }
     return HttpResponse.json({ change_id: mockId("change") });
   }),
+
+  // -- admin server logs ----------------------------------------------------
+  http.get("/api/admin/logs/files", () => {
+    const denied = requireRole("admin");
+    if (denied) return denied;
+    return HttpResponse.json([
+      { name: "app.log", size_bytes: 4096, modified_at: Date.now() / 1000 },
+      {
+        name: "app.log.2026-07-01",
+        size_bytes: 20480,
+        modified_at: Date.now() / 1000 - 86400,
+      },
+    ]);
+  }),
+
+  http.get("/api/admin/logs/tail", () => {
+    const denied = requireRole("admin");
+    if (denied) return denied;
+    return HttpResponse.json([
+      JSON.stringify({
+        timestamp: new Date().toISOString(),
+        level: "INFO",
+        logger: "logand_backend.access",
+        message: "request complete",
+        request_id: "mock-request-id",
+      }),
+    ]);
+  }),
+
+  http.get("/api/admin/logs/files/:name", () => {
+    const denied = requireRole("admin");
+    if (denied) return denied;
+    return new HttpResponse("{}\n", {
+      status: 200,
+      headers: { "Content-Type": "application/x-ndjson" },
+    });
+  }),
 ];

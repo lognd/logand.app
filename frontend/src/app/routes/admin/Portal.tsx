@@ -57,6 +57,14 @@ export function AdminPortal() {
             Direct, audited access to any table for one-off fixes.
           </p>
         </li>
+        <li>
+          <Link to="/admin/logs" className={LINK_CLASS}>
+            Server logs
+          </Link>
+          <p className="text-base text-fg-muted">
+            Browse and download real backend log files, or tail the live one.
+          </p>
+        </li>
       </ul>
     </main>
   );
