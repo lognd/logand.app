@@ -1,8 +1,15 @@
 name: Deploy
 
+# android/** excluded for the same reason as ci.yml's own paths-ignore --
+# an android-only push has nothing for this workflow to build/deploy, and
+# without this, wait-for-ci below would poll for backend/frontend/
+# wasm-ascii/system-tests check-runs that ci.yml never even created (since
+# it's equally path-filtered), eventually timing out and failing this
+# workflow for no reason.
 on:
   push:
     branches: [main]
+    paths-ignore: ["android/**"]
 
 # NOTE(logan): ci.yml ALSO triggers on `push: branches: [main]` -- both
 # workflows start in parallel on the same push, they are not sequential.

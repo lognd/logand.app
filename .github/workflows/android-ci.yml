@@ -1,0 +1,38 @@
+name: Android CI
+
+# Scoped to android/** on both triggers -- this is the counterpart to
+# ci.yml's own paths-ignore: ["android/**"]. A push/PR touching only
+# android/ runs just this workflow (fast feedback, no unrelated
+# backend/frontend/wasm-ascii/system-tests jobs); one touching android/
+# alongside another path runs both workflows, each scoped to what it
+# actually knows how to test.
+on:
+  pull_request:
+    paths: ["android/**"]
+  push:
+    branches: [main]
+    paths: ["android/**"]
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      # GitHub's ubuntu-latest runners are x86_64 -- see
+      # release-android.yml's identical note on why the aarch64 qemu/aapt2
+      # dance in android/README.md doesn't apply here.
+      - uses: android-actions/setup-android@v3
+
+      # :core's tests need no Android SDK at all; :app's need the SDK just
+      # installed above. Same test target as release-android.yml's own
+      # gate, just running on every android/** push/PR instead of only at
+      # release-tag time.
+      - name: test
+        working-directory: android
+        run: ./gradlew :core:test :app:testDebugUnitTest

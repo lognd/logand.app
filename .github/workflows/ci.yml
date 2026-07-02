@@ -1,9 +1,19 @@
 name: CI
 
+# android/** is deliberately excluded from both triggers below -- it has
+# its own workflow (android-ci.yml) with its own SDK/Gradle toolchain, and
+# an android-only change has no way to affect the backend/frontend/
+# wasm-ascii/system-tests jobs here. Without paths-ignore, every android
+# commit would still spin up and wait on four unrelated jobs for nothing.
+# A push/PR that touches android/** AND another path still runs this
+# workflow normally -- paths-ignore only skips when EVERY changed file
+# matches.
 on:
   pull_request:
+    paths-ignore: ["android/**"]
   push:
     branches: [main]
+    paths-ignore: ["android/**"]
 
 jobs:
   backend:
