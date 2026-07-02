@@ -1,0 +1,64 @@
+name: Release Android
+
+# Tag-triggered, not push-to-main -- the backend/frontend deploy
+# continuously on every main push (deploy.yml), but a mobile APK is
+# something a user installs once and updates deliberately, so it gets
+# its own versioned artifact per release tag instead of a new build on
+# every commit. Push a tag like `v1.2.0` to cut a release.
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # to create the GitHub Release and upload the APK
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      # GitHub's ubuntu-latest runners are x86_64 -- NONE of
+      # android/README.md's "Building on aarch64 Linux" qemu/aapt2-
+      # override dance applies here, that's only needed on this repo's
+      # local aarch64 dev host. A plain SDK install + ./gradlew works
+      # unmodified.
+      - uses: android-actions/setup-android@v3
+
+      # Tests gate the release -- an APK is never uploaded from a build
+      # that didn't pass its own test suite first. :core's tests need no
+      # Android SDK at all; :app's need the SDK just installed above.
+      - name: test
+        working-directory: android
+        run: ./gradlew :core:test :app:testDebugUnitTest
+
+      # No release signing keystore exists for this project (see
+      # app/build.gradle.kts -- the `release` build type has no
+      # signingConfig) -- assembleRelease would produce an UNSIGNED,
+      # uninstallable APK. assembleDebug is real compilation (R8/
+      # resource processing/etc. all run) and AGP's auto-generated debug
+      # keystore makes the result directly installable via `adb install`
+      # or sideloading, which matches this project's own "personal
+      # project... expect to fork and adapt" framing (see root README's
+      # License section) -- not a Play-Store-grade signed release.
+      - name: build debug APK
+        working-directory: android
+        run: ./gradlew :app:assembleDebug
+
+      - name: release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: android/app/build/outputs/apk/debug/app-debug.apk
+          generate_release_notes: true
+          body: |
+            Debug-signed APK (see this workflow's own build step for why) --
+            install with `adb install app-debug.apk` or by downloading it
+            directly to an Android device and opening it (allow installs
+            from this source when prompted). See
+            [android/README.md](https://github.com/${{ github.repository }}/blob/main/android/README.md#installing-on-a-real-device)
+            for device-specific install steps (e.g. Pixel 7a).

@@ -62,6 +62,56 @@ the repo root's `make install`/`make test` delegate to) wrap the same
 automatically when it's needed -- see "Building on aarch64 Linux" below.
 Prefer them unless you need a specific Gradle task directly.
 
+## Installing on a real device (e.g. Pixel 7a)
+
+Every push of a `vX.Y.Z` tag builds a debug-signed APK and attaches it
+to a GitHub Release automatically (`.github/workflows/release-android.yml`)
+-- **that's the easiest path**: grab `app-debug.apk` from
+[the latest release](../../releases/latest) instead of building it
+yourself. It's debug-signed (this project has no Play-Store-grade
+release keystore), which just means Android will label it as coming
+from an unverified developer during install -- expected, not a warning
+to work around.
+
+Steps on a Pixel 7a (stock Android 14, but this is the same on any
+modern Android device -- menu wording may vary slightly by OS version):
+
+1. **Download the APK directly on the phone.** Open the release page's
+   `app-debug.apk` link in Chrome (or transfer the file over any other
+   way -- `adb push`, a cable, a cloud drive -- and open it from Files).
+2. **Allow installs from this source, when prompted.** The first time
+   you open a downloaded APK, Android blocks it and offers a link to
+   **Settings**. Enable "Allow from this source" for whichever app you
+   opened it with (Chrome, Files, etc.) -- this is scoped to that one
+   app, not a global "allow anything" toggle.
+3. **Tap Install**, then **Open**.
+
+To reinstall a newer version later, repeat with the new release's APK
+-- Android treats a debug-signed APK with a matching `applicationId`
+(`app.logand.mobile`) as an update over the previous install as long as
+it's signed with the exact same debug key, which it always will be
+here (AGP's own generated debug keystore, not a per-machine one, since
+every build in this repo's CI runs through the same checked-in Gradle
+config).
+
+### Installing over USB (`adb`) instead
+
+If you'd rather build locally and push straight to the device:
+
+1. On the phone: **Settings > About phone**, tap **Build number** 7
+   times to unlock Developer options, then **Settings > System >
+   Developer options > USB debugging**, enable it.
+2. Connect the phone via USB, accept the "Allow USB debugging?" prompt
+   on the phone.
+3. `adb devices` should list it. Then:
+   ```
+   ./gradlew :app:installDebug
+   ```
+   (equivalent to `assembleDebug` + `adb install` in one step -- see
+   "Building" above for the plain `assembleDebug` + manual `adb
+   install` path if you'd rather build once and install more than
+   once without a live USB connection each time.)
+
 ## Testing
 
 ```

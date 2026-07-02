@@ -72,9 +72,17 @@ for what belongs in which layer before adding a test.
 - `.github/workflows/ci.yml` -- runs on every PR and push to `main`:
   lint + typecheck + unit/integration per subproject, then a combined
   system-test job against `docker-compose.test.yml`. `android/` is
-  **not** currently a CI job (no runner here has the Android SDK set
-  up) -- run `make -C android test` (or root `make test`, which now
-  includes it) locally before pushing android changes.
+  **not** part of this workflow (it's exercised by `release-android.yml`
+  instead, below) -- run `make -C android test` (or root `make test`,
+  which now includes it) locally before pushing android changes.
+- `.github/workflows/release-android.yml` -- on pushing a `vX.Y.Z` tag:
+  runs `:core`/`:app` tests on a real GitHub-hosted (x86_64) runner --
+  none of `android/README.md`'s aarch64-Linux `aapt2` workarounds are
+  needed there -- then, only if tests pass, builds a debug-signed APK
+  (no release keystore exists for this project) and attaches it to a
+  new GitHub Release. See
+  [android/README.md](android/README.md#installing-on-a-real-device)
+  for install steps on a real device.
 - `.github/workflows/deploy.yml` -- on push to `main`, after CI passes:
   builds images, pushes to GHCR, ships the frontend build + restarts
   the backend on the VPS over SSH.
