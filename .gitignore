@@ -26,6 +26,15 @@ frontend/coverage/
 wasm-ascii/target/
 wasm-ascii/pkg/
 
+# Android -- local.properties has a machine-specific sdk.dir path,
+# never committed. build/ is already covered by the generic rule above.
+android/local.properties
+android/.gradle/
+android/*/build/
+android/.cxx/
+*.apk
+*.aab
+
 # frob local state
 .frob/
 FROBLEMS.md
