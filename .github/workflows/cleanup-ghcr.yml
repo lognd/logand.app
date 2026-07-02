@@ -14,12 +14,16 @@ on:
 jobs:
   cleanup:
     runs-on: ubuntu-latest
-    permissions:
-      packages: write
     steps:
       - name: delete old backend image versions
         uses: actions/delete-package-versions@v5
         with:
+          # This package lives under a personal account (not an org) --
+          # GITHUB_TOKEN with packages:write reliably handles pushing but
+          # not deleting versions of a user-owned package. GHCR_CLEANUP_PAT
+          # is a classic PAT scoped to read:packages + delete:packages,
+          # added under Settings > Secrets and variables > Actions.
+          token: ${{ secrets.GHCR_CLEANUP_PAT }}
           package-name: "logand.app/backend"
           package-type: "container"
           # Keep the 10 most recent versions regardless of age -- covers
