@@ -11,6 +11,56 @@ real contents of `backend/.env` or any GitHub Actions secret.** Generate
 new values, write them into the right place, and move on -- don't read
 existing ones back out to "confirm" them.
 
+## Go-live checklist -- gather these, in this order
+
+Everything a first deploy needs, in the order you'd actually go get it.
+Each line links to its own section below for the *how*; this is the
+*what, and in what order* -- the single central place to work through
+before running through [deployment.md](deployment.md) step by step.
+Items marked **optional** can be skipped entirely for a first deploy
+(the site works completely without them) and turned on later with zero
+code changes, just an env var + restart.
+
+**Required (the site does not run correctly without these):**
+
+- [ ] A domain, with DNS A/AAAA records already pointing at the VPS's
+      IP -- see [deployment.md](deployment.md)'s Prerequisites (Caddy's
+      automatic HTTPS needs this live before it can get a certificate).
+- [ ] `SESSION_SECRET` -- generate locally, see [its section](#session_secret) below.
+- [ ] `POSTGRES_PASSWORD` / `DATABASE_URL` -- pick a real password, see [DATABASE_URL](#database_url).
+- [ ] A Stripe account (test mode is fine to start) -- `PAYMENT_PROCESSOR_SECRET`,
+      `STRIPE_WEBHOOK_SECRET`. See [PAYMENT_PROCESSOR_SECRET](#payment_processor_secret-stripe-secret-key).
+- [ ] `PUBLIC_BASE_URL` -- your real domain, `https://...`.
+- [ ] `INVOICE_BUSINESS_NAME` / `INVOICE_BUSINESS_DETAILS` / `INVOICE_CONTACT_EMAIL` --
+      real business info for the invoice PDF letterhead.
+- [ ] `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD` -- to bootstrap the one
+      admin account, then removed again. See [that section](#seed_admin_email--seed_admin_password).
+
+**Strongly recommended before going live for real (not hard blockers, but you'll want them):**
+
+- [ ] `BACKUP_R2_BUCKET` / `BACKUP_R2_ENDPOINT_URL` / `BACKUP_R2_ACCESS_KEY_ID` /
+      `BACKUP_R2_SECRET_ACCESS_KEY` -- without these, nightly backups
+      stage locally only and are lost along with everything else if the
+      VPS itself is lost. See [that section](#backup_r2_bucket--backup_r2_endpoint_url--backup_r2_access_key_id--backup_r2_secret_access_key).
+- [ ] GitHub Actions repo secrets (same values as `backend/.env`, plus
+      `VPS_SSH_KEY`) -- needed for `deploy.yml` to work at all. See
+      [GitHub Actions secrets specifically](#github-actions-secrets-specifically).
+
+**Optional (skip for launch day, add later anytime):**
+
+- [ ] `PAYPAL_CLIENT_ID` / `PAYPAL_CLIENT_SECRET` -- see [deployment.md](deployment.md)'s
+      "Turning on PayPal later" section. Falls back to Zelle/in-person/manual recording without it.
+- [ ] `SMTP_HOST` and friends, `MAILING_ADDRESS` -- invoice-sent/payment-received
+      email notifications. See [that section](#smtp_host--smtp_port--smtp_username--smtp_password--smtp_use_tls--smtp_from_address).
+      Silent no-op without it -- nothing else depends on email being deliverable.
+- [ ] `STORAGE_BACKEND=r2` + `R2_*` -- switch file storage from the VPS's
+      own disk to Cloudflare R2 once volume justifies it. See
+      [design/13-storage-abstraction.md](design/13-storage-abstraction.md)
+      for the local-vs-R2-vs-NAS tradeoffs, and [that section](#storage_backend--storage_local_dir--r2_)
+      below for the swap itself -- it's a config change, not a migration,
+      for any FILES uploaded after the switch (existing local files need
+      an explicit one-time copy if you want them to also exist in R2, see that section).
+
 ## Where secrets live
 
 | Secret | Lives in | Never lives in |

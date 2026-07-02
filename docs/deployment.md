@@ -3,7 +3,9 @@
 Audience: whoever is standing this up for the first time, or
 redeploying after a long gap. See [design/11-deployment.md](design/11-deployment.md)
 for the architectural *why*; this doc is the literal step-by-step.
-See [secrets.md](secrets.md) for how to generate every value below.
+See [secrets.md](secrets.md) for how to generate every value below --
+**start with that doc's "Go-live checklist" section** if this is a
+first deploy, then come back here for the actual commands.
 
 ## Prerequisites
 
