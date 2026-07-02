@@ -161,7 +161,7 @@ test.describe("customer journey", () => {
     await page.getByRole("link", { name: `Pay invoice ${invoiceId}` }).click();
 
     await expect(page).toHaveURL(new RegExp(`/invoices/${invoiceId}/pay$`));
-    await page.getByRole("button", { name: /start payment/i }).click();
+    await page.getByRole("button", { name: /pay with card/i }).click();
 
     // No Stripe Elements mount yet (see CustomerPay.tsx's TODO) -- the
     // real assertion here is that the real POST /api/invoices/:id/pay
