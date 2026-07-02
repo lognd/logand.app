@@ -80,6 +80,14 @@ supports today; both also have known-incomplete pieces (evidence
 upload, location/tag filters) flagged in their own route files' `TODO`
 comments.
 
+**Mileage, receipts, and documents/CAD tracking** -- backend API only
+right now, no frontend page yet (`POST/GET /api/admin/mileage`,
+`/api/admin/receipts`, `/api/admin/documents`). See
+[design/14-mileage-receipts-documents.md](design/14-mileage-receipts-documents.md)
+for the full request shapes -- this API surface was built specifically
+to be the stable contract a future native Android app (for on-the-go
+mileage logging and receipt-photo capture) will talk to.
+
 ## Email notifications (both roles)
 
 See [secrets.md](secrets.md)'s `SMTP_*`/`MAILING_ADDRESS` section for

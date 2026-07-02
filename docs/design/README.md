@@ -25,6 +25,8 @@ the doc and ask the human, don't silently pick one.
 | SEO, structured data, AI-agent accessibility | [10-seo-and-agent-accessibility.md](10-seo-and-agent-accessibility.md) |
 | Docker Compose, VPS deployment, CI/CD | [11-deployment.md](11-deployment.md) |
 | Unit/integration/system tests for any component | [12-testing-strategy.md](12-testing-strategy.md) |
+| File storage (evidence/receipts/documents), local vs. R2 vs. NAS | [13-storage-abstraction.md](13-storage-abstraction.md) |
+| Mileage tracking, quick-capture receipts, documents/CAD tracking, the future Android client's API contract | [14-mileage-receipts-documents.md](14-mileage-receipts-documents.md) |
 
 **Every component is required to have unit, integration, and end-to-end
 system tests -- backend and frontend both.** [12-testing-strategy.md](12-testing-strategy.md)

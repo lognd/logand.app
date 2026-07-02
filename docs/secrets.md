@@ -186,6 +186,37 @@ unsubscribe link already sent (a real but minor tradeoff: anyone
 rotating this secret should expect a few stale unsubscribe links to
 require a fresh email before they work again).
 
+### `STORAGE_BACKEND` / `STORAGE_LOCAL_DIR` / `R2_*`
+
+Not secret except for `R2_ACCESS_KEY_ID`/`R2_SECRET_ACCESS_KEY` -- see
+[design/13-storage-abstraction.md](design/13-storage-abstraction.md) for
+the full local-vs-R2-vs-NAS reasoning.
+
+`STORAGE_BACKEND` is `local` (default) or `r2`. `local` needs nothing
+else set (`STORAGE_LOCAL_DIR` defaults to `./data/storage`, gitignored).
+
+To turn on R2: create an R2 bucket in the Cloudflare dashboard, create an
+API token scoped to that bucket (**R2 > Manage API Tokens**), then set:
+
+```
+STORAGE_BACKEND=r2
+R2_BUCKET=your-bucket-name
+R2_ENDPOINT_URL=https://<account-id>.r2.cloudflarestorage.com
+R2_ACCESS_KEY_ID=<from the API token>
+R2_SECRET_ACCESS_KEY=<from the API token>
+```
+
+`R2_PUBLIC_BASE_URL` is optional -- only set it if you've opted the
+bucket into public read access via a custom domain (**R2 > bucket >
+Settings > Public access**); leaving it unset means every file download
+proxies through this backend's own authenticated API routes instead,
+which is the safer default.
+
+Rotating: revoke and recreate the API token in the Cloudflare dashboard,
+update `backend/.env`/GitHub Actions, restart `backend`. Rotating does
+NOT invalidate already-stored files -- only the credentials used to
+access them.
+
 ## GitHub Actions secrets specifically
 
 `.github/workflows/deploy.yml` reads `VPS_SSH_KEY` and copies of the
