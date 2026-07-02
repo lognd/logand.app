@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
-    "test:system": "playwright test",
+    "test:system": "playwright test --config tests/system/playwright.config.ts",
     "lint": "eslint .",
     "fmt": "prettier --write .",
     "typecheck": "tsc --noEmit",
