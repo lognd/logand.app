@@ -159,3 +159,93 @@ async def test_inventory_routes_require_admin_role(
 
     resp = await db_client.get("/api/admin/inventory/locations")
     assert resp.status_code == 401
+
+
+async def test_adjust_quantity_and_view_audit_history(
+    db_client: AsyncClient, make_user, login_as
+) -> None:
+    admin = await make_user(role="admin", password="pw")
+    await login_as(db_client, admin.email, "pw")
+    headers = _csrf_headers(db_client)
+
+    loc = await db_client.post(
+        "/api/admin/inventory/locations",
+        params={"name": "adjust-test-shelf"},
+        headers=headers,
+    )
+    item_resp = await db_client.post(
+        "/api/admin/inventory/items",
+        params={"name": "widget", "location_id": loc.json()["id"], "quantity": 10},
+        headers=headers,
+    )
+    item_id = item_resp.json()["id"]
+
+    adjust_resp = await db_client.post(
+        f"/api/admin/inventory/items/{item_id}/adjust",
+        json={"delta": -3, "reason": "sold at market"},
+        headers=headers,
+    )
+    assert adjust_resp.status_code == 200
+
+    search_resp = await db_client.get(
+        "/api/admin/inventory/items", params={"q": "widget"}
+    )
+    assert any(
+        i["id"] == item_id and i["quantity"] == 7 for i in search_resp.json()
+    )
+
+    history_resp = await db_client.get(
+        f"/api/admin/inventory/items/{item_id}/adjustments"
+    )
+    assert history_resp.status_code == 200
+    rows = history_resp.json()
+    assert len(rows) == 1
+    assert rows[0]["delta"] == -3
+    assert rows[0]["quantity_before"] == 10
+    assert rows[0]["quantity_after"] == 7
+    assert rows[0]["reason"] == "sold at market"
+    assert rows[0]["adjusted_by"] == str(admin.id)
+
+
+async def test_adjust_quantity_rejects_going_negative(
+    db_client: AsyncClient, make_user, login_as
+) -> None:
+    admin = await make_user(role="admin", password="pw")
+    await login_as(db_client, admin.email, "pw")
+    headers = _csrf_headers(db_client)
+
+    loc = await db_client.post(
+        "/api/admin/inventory/locations",
+        params={"name": "adjust-negative-shelf"},
+        headers=headers,
+    )
+    item_resp = await db_client.post(
+        "/api/admin/inventory/items",
+        params={"name": "widget", "location_id": loc.json()["id"], "quantity": 2},
+        headers=headers,
+    )
+    item_id = item_resp.json()["id"]
+
+    resp = await db_client.post(
+        f"/api/admin/inventory/items/{item_id}/adjust",
+        json={"delta": -10, "reason": "too many"},
+        headers=headers,
+    )
+    assert resp.status_code == 422
+
+
+async def test_adjust_quantity_requires_admin_role(
+    db_client: AsyncClient, make_user, login_as
+) -> None:
+    customer = await make_user(role="customer", password="pw")
+    await login_as(db_client, customer.email, "pw")
+
+    # A real CSRF header, so this genuinely tests the role check -- not
+    # just failing earlier at the CSRF gate (a customer's own valid
+    # session still has a valid CSRF cookie; role gating happens after).
+    resp = await db_client.post(
+        f"/api/admin/inventory/items/{uuid4()}/adjust",
+        json={"delta": 1, "reason": "x"},
+        headers=_csrf_headers(db_client),
+    )
+    assert resp.status_code == 401
