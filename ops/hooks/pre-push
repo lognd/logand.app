@@ -1,0 +1,8 @@
+#!/bin/sh
+# Uploads new/changed frontend/public/local-media/ files to R2 before
+# every push -- see ops/sync_public_media.py for the actual logic.
+# Enable once with: git config core.hooksPath ops/hooks
+set -eu
+
+REPO_ROOT=$(git rev-parse --show-toplevel)
+uv run --project "${REPO_ROOT}/backend" python "${REPO_ROOT}/ops/sync_public_media.py"
