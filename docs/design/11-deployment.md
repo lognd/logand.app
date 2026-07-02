@@ -13,7 +13,7 @@ docker-compose.yml
                   #   once prerendered, see 10) -- caddy serves frontend/dist as a file_server block
   postgres       # official postgres image, named volume for data
   redis          # rate limiting (see 02) + can double as a cache later
-  backup         # scheduled pg_dump + evidence-volume tarball to off-box storage, see below
+  backup         # scheduled pg_dump + storage-volume tarball, pushed to off-box R2, see below
 ```
 
 ## Caddy
@@ -44,14 +44,18 @@ sizing below).
 
 ## Backups
 
-- Nightly `pg_dump` of Postgres + tarball of the budget-evidence volume
-  (see [05-budget.md](05-budget.md)), both pushed to off-VPS storage
-  (e.g. a cheap object storage bucket or a second small VPS used purely
-  as a backup target) -- a single-VPS deployment with no off-box backup
-  is not "bulletproof for an audit," it's a single point of failure.
-- Retention: 30 daily, 12 monthly. Document the restore procedure in
-  `docs/runbooks/restore.md` once the backend exists (not a design-time
-  artifact, but flag it here so it isn't forgotten).
+- Nightly `pg_dump` of Postgres + tarball of the storage volume (every
+  budget-evidence/receipt/document file, see
+  [13-storage-abstraction.md](13-storage-abstraction.md)), pushed to
+  off-VPS R2 storage via `rclone` (`ops/backup.sh`, see
+  [secrets.md](../secrets.md)'s `BACKUP_R2_*` section) -- a single-VPS
+  deployment with no off-box backup is not "bulletproof for an audit,"
+  it's a single point of failure. A separate R2 bucket/credentials from
+  whatever `STORAGE_BACKEND=r2` might already use, so a bug or
+  compromise in one can't touch the other.
+- Retention: 30 most recent backups kept in R2, pruned automatically by
+  `ops/backup.sh` itself after each successful push. Restore procedure:
+  [runbooks/restore.md](../runbooks/restore.md).
 
 ## VPS sizing (starting point, revisit under real load)
 
