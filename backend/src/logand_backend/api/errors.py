@@ -10,6 +10,7 @@ from logand_backend.errors import (
     InvoiceError,
     MileageError,
     PaymentProviderError,
+    ReceiptError,
 )
 
 # Every ErrorSet variant that can ever reach an API boundary must be mapped
@@ -31,6 +32,8 @@ _STATUS_MAP: dict[ErrorSet, int] = {
     InventoryError.LocationInUse: 409,
     MileageError.NotFound: 404,
     MileageError.InvalidDistance: 422,
+    ReceiptError.NotFound: 404,
+    ReceiptError.BudgetEntryNotFound: 404,
     # 503 (not 500) -- "not configured yet" is an expected, temporary
     # deployment state, not a server error; the frontend uses this to show
     # "try Zelle/in-person instead" rather than a generic error banner.
@@ -54,6 +57,7 @@ def _verify_complete_mapping() -> None:
         InvoiceError,
         MileageError,
         PaymentProviderError,
+        ReceiptError,
     ):
         for variant in error_set_cls:
             if variant not in _STATUS_MAP:

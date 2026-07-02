@@ -40,6 +40,11 @@ class MileageError(ErrorSet):
     )
 
 
+class ReceiptError(ErrorSet):
+    NotFound = "receipt was not found"
+    BudgetEntryNotFound = "the budget entry to reconcile against was not found"
+
+
 class PaymentProviderError(ErrorSet):
     # A real, expected state (an admin hasn't hooked up real API credentials
     # yet), not a bug -- api/invoices_public.py surfaces this as a 503 with
