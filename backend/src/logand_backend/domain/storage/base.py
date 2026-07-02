@@ -21,8 +21,25 @@ from typing import Protocol
 
 
 class StorageBackend(Protocol):
-    async def put(self, key: str, data: bytes, content_type: str) -> None:
-        """Writes `data` to `key`, creating or overwriting it."""
+    async def put(
+        self,
+        key: str,
+        data: bytes,
+        content_type: str,
+        *,
+        cache_control: str | None = None,
+    ) -> None:
+        """Writes `data` to `key`, creating or overwriting it. `cache_control`
+        is a real HTTP Cache-Control value (e.g. "public, max-age=31536000,
+        immutable") -- only meaningful for a backend whose `url()` returns a
+        real public URL a browser fetches directly (R2); ignored by
+        LocalFilesystemStorage, since nothing ever fetches a local-backend
+        object directly (every caller proxies bytes through this app's own
+        API, which sets its own response headers instead). Optional,
+        defaulting to the backend's own default (no explicit header) --
+        most callers (private evidence/receipt/document uploads) don't need
+        long-lived public caching at all.
+        """
         ...
 
     async def get(self, key: str) -> bytes:

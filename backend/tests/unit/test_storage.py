@@ -85,6 +85,37 @@ async def test_r2_put_get_roundtrip(r2_storage: CloudflareR2Storage) -> None:
     assert await r2_storage.exists("receipts/1.jpg") is True
 
 
+async def test_r2_put_sets_cache_control_when_given(
+    r2_storage: CloudflareR2Storage,
+) -> None:
+    await r2_storage.put(
+        "projects/photo.jpg",
+        b"jpeg-bytes",
+        "image/jpeg",
+        cache_control="public, max-age=31536000, immutable",
+    )
+    head = r2_storage._client.head_object(
+        Bucket="test-bucket", Key="projects/photo.jpg"
+    )
+    assert head["CacheControl"] == "public, max-age=31536000, immutable"
+
+
+async def test_r2_put_omits_cache_control_when_not_given(
+    r2_storage: CloudflareR2Storage,
+) -> None:
+    await r2_storage.put("projects/photo2.jpg", b"jpeg-bytes", "image/jpeg")
+    head = r2_storage._client.head_object(
+        Bucket="test-bucket", Key="projects/photo2.jpg"
+    )
+    assert "CacheControl" not in head
+
+
+async def test_local_put_accepts_and_ignores_cache_control(tmp_path) -> None:
+    storage = LocalFilesystemStorage(tmp_path)
+    await storage.put("x.txt", b"data", "text/plain", cache_control="public, max-age=1")
+    assert await storage.get("x.txt") == b"data"
+
+
 async def test_r2_get_missing_raises_not_found(r2_storage: CloudflareR2Storage) -> None:
     with pytest.raises(StorageObjectNotFound):
         await r2_storage.get("nope.jpg")

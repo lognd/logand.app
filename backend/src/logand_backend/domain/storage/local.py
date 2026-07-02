@@ -31,8 +31,15 @@ class LocalFilesystemStorage:
             raise ValueError(f"storage key escapes base_dir: {key!r}")
         return path
 
-    async def put(self, key: str, data: bytes, content_type: str) -> None:
-        del content_type  # unused -- local files have no separate content-type slot
+    async def put(
+        self,
+        key: str,
+        data: bytes,
+        content_type: str,
+        *,
+        cache_control: str | None = None,
+    ) -> None:
+        del content_type, cache_control  # no separate content-type/header slot locally
         path = self._resolve(key)
         await asyncio.to_thread(self._write_sync, path, data)
 

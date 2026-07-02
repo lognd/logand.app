@@ -41,12 +41,24 @@ class CloudflareR2Storage:
             region_name="auto",
         )
 
-    async def put(self, key: str, data: bytes, content_type: str) -> None:
-        await asyncio.to_thread(self._put_sync, key, data, content_type)
+    async def put(
+        self,
+        key: str,
+        data: bytes,
+        content_type: str,
+        *,
+        cache_control: str | None = None,
+    ) -> None:
+        await asyncio.to_thread(self._put_sync, key, data, content_type, cache_control)
 
-    def _put_sync(self, key: str, data: bytes, content_type: str) -> None:
+    def _put_sync(
+        self, key: str, data: bytes, content_type: str, cache_control: str | None
+    ) -> None:
+        extra: dict[str, Any] = {}
+        if cache_control is not None:
+            extra["CacheControl"] = cache_control
         self._client.put_object(
-            Bucket=self._bucket, Key=key, Body=data, ContentType=content_type
+            Bucket=self._bucket, Key=key, Body=data, ContentType=content_type, **extra
         )
 
     async def get(self, key: str) -> bytes:
