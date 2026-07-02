@@ -26,6 +26,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN useradd --create-home --shell /bin/false appuser
 WORKDIR /app
 COPY --from=build /app /app
+# Named volumes (app_logs, storage_data in docker-compose.yml) mount
+# over these paths on first run and inherit whatever ownership exists
+# here at that moment -- create them now, owned by appuser, since the
+# process runs as appuser (not root) below and would otherwise get
+# PermissionError writing its own log file.
+RUN mkdir -p /app/logs /app/data/storage && chown -R appuser:appuser /app/logs /app/data/storage
 # alembic.ini's script_location (src/logand_backend/db/migrations) is
 # relative to the CWD alembic is invoked from -- this was previously
 # missing entirely from the image, so `alembic upgrade head` had nothing

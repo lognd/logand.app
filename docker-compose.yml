@@ -48,7 +48,10 @@ services:
   migrate:
     build:
       context: ./backend
-    command: ["uv", "run", "alembic", "upgrade", "head"]
+    # No "uv run" prefix -- the final Dockerfile stage doesn't have uv
+    # installed (only the discarded build stage does); PATH already
+    # points at /app/.venv/bin, where alembic lives directly.
+    command: ["alembic", "upgrade", "head"]
     env_file:
       - ./backend/.env
     depends_on:
