@@ -87,6 +87,85 @@ function IframeSlide({ src, alt }: { src: string; alt: string }) {
   );
 }
 
+// Click-to-load gate for a video slide -- renders NO <video> element at all
+// (not even preload="none", which still fetches enough of the file to
+// determine duration/dimensions) until a real click, so a video slide
+// costs nothing over the network until someone actually wants to watch it.
+// Own component (not inline in the slide-rendering switch below) because it
+// needs its own "has this been clicked" state, which must NOT be shared
+// across different slides or reset by anything other than this slide
+// itself unmounting.
+function VideoPlayGate({ onActivate, label }: { onActivate: () => void; label: string }) {
+  return (
+    <button
+      type="button"
+      onClick={onActivate}
+      aria-label={`Play video: ${label}`}
+      className="flex h-full w-full select-none items-center justify-center bg-bg-secondary transition-colors hover:bg-bg-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-orange"
+    >
+      {/* Same translucent circular treatment as the carousel's own arrow
+          buttons (ARROW_BUTTON_CLASS), sized up since this is the primary
+          call to action for the slide, not a secondary nav control. */}
+      <span className="flex h-14 w-14 items-center justify-center rounded-full border border-[rgba(235,219,178,0.25)] bg-[rgba(40,40,40,0.55)] text-2xl leading-none text-fg-primary">
+        {/* CSS triangle, not a glyph -- a play-triangle unicode character
+            (e.g. U+25B6) renders with inconsistent optical centering across
+            fonts/platforms; a border-triangle is pixel-exact everywhere. */}
+        <span
+          className="ml-1 block h-0 w-0 border-y-[10px] border-l-[16px] border-y-transparent border-l-current"
+          aria-hidden
+        />
+      </span>
+    </button>
+  );
+}
+
+function VideoSlide({ slide }: { slide: CarouselSlide }) {
+  const [activated, setActivated] = useState(false);
+  const activate = () => setActivated(true);
+
+  if (!activated) {
+    return <VideoPlayGate onActivate={activate} label={slide.alt} />;
+  }
+
+  return slide.fit === "cover" ? (
+    <video
+      src={slide.videoSrc}
+      controls
+      autoPlay
+      playsInline
+      preload="metadata"
+      className="h-full w-full select-none object-cover"
+    >
+      <track kind="captions" />
+    </video>
+  ) : (
+    <LetterboxFrame
+      backdrop={
+        <video
+          src={slide.videoSrc}
+          muted
+          loop
+          autoPlay
+          playsInline
+          preload="metadata"
+          className="h-full w-full object-cover"
+        />
+      }
+    >
+      <video
+        src={slide.videoSrc}
+        controls
+        autoPlay
+        playsInline
+        preload="metadata"
+        className="max-h-full max-w-full select-none"
+      >
+        <track kind="captions" />
+      </video>
+    </LetterboxFrame>
+  );
+}
+
 // A flat bg-bg-secondary letterbox behind a contained (non-cropped) photo
 // or video reads as an empty gap, not a deliberate frame ("doesn't look
 // professional"). This gives it a real backdrop instead: the same media,
@@ -225,6 +304,13 @@ export function ImageCarousel({ slides }: { slides: CarouselSlide[] }) {
 
   function onPointerDown(e: React.PointerEvent<HTMLDivElement>) {
     if (slides.length <= 1) return;
+    // A pointerdown that started on a real interactive control inside a
+    // slide (the video play-gate button, most notably) must NOT be
+    // captured for dragging -- setPointerCapture below redirects every
+    // subsequent pointer event to this track element regardless of where
+    // the pointer actually is, which silently ate the button's own click
+    // (video never loaded on click; it just looked like nothing happened).
+    if ((e.target as HTMLElement).closest("button")) return;
     dragStartRef.current = { x: e.clientX, width: trackRef.current?.clientWidth || 1 };
     setIsDragging(true);
     e.currentTarget.setPointerCapture(e.pointerId);
@@ -320,41 +406,7 @@ export function ImageCarousel({ slides }: { slides: CarouselSlide[] }) {
                   allowFullScreen
                 />
               ) : slide.videoSrc ? (
-                slide.fit === "cover" ? (
-                  <video
-                    src={slide.videoSrc}
-                    controls
-                    playsInline
-                    preload="metadata"
-                    className="h-full w-full select-none object-cover"
-                  >
-                    <track kind="captions" />
-                  </video>
-                ) : (
-                  <LetterboxFrame
-                    backdrop={
-                      <video
-                        src={slide.videoSrc}
-                        muted
-                        loop
-                        autoPlay
-                        playsInline
-                        preload="metadata"
-                        className="h-full w-full object-cover"
-                      />
-                    }
-                  >
-                    <video
-                      src={slide.videoSrc}
-                      controls
-                      playsInline
-                      preload="metadata"
-                      className="max-h-full max-w-full select-none"
-                    >
-                      <track kind="captions" />
-                    </video>
-                  </LetterboxFrame>
-                )
+                <VideoSlide slide={slide} />
               ) : slide.src ? (
                 slide.fit === "cover" ? (
                   <img
