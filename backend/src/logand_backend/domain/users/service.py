@@ -50,7 +50,7 @@ async def deactivate_customer(
     """
     result = await get_customer(db, user_id)
     if result.is_err:
-        return result
+        return Err(result.danger_err)
     user = result.danger_ok
     before = _user_snapshot(user)
 
@@ -78,7 +78,7 @@ async def reactivate_customer(
 ) -> Result[UUID, UserError]:
     result = await get_customer(db, user_id)
     if result.is_err:
-        return result
+        return Err(result.danger_err)
     user = result.danger_ok
     before = _user_snapshot(user)
 
@@ -113,7 +113,7 @@ async def admin_reset_password(
         return Err(UserError.PasswordTooShort)
     result = await get_customer(db, user_id)
     if result.is_err:
-        return result
+        return Err(result.danger_err)
     user = result.danger_ok
 
     user.password_hash = hash_password(new_password)

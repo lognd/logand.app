@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import datetime
+import logging
 import os
 import time
 from logging.handlers import TimedRotatingFileHandler
+from os import PathLike
 
 
 class SizeCappedTimedRotatingFileHandler(TimedRotatingFileHandler):
@@ -22,12 +25,32 @@ class SizeCappedTimedRotatingFileHandler(TimedRotatingFileHandler):
     """
 
     def __init__(
-        self, *args: object, maxBytes: int = 20 * 1024 * 1024, **kwargs: object
+        self,
+        filename: str | PathLike[str],
+        when: str = "h",
+        interval: int = 1,
+        backupCount: int = 0,
+        encoding: str | None = None,
+        delay: bool = False,
+        utc: bool = False,
+        atTime: datetime.time | None = None,
+        errors: str | None = None,
+        maxBytes: int = 20 * 1024 * 1024,
     ) -> None:
-        super().__init__(*args, **kwargs)  # type: ignore[arg-type]
+        super().__init__(
+            filename,
+            when=when,
+            interval=interval,
+            backupCount=backupCount,
+            encoding=encoding,
+            delay=delay,
+            utc=utc,
+            atTime=atTime,
+            errors=errors,
+        )
         self.maxBytes = maxBytes
 
-    def shouldRollover(self, record: object) -> bool:  # noqa: N802 (stdlib override)
+    def shouldRollover(self, record: logging.LogRecord) -> bool:  # noqa: N802 (stdlib override)
         if super().shouldRollover(record):
             return True
         if self.maxBytes <= 0 or self.stream is None:
@@ -49,7 +72,12 @@ class SizeCappedTimedRotatingFileHandler(TimedRotatingFileHandler):
         # (today's date, already in use by the file we're rotating FROM).
         # Append a numeric suffix in that case so both files survive.
         current_time = int(time.time())
-        time_based_due = super().shouldRollover(None)
+        # TimedRotatingFileHandler.shouldRollover's own implementation
+        # never actually reads `record` (it's a purely time-based check,
+        # unlike RotatingFileHandler's size-based one) -- a cheap dummy
+        # record satisfies the type signature without pretending this
+        # call is record-aware.
+        time_based_due = super().shouldRollover(logging.makeLogRecord({}))
         if not time_based_due:
             self._manual_suffix_counter = getattr(self, "_manual_suffix_counter", 0) + 1
             day_suffix = time.strftime(self.suffix, time.gmtime(current_time))
