@@ -62,26 +62,26 @@ function NavLinks({ className }: { className?: string }) {
 
   return (
     <>
-      {/* budget and inventory dropped from the top nav -- not meant to be
-          reachable straight from the front page; still real routes,
-          just not linked here. Only invoicing (renamed from "invoices")
-          stays. */}
+      {/* Both roles now get a single nav link to their portal landing page
+          (/admin, /portal) rather than linking straight to invoicing --
+          budget and inventory are reachable from the admin portal page
+          itself, not from this top nav directly. */}
       {me.role === "admin" && (
         <a
-          href="/admin/invoices"
-          aria-label="invoicing"
+          href="/admin"
+          aria-label="admin portal"
           className={`${NAV_LINK_CLASS} ${className ?? ""}`}
         >
-          <GlitchText>invoicing</GlitchText>
+          <GlitchText>portal</GlitchText>
         </a>
       )}
       {me.role === "customer" && (
         <a
-          href="/invoices"
-          aria-label="my invoices"
+          href="/portal"
+          aria-label="your account"
           className={`${NAV_LINK_CLASS} ${className ?? ""}`}
         >
-          <GlitchText>my invoices</GlitchText>
+          <GlitchText>portal</GlitchText>
         </a>
       )}
       <button
