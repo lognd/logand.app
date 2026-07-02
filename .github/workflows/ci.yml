@@ -146,13 +146,23 @@ jobs:
         # would, and lets its own dev server (Playwright's webServer
         # config spawns `npm run dev` as its child, bound to :5173) be
         # reachable the same way in return.
+        #
+        # This image tag MUST match @playwright/test's exact resolved
+        # version in frontend/package-lock.json -- the npm package and the
+        # browsers baked into this image are versioned together, and a
+        # mismatch fails with "browserType.launch: Executable doesn't
+        # exist" (npm's test runner looking for a browser build the older
+        # image never shipped). package.json now pins @playwright/test to
+        # this exact version (no ^ range) so a routine `npm install` can't
+        # silently drift the resolved version away from what's pinned
+        # here again.
         run: |
           docker run --rm --network host \
             -v "$PWD:/work" -w /work \
             -e CI=true \
             -e SEED_ADMIN_EMAIL \
             -e SEED_ADMIN_PASSWORD \
-            mcr.microsoft.com/playwright:v1.48.0-jammy \
+            mcr.microsoft.com/playwright:v1.61.1-jammy \
             npm run test:system
         env:
           # Matches docker-compose.test.yml's backend SEED_ADMIN_EMAIL/
