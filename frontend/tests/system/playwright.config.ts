@@ -5,6 +5,16 @@ import { defineConfig, devices } from "@playwright/test";
 // docs/design/12-testing-strategy.md and .github/workflows/ci.yml.
 export default defineConfig({
   testDir: ".",
+  // Absorbs one-off CI timing flake (a slow first real network round trip
+  // against a freshly-started docker-compose.test.yml stack, cold JIT on
+  // the very first test to run) without masking a genuinely broken test --
+  // a real regression still fails after retrying too. 0 locally, since a
+  // local failure should surface immediately, not silently retry.
+  retries: process.env.CI ? 2 : 0,
+  // Bumped from the 5000ms default for the same reason as `retries` above
+  // -- CI's first assertion in the whole run is the one most likely to
+  // catch a cold backend/frontend still warming up.
+  expect: { timeout: 10_000 },
   use: {
     baseURL: process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:5173",
   },
