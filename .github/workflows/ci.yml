@@ -8,9 +8,25 @@ on:
 jobs:
   backend:
     runs-on: ubuntu-latest
+    # Official uv image bundles Python 3.12 + uv already installed and on
+    # PATH -- skips astral-sh/setup-uv's own download-and-install step
+    # entirely (small win on its own, but free since we need a container
+    # image either way for the parity requested with wasm-ascii below).
+    # bookworm-slim matches backend/Dockerfile's own python:3.12-slim base.
+    container: ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+    # Pinned inside the workspace (not uv's default ~/.cache/uv) so
+    # actions/cache below has a stable, checkout-relative path to key on --
+    # the container's own $HOME can vary run to run in ways actions/cache
+    # can't reliably address. Applies to every step in this job, not just
+    # `install`, since `check` also invokes uv.
+    env:
+      UV_CACHE_DIR: ${{ github.workspace }}/.uv-cache
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v3
+      - uses: actions/cache@v4
+        with:
+          path: .uv-cache
+          key: ${{ runner.os }}-uv-${{ hashFiles('backend/uv.lock') }}
       - name: install
         working-directory: backend
         run: uv sync
@@ -38,11 +54,30 @@ jobs:
 
   wasm-ascii:
     runs-on: ubuntu-latest
+    # Official Rust image bundles cargo/rustc (and, via rustup's default
+    # install profile, clippy + rustfmt already) -- skips
+    # dtolnay/rust-toolchain's own download-and-install step, same
+    # reasoning as the backend job's uv image above.
+    container: rust:1-bookworm
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      # Defensive, not assumed -- fast no-op if the image's rustup default
+      # profile already included these (it does today, but pinning the
+      # actual requirement here doesn't depend on that staying true).
+      - name: ensure clippy + rustfmt components
+        run: rustup component add clippy rustfmt
+      - uses: actions/cache@v4
         with:
-          components: clippy, rustfmt
+          # ~/.cargo/registry: downloaded crate sources/index (the
+          # equivalent of uv's own package cache above). target/: this
+          # crate's own compiled build artifacts -- incremental
+          # compilation reusing them is the bigger win of the two for a
+          # single-crate project like this one, where dependencies rarely
+          # change but source does.
+          path: |
+            ~/.cargo/registry
+            wasm-ascii/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('wasm-ascii/Cargo.lock') }}
       - name: check
         working-directory: wasm-ascii
         run: cargo check && cargo clippy -- -D warnings && cargo fmt --check && cargo test
@@ -59,6 +94,14 @@ jobs:
         # a sleep is a placeholder, not a pattern to keep.
         run: sleep 10
       - uses: astral-sh/setup-uv@v3
+        with:
+          # Caches uv's own download/build cache (~/.cache/uv) keyed on
+          # backend/uv.lock -- without this, every system-tests run
+          # re-resolves and re-downloads the exact same wheels the
+          # `backend` job (running in parallel, on a separate runner)
+          # just did, since GitHub-hosted runners are fresh VMs with
+          # nothing persisted between jobs or runs on their own.
+          enable-cache: true
       - name: backend system tests
         working-directory: backend
         run: uv sync && uv run pytest tests/system -n auto
@@ -67,13 +110,47 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+          # Was missing here (present on the `frontend` job's setup-node,
+          # not this one) -- caches node_modules' npm download cache
+          # keyed on package-lock.json, same win as the uv cache above.
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+      - name: install frontend deps
+        working-directory: frontend
+        # Deps only -- the actual test run happens inside the official
+        # Playwright image below (browsers + their OS-level deps already
+        # baked in, nothing to install/download at all), but node_modules
+        # itself still needs to exist on disk first so that image can see
+        # it via the bind mount.
+        run: npm ci
       - name: frontend system tests
         working-directory: frontend
-        run: npm ci && npx playwright install --with-deps && npm run test:system
+        # Full job-level `container:` (as used for backend/wasm-ascii
+        # above) doesn't fit this job -- it also runs `docker compose`
+        # against the host, which needs the host's real Docker socket,
+        # not a container's own isolated one. Scoping the image to just
+        # this one step via a plain `docker run` gets the same "nothing
+        # to install" win without fighting that. --network host lets this
+        # container reach docker-compose.test.yml's exposed ports (backend
+        # on localhost:8000) exactly like a non-containerized process
+        # would, and lets its own dev server (Playwright's webServer
+        # config spawns `npm run dev` as its child, bound to :5173) be
+        # reachable the same way in return.
+        run: |
+          docker run --rm --network host \
+            -v "$PWD:/work" -w /work \
+            -e CI=true \
+            -e SEED_ADMIN_EMAIL \
+            -e SEED_ADMIN_PASSWORD \
+            mcr.microsoft.com/playwright:v1.48.0-jammy \
+            npm run test:system
         env:
           # Matches docker-compose.test.yml's backend SEED_ADMIN_EMAIL/
           # PASSWORD exactly -- customer-journey.spec.ts logs in as this
           # account to seed an invoice for the customer it's testing.
+          # Declared here (not just inline -e above) so `docker run -e
+          # VARNAME` (no =value) has something in the shell's own
+          # environment to actually forward.
           SEED_ADMIN_EMAIL: admin-fixture@example.com
           SEED_ADMIN_PASSWORD: admin-fixture-password-not-for-production
       - name: tear down
