@@ -50,6 +50,12 @@ FROBLEMS.md
 # uploaded evidence/receipts/documents, never committed.
 backend/data/
 
+# Rotating log files (LOG_DIR, default ./logs relative to wherever the
+# backend/scheduler process runs -- see logging/logger.py). Real runtime
+# output, never committed, same as backend/data/ above.
+backend/logs/
+logs/
+
 # Secrets
 .env
 .env.local

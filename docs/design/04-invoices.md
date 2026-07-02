@@ -75,6 +75,9 @@ invoices
                         ('weekly','monthly','quarterly','yearly') or null)
   due_date              date
   stripe_payment_intent_id  text unique          -- null until a payment attempt starts
+  paid_at                timestamptz null         -- set ONCE, at the transition to 'paid'
+                                                    -- (manual payment, Stripe webhook, or
+                                                    -- PayPal capture -- all three sites set it)
   deleted_at            timestamptz null          -- soft delete, see 03
   created_at / updated_at
 
@@ -84,6 +87,17 @@ invoice_line_items
   description   text not null
   quantity      numeric(10,2) not null default 1
   unit_price    numeric(12,2) not null
+  unit          text null   -- free-form display string, e.g. "hr", "unit" --
+                             -- shown next to unit_price, purely cosmetic
+  created_at
+
+payment_proofs
+  id            uuid pk
+  invoice_id    uuid fk -> invoices.id, on delete cascade
+  uploaded_by   uuid fk -> users.id, on delete set null, null
+  file_path     text not null              -- storage key, see 13-storage-abstraction.md
+  content_type  text not null              -- allowlist: png/jpeg/webp/pdf
+  file_hash     text not null
   created_at
 
 payments
@@ -130,8 +144,14 @@ invoice total is an obvious tamper vector.
 - `POST /api/admin/invoices/{id}/payments/manual` -- record a payment
   that happened outside the system (Zelle, in person, PayPal sent
   directly); body `{method, amount, note?}`. Marks the invoice `paid`
-  once recorded payments cover `amount_total`; a partial payment stays
-  recorded but leaves the invoice payable for the remainder.
+  (and sets `paid_at`) once recorded payments cover `amount_total`; a
+  partial payment stays recorded but leaves the invoice payable for the
+  remainder.
+- `GET /api/admin/invoices/{id}/payment-proof` -- list any customer-
+  uploaded payment-proof screenshots for this invoice (see below).
+- `GET /api/admin/invoices/{id}/payment-proof/{proof_id}/file` -- fetch
+  one proof's actual bytes, same `url()`-then-`get()` fallback pattern
+  as `documents.py` (see [13-storage-abstraction.md](13-storage-abstraction.md)).
 
 ### Customer (`api/invoices_public.py`, `require_customer`)
 
@@ -144,8 +164,15 @@ invoice total is an obvious tamper vector.
   (20/min). Idempotent: if a still-live PaymentIntent already exists
   for this invoice, its `client_secret` is reused instead of creating a
   second one.
-- `GET /api/invoices/payment-methods` -- `{stripe: true, paypal: bool}`,
-  reflecting whether PayPal is actually configured right now.
+- `GET /api/invoices/payment-methods` -- `{stripe: true, paypal: bool,
+  zelle_handle: string | null}`, reflecting whether PayPal/Zelle are
+  actually configured right now (`zelle_handle` is `None` until the
+  admin sets `ZELLE_HANDLE`, see `docs/secrets.md`).
+- `POST /api/invoices/{id}/payment-proof` -- multipart upload of a
+  screenshot/receipt as evidence of an out-of-band payment (Zelle, cash,
+  etc.); ownership-checked, rejected for `draft`/`void` invoices.
+  Content-type allowlist: `image/png`, `image/jpeg`, `image/webp`,
+  `application/pdf`.
 - `POST /api/invoices/{id}/pay/paypal` -- creates a real PayPal order,
   returns `{order_id, approval_url}`; `503` if PayPal isn't configured.
 - `POST /api/invoices/{id}/pay/paypal/capture` -- captures a PayPal

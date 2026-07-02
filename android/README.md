@@ -9,12 +9,21 @@ for the product/API design this was built against.
 
 ```
 android/
-  core/    plain Kotlin/JVM module -- API client, models, no Android
-           dependency at all. Builds and tests with a bare JDK+Gradle,
-           no Android SDK required.
+  core/    plain Kotlin/JVM module -- API client, models, rotating
+           file logger, no Android dependency at all. Builds and tests
+           with a bare JDK+Gradle, no Android SDK required.
   app/     the real Android application -- Jetpack Compose UI,
-           ViewModels, AndroidManifest, resources. Depends on :core.
+           ViewModels, AndroidManifest, resources, crash handler.
+           Depends on :core.
 ```
+
+`core/.../logging/FileLogger.kt` is a size-capped, generational rotating
+file logger (pure `java.io.File`, no Android imports -- testable as a
+plain JVM unit test). `app/.../logging/CrashHandler.kt` installs it as
+the process's default uncaught-exception handler, and
+`ShareLogsAction.kt` opens the system share sheet with every log file
+concatenated ("Share app logs" on the login screen) so a crash or bug
+report can be handed to the developer without needing `adb logcat`.
 
 `:core` is the stable API contract the "abstraction layer" requirement
 from the product ask actually is (see design doc 14's "API stability"
@@ -47,10 +56,16 @@ Produces `app/build/outputs/apk/debug/app-debug.apk`. Install on a
 device/emulator with `adb install app/build/outputs/apk/debug/app-debug.apk`,
 or open the `android/` directory in Android Studio and run normally.
 
+`make install`/`make test` (this directory's own `Makefile`, also what
+the repo root's `make install`/`make test` delegate to) wrap the same
+`./gradlew` commands below, adding the aarch64-Linux `aapt2` override
+automatically when it's needed -- see "Building on aarch64 Linux" below.
+Prefer them unless you need a specific Gradle task directly.
+
 ## Testing
 
 ```
-./gradlew :core:test              # 31 tests, pure JVM, real MockWebServer
+./gradlew :core:test              # 36 tests, pure JVM, real MockWebServer
 ./gradlew :app:testDebugUnitTest  # 17 tests, ViewModels + data layer
 ```
 
@@ -163,6 +178,11 @@ recorded so it doesn't have to be rediscovered:
    ./gradlew :app:assembleDebug -Pandroid.aapt2FromMavenOverride=/path/to/wrapper-dir/aapt2
    ```
    where that wrapper is a shell script: `exec qemu-x86_64 -L <sysroot> <real-x86_64-aapt2-binary> "$@"`.
+   This directory's `Makefile` applies this flag automatically (only
+   when `ANDROID_AAPT2_OVERRIDE`'s path actually exists on disk, so
+   `make test` is a no-op-different plain `./gradlew test` on any
+   machine that doesn't need it -- override the variable if your
+   wrapper lives somewhere else).
 3. **Robolectric's Android sandbox loads `conscrypt` (for TLS) at
    startup**, unconditionally, even for tests that never touch
    networking. `conscrypt-openjdk-uber` only started shipping a

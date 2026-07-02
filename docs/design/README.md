@@ -26,7 +26,8 @@ the doc and ask the human, don't silently pick one.
 | Docker Compose, VPS deployment, CI/CD | [11-deployment.md](11-deployment.md) |
 | Unit/integration/system tests for any component | [12-testing-strategy.md](12-testing-strategy.md) |
 | File storage (evidence/receipts/documents), local vs. R2 vs. NAS | [13-storage-abstraction.md](13-storage-abstraction.md) |
-| Mileage tracking, quick-capture receipts, documents/CAD tracking, the future Android client's API contract | [14-mileage-receipts-documents.md](14-mileage-receipts-documents.md) |
+| Mileage tracking, quick-capture receipts, documents/CAD tracking, the Android client's API contract | [14-mileage-receipts-documents.md](14-mileage-receipts-documents.md) |
+| The generic admin data browser/audit log, or logging on any platform (backend/frontend/Android) | [15-admin-tools-and-observability.md](15-admin-tools-and-observability.md) |
 
 **Every component is required to have unit, integration, and end-to-end
 system tests -- backend and frontend both.** [12-testing-strategy.md](12-testing-strategy.md)
@@ -39,15 +40,18 @@ else assumes.
 
 ## Status
 
-All docs in this set are **design-stage**, written before any
-implementation exists. They record decisions, not yet-built reality.
-When implementation diverges from a doc (it will), update the doc in
-the same PR as the code change -- do not let them drift.
+These docs started **design-stage**, written before any implementation
+existed. Most now describe a real, built, tested system -- they are
+kept updated in the same change as the code whenever implementation
+diverges from what a doc originally said, not left frozen at design
+time (see [../README.md](../README.md)'s own "Status" note). Treat a
+doc as the current source of truth for its area unless it explicitly
+says otherwise.
 
 ## Locked decisions (do not re-litigate without asking the human)
 
 - Database: **PostgreSQL**.
-- Repo layout: **monorepo**, top-level `backend/`, `frontend/`, `wasm-ascii/`.
+- Repo layout: **monorepo**, top-level `backend/`, `frontend/`, `wasm-ascii/`, `android/`.
 - Auth: **server-side session cookies** (HttpOnly, Secure, SameSite), not JWT.
 - Deployment: **single VPS via Docker Compose**.
 

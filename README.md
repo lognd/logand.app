@@ -5,8 +5,13 @@ Personal + professional site and protected admin tool for Logan Dapp
 plus an internal invoicing, budget, and inventory system behind auth --
 including multi-method invoice payments (Stripe, PayPal, and manually-
 recorded Zelle/in-person payments), professional PDF invoice generation,
-and row-level-locked payment operations so the same invoice can never
-be double-charged or double-recorded under concurrent requests.
+bill-of-materials cost breakdowns tied to inventory consumption, and
+row-level-locked payment operations so the same invoice can never be
+double-charged or double-recorded under concurrent requests. A generic,
+audit-logged admin data browser and centralized, rotating application
+logging (backend, frontend, and the Android client) round out the
+operational side -- see
+[docs/design/15-admin-tools-and-observability.md](docs/design/15-admin-tools-and-observability.md).
 
 Full product spec and architecture: **[docs/design/](docs/design/README.md)**
 -- start there, not here, for anything about *what* to build or *why*.
@@ -25,14 +30,19 @@ This file only covers *how to run the repo*. See
 backend/      Python / FastAPI / pydantic / typani -- see docs/design/01
 frontend/     TypeScript / React / Tailwind -- see docs/design/07
 wasm-ascii/   Rust crate, ASCII rasterizer -- see docs/design/08
+android/      Kotlin / Jetpack Compose mobile client -- see android/README.md
 ops/          VPS-side tooling (backups, release-watch) -- see below
 docs/design/  pre-implementation specs, read by component
 docs/         deployment/secrets/usage guides + runbooks -- see docs/README.md
 .github/      CI (every PR) + deploy (push to main)
 ```
 
-Each of `backend/`, `frontend/`, `wasm-ascii/` is independently
-buildable via its own `Makefile`. The root `Makefile` composes them.
+Each of `backend/`, `frontend/`, `wasm-ascii/`, `android/` is
+independently buildable via its own `Makefile`. The root `Makefile`
+composes them. `android/` is not part of CI (see CI/CD below) and has
+its own build requirements (JDK 17, Android SDK) -- see
+[android/README.md](android/README.md) before running `make install`/
+`make test` if you don't already have those.
 
 ## Quick start
 
@@ -61,7 +71,10 @@ for what belongs in which layer before adding a test.
 
 - `.github/workflows/ci.yml` -- runs on every PR and push to `main`:
   lint + typecheck + unit/integration per subproject, then a combined
-  system-test job against `docker-compose.test.yml`.
+  system-test job against `docker-compose.test.yml`. `android/` is
+  **not** currently a CI job (no runner here has the Android SDK set
+  up) -- run `make -C android test` (or root `make test`, which now
+  includes it) locally before pushing android changes.
 - `.github/workflows/deploy.yml` -- on push to `main`, after CI passes:
   builds images, pushes to GHCR, ships the frontend build + restarts
   the backend on the VPS over SSH.
