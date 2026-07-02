@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- Matches ReceiptCapture's photo-file location — see
+         ui/receipts/ReceiptCaptureController.kt. Deliberately UNPREFIXED
+         name/path attributes (not android:name/android:path) — this is
+         the real, documented FileProvider meta-file convention
+         (developer.android.com/reference/androidx/core/content/FileProvider),
+         confirmed by a real test failure ("Name must not be empty") when
+         the android: prefix was tried instead. -->
+    <cache-path name="receipt_photos" path="receipts/" />
+</paths>

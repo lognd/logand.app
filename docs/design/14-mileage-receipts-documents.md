@@ -129,19 +129,24 @@ integration layer to build beyond keeping these routes' request/response
 shapes stable and additive (new optional fields, not breaking changes to
 existing ones) as they evolve.
 
-## Android app -- explicitly out of scope for this session
+## Android app
 
-A native Android (Kotlin) app was the chosen approach for on-the-go
-mileage/receipt capture (full background-location and camera access,
-vs. a PWA's more limited native-device access) -- but building it is a
-**separate future effort**, not started here. It needs its own repo,
-build toolchain, and its own design pass (auth token storage on-device,
-offline-capture-then-sync behavior for spotty connectivity while
-driving, camera/GPS permission flows) that's out of scope for a backend
-session. What this session delivers instead is the stable API surface
-above for that future app to build against: `POST /api/admin/mileage`
-and `POST /api/admin/receipts` are both already shaped for exactly the
-"minimal input from a phone" use case that app will need.
+A native Android (Kotlin, Jetpack Compose) app lives at `android/` --
+see [`android/README.md`](../../android/README.md) for the full
+architecture, build/test instructions, and honest known limitations
+(no offline queueing, session doesn't survive process death). It talks
+to exactly the API surface documented above: login, mileage
+create/list/delete, and receipt capture/list/reconcile/delete, styled
+to match the web frontend's Gruvbox Dark palette and JetBrains Mono
+typography (see [09-design-system.md](09-design-system.md)).
+
+Structured as two modules: `:core` (plain Kotlin/JVM -- the API client,
+models, CSRF handling -- no Android dependency, builds and tests with a
+bare JDK) and `:app` (the real Android application, Compose UI,
+ViewModels). `:core` is genuinely the "abstraction layer" the original
+ask was for -- every screen in `:app`, and any future automated tool,
+talks to the backend only through `ApiClient`, never a raw HTTP call
+of its own.
 
 ## Testing
 

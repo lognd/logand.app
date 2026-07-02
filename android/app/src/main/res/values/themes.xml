@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Theme.Material3.DayNight.NoActionBar as the parent — Compose owns
+         all actual UI theming (see ui/theme/Theme.kt), this XML theme only
+         needs to cover the tiny pre-Compose-content window (splash
+         background) so it isn't a jarring white flash before Compose
+         takes over. -->
+    <style name="Theme.Logand" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="android:windowBackground">@color/bg_primary</item>
+        <item name="android:statusBarColor">@color/bg_primary</item>
+        <item name="android:navigationBarColor">@color/bg_primary</item>
+    </style>
+</resources>

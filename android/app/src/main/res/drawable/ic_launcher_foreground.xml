@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A terminal-prompt ">_" glyph — matches the site's ASCII/terminal
+     visual identity (see docs/design/09-design-system.md, GlitchText).
+     Centered within the adaptive icon's 66dp "safe zone" so it isn't
+     clipped by circular/rounded-square icon masks on different launchers. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#FE8019"
+        android:pathData="M31,38 L52,54 L31,70 L31,60 L40,54 L31,48 Z" />
+    <path
+        android:fillColor="#EBDBB2"
+        android:pathData="M58,64 L79,64 L79,74 L58,74 Z" />
+</vector>
