@@ -95,25 +95,69 @@ function IframeSlide({ src, alt }: { src: string; alt: string }) {
 // needs its own "has this been clicked" state, which must NOT be shared
 // across different slides or reset by anything other than this slide
 // itself unmounting.
-function VideoPlayGate({ onActivate, label }: { onActivate: () => void; label: string }) {
+function VideoPlayGate({ slide, onActivate }: { slide: CarouselSlide; onActivate: () => void }) {
   return (
     <button
       type="button"
       onClick={onActivate}
-      aria-label={`Play video: ${label}`}
-      className="flex h-full w-full select-none items-center justify-center bg-bg-secondary transition-colors hover:bg-bg-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-orange"
+      aria-label={`Play video: ${slide.alt}`}
+      className="group relative block h-full w-full select-none overflow-hidden focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-orange"
     >
+      {/* Real poster image (a pre-extracted first frame, see
+          Projects.tsx's media() calls) if the slide has one -- same
+          cover/letterbox treatment as a photo slide, so a video without a
+          poster yet doesn't look inconsistent with one that has it. Falls
+          back to a flat panel, never to loading the video itself just to
+          show a frame -- that would defeat click-to-load's whole point. */}
+      {slide.poster ? (
+        slide.fit === "cover" ? (
+          <img
+            src={slide.poster}
+            alt=""
+            loading="lazy"
+            decoding="async"
+            className="h-full w-full object-cover"
+          />
+        ) : (
+          <LetterboxFrame
+            backdrop={<img src={slide.poster} alt="" className="h-full w-full object-cover" />}
+          >
+            <img
+              src={slide.poster}
+              alt=""
+              loading="lazy"
+              decoding="async"
+              className="max-h-full max-w-full object-contain"
+            />
+          </LetterboxFrame>
+        )
+      ) : (
+        <div className="h-full w-full bg-bg-secondary" />
+      )}
+      {/* Dark scrim (strengthens on hover) -- a photo alone doesn't read as
+          "click to play" the way a flat placeholder box did before it had
+          a real thumbnail. */}
+      <div
+        aria-hidden
+        className="absolute inset-0 bg-black/10 transition-colors group-hover:bg-black/25"
+      />
       {/* Same translucent circular treatment as the carousel's own arrow
           buttons (ARROW_BUTTON_CLASS), sized up since this is the primary
-          call to action for the slide, not a secondary nav control. */}
-      <span className="flex h-14 w-14 items-center justify-center rounded-full border border-[rgba(235,219,178,0.25)] bg-[rgba(40,40,40,0.55)] text-2xl leading-none text-fg-primary">
-        {/* CSS triangle, not a glyph -- a play-triangle unicode character
-            (e.g. U+25B6) renders with inconsistent optical centering across
-            fonts/platforms; a border-triangle is pixel-exact everywhere. */}
-        <span
-          className="ml-1 block h-0 w-0 border-y-[10px] border-l-[16px] border-y-transparent border-l-current"
-          aria-hidden
-        />
+          call to action for the slide, not a secondary nav control.
+          Centered absolutely over the whole box (not the letterboxed
+          image within it) -- dead-center of the thumbnail area is where a
+          play button always goes, letterboxing or not. */}
+      <span className="pointer-events-none absolute inset-0 flex items-center justify-center">
+        <span className="flex h-14 w-14 items-center justify-center rounded-full border border-[rgba(235,219,178,0.25)] bg-[rgba(40,40,40,0.55)] text-2xl leading-none text-fg-primary transition-colors group-hover:bg-[rgba(40,40,40,0.8)] group-hover:text-accent-aqua">
+          {/* CSS triangle, not a glyph -- a play-triangle unicode character
+              (e.g. U+25B6) renders with inconsistent optical centering
+              across fonts/platforms; a border-triangle is pixel-exact
+              everywhere. */}
+          <span
+            className="ml-1 block h-0 w-0 border-y-[10px] border-l-[16px] border-y-transparent border-l-current"
+            aria-hidden
+          />
+        </span>
       </span>
     </button>
   );
@@ -124,12 +168,13 @@ function VideoSlide({ slide }: { slide: CarouselSlide }) {
   const activate = () => setActivated(true);
 
   if (!activated) {
-    return <VideoPlayGate onActivate={activate} label={slide.alt} />;
+    return <VideoPlayGate slide={slide} onActivate={activate} />;
   }
 
   return slide.fit === "cover" ? (
     <video
       src={slide.videoSrc}
+      poster={slide.poster}
       controls
       autoPlay
       playsInline
@@ -154,6 +199,7 @@ function VideoSlide({ slide }: { slide: CarouselSlide }) {
     >
       <video
         src={slide.videoSrc}
+        poster={slide.poster}
         controls
         autoPlay
         playsInline
@@ -209,6 +255,12 @@ export interface CarouselSlide {
   // clips (see Projects.tsx's media() helper). Checked after iframeSrc,
   // before src, since a slide should never define more than one of these.
   videoSrc?: string;
+  // A real still image shown (as the video's own poster attribute, and as
+  // the click-to-load play-gate's thumbnail before that) instead of a
+  // flat placeholder box -- only meaningful alongside videoSrc. Optional:
+  // a video with no poster still gets a working play gate, just with a
+  // plain background instead of a real thumbnail.
+  poster?: string;
   // Renders a normal, INTERACTIVE responsive iframe (pointer events left
   // enabled, no fixed-desktop-width scale hack) -- for third-party embeds
   // that are natively responsive and meant to be played, like a YouTube

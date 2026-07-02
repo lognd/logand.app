@@ -149,10 +149,18 @@ const PROJECTS: Project[] = [
     description:
       "Built for Swedish Tracing Paper (STP), LLC to replace decades of manual switching and measuring on their coreless paper-winder machine with real electronics: designed the PCB, wrote the ATmega32U4 firmware from the interrupt vectors up, and built a desktop debug application to actually watch what the board was doing over serial instead of guessing from LED blinks. More is in the works.",
     slides: [
-      { alt: "STPONE electronics demo", videoSrc: media("stpone-electronics-demo.mp4") },
+      {
+        alt: "STPONE electronics demo",
+        videoSrc: media("stpone-electronics-demo.mp4"),
+        poster: media("stpone-electronics-demo-poster.jpg"),
+      },
       { alt: "STPONE PCB design", src: media("stpone-pcb-design.png") },
       { alt: "STPONE electronic schematic", src: media("stpone-electronic-schematic.png") },
-      { alt: "STPONE soldering timelapse", videoSrc: media("stpone-soldering-timelapse.mp4") },
+      {
+        alt: "STPONE soldering timelapse",
+        videoSrc: media("stpone-soldering-timelapse.mp4"),
+        poster: media("stpone-soldering-timelapse-poster.jpg"),
+      },
     ],
     githubRepos: [{ owner: "lognd", repo: "stpone" }],
   },
@@ -181,7 +189,11 @@ const PROJECTS: Project[] = [
       { alt: "Team welding", src: media("air-engine-group-welding-masks.jpg") },
       { alt: "Food slicer: part drawing", src: media("manufacturing-example-part-drawing.png") },
       { alt: "Food slicer: exploded assembly", src: media("manufacturing-example-exploded-assembly.png") },
-      { alt: "Air engine manufacturing demo", videoSrc: media("air-engine-manufacture-demo.mp4") },
+      {
+        alt: "Air engine manufacturing demo",
+        videoSrc: media("air-engine-manufacture-demo.mp4"),
+        poster: media("air-engine-manufacture-demo-poster.jpg"),
+      },
     ],
   },
   {
