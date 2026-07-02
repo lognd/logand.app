@@ -82,6 +82,7 @@ class App:
             inventory,
             invoices,
             invoices_public,
+            mileage,
             notifications,
             webhooks,
         )
@@ -95,6 +96,7 @@ class App:
         app.include_router(webhooks.router)
         app.include_router(admin_users.router)
         app.include_router(notifications.router)
+        app.include_router(mileage.router)
 
     @asynccontextmanager
     async def _lifespan(self, _app: FastAPI) -> AsyncIterator[None]:

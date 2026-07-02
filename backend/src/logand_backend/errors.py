@@ -29,6 +29,17 @@ class InventoryError(ErrorSet):
     LocationInUse = "location cannot be deleted while items still reference it"
 
 
+class MileageError(ErrorSet):
+    NotFound = "mileage entry was not found"
+    # Covers both "neither distance nor start/end odometer given" and "the
+    # supplied/derived distance is negative" -- one variant, since both are
+    # the same class of caller mistake (bad input), not distinguishable in
+    # a way a client needs to branch on separately.
+    InvalidDistance = (
+        "distance must be a positive value, directly or via odometer readings"
+    )
+
+
 class PaymentProviderError(ErrorSet):
     # A real, expected state (an admin hasn't hooked up real API credentials
     # yet), not a bug -- api/invoices_public.py surfaces this as a 503 with

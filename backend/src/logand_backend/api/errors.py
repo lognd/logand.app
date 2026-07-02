@@ -8,6 +8,7 @@ from logand_backend.errors import (
     BudgetError,
     InventoryError,
     InvoiceError,
+    MileageError,
     PaymentProviderError,
 )
 
@@ -28,6 +29,8 @@ _STATUS_MAP: dict[ErrorSet, int] = {
     BudgetError.EvidenceRequired: 409,
     InventoryError.NotFound: 404,
     InventoryError.LocationInUse: 409,
+    MileageError.NotFound: 404,
+    MileageError.InvalidDistance: 422,
     # 503 (not 500) -- "not configured yet" is an expected, temporary
     # deployment state, not a server error; the frontend uses this to show
     # "try Zelle/in-person instead" rather than a generic error banner.
@@ -49,6 +52,7 @@ def _verify_complete_mapping() -> None:
         BudgetError,
         InventoryError,
         InvoiceError,
+        MileageError,
         PaymentProviderError,
     ):
         for variant in error_set_cls:

@@ -5,6 +5,7 @@ from __future__ import annotations
 from logand_backend.db.models.budget import BudgetEntry, BudgetEntryEvidence
 from logand_backend.db.models.inventory import InventoryItem, InventoryLocation
 from logand_backend.db.models.invoices import Invoice, InvoiceLineItem, Payment
+from logand_backend.db.models.mileage import MileageEntry
 from logand_backend.db.models.sessions import Session
 from logand_backend.db.models.users import User
 
@@ -15,6 +16,7 @@ __all__ = [
     "InventoryLocation",
     "Invoice",
     "InvoiceLineItem",
+    "MileageEntry",
     "Payment",
     "Session",
     "User",
