@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from decimal import Decimal
 
 import stripe
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -11,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from logand_backend.app.config import AppConfig
 from logand_backend.db.base import get_db
 from logand_backend.db.models.invoices import Invoice, Payment
+from logand_backend.domain.notifications.notify import notify_payment_received
 
 router = APIRouter(prefix="/api/webhooks", tags=["webhooks"])
 
@@ -38,12 +40,14 @@ async def stripe_webhook(
         ) from exc
 
     if event["type"] in ("payment_intent.succeeded", "payment_intent.payment_failed"):
-        await _handle_payment_intent_event(db, event)
+        await _handle_payment_intent_event(db, event, cfg)
 
     return {"status": "received"}
 
 
-async def _handle_payment_intent_event(db: AsyncSession, event: dict) -> None:
+async def _handle_payment_intent_event(
+    db: AsyncSession, event: dict, cfg: AppConfig
+) -> None:
     intent = event["data"]["object"]
     intent_id = intent["id"]
     succeeded = event["type"] == "payment_intent.succeeded"
@@ -114,4 +118,9 @@ async def _handle_payment_intent_event(db: AsyncSession, event: dict) -> None:
 
     if succeeded:
         invoice.status = "paid"
+        await db.flush()
+        await notify_payment_received(
+            db, cfg, invoice, Decimal(str(intent["amount"] / 100))
+        )
+        return
     await db.flush()

@@ -19,6 +19,7 @@ from logand_backend.db.base import get_db
 from logand_backend.db.models.invoices import Invoice, Payment
 from logand_backend.domain.invoices.pdf.renderer import PdfRenderError
 from logand_backend.domain.invoices.service import generate_invoice_pdf
+from logand_backend.domain.notifications.notify import notify_payment_received
 from logand_backend.domain.payments.providers import paypal
 from logand_backend.logging import get_logger
 
@@ -243,6 +244,8 @@ async def capture_invoice_paypal_payment(
     if paid_so_far >= invoice.amount_total:
         invoice.status = "paid"
     await db.flush()
+
+    await notify_payment_received(db, cfg, invoice, capture.captured_amount)
 
     return {"status": "captured"}
 

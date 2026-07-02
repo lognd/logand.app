@@ -64,6 +64,22 @@ class AppConfig(BaseModel):
     # content that could be mistaken for real business info.
     invoice_business_details: str = ""
     invoice_contact_email: str = "billing@logand.app"
+    # SMTP is optional -- None (same "not configured" convention as
+    # paypal_client_id above) means domain/notifications/mailer.py's
+    # is_configured() is False, and every notification call becomes a
+    # silent no-op rather than a crash. Nothing in the payment/invoice
+    # flow depends on email actually being deliverable.
+    smtp_host: str | None = None
+    smtp_port: int = 587
+    smtp_username: str | None = None
+    smtp_password: str | None = None
+    smtp_use_tls: bool = True
+    smtp_from_address: str = "noreply@logand.app"
+    # CAN-SPAM requires a valid physical postal address in every commercial
+    # email's footer -- deliberately empty by default (never a fake-looking
+    # placeholder address that could ship to production by accident), set
+    # via env var per deployment.
+    mailing_address: str = ""
     host: str = "127.0.0.1"
     port: int = 8000
 
@@ -99,6 +115,13 @@ class AppConfig(BaseModel):
             "INVOICE_BUSINESS_NAME": "invoice_business_name",
             "INVOICE_BUSINESS_DETAILS": "invoice_business_details",
             "INVOICE_CONTACT_EMAIL": "invoice_contact_email",
+            "SMTP_HOST": "smtp_host",
+            "SMTP_PORT": "smtp_port",
+            "SMTP_USERNAME": "smtp_username",
+            "SMTP_PASSWORD": "smtp_password",
+            "SMTP_USE_TLS": "smtp_use_tls",
+            "SMTP_FROM_ADDRESS": "smtp_from_address",
+            "MAILING_ADDRESS": "mailing_address",
             "HOST": "host",
             "PORT": "port",
         }

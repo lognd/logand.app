@@ -136,6 +136,56 @@ Set to the real public URL the site is served at (e.g.
 Not secret at all -- shown on every generated invoice PDF's letterhead.
 Just real business information, no rotation concept applies.
 
+### `SMTP_HOST` / `SMTP_PORT` / `SMTP_USERNAME` / `SMTP_PASSWORD` / `SMTP_USE_TLS` / `SMTP_FROM_ADDRESS`
+
+Fully optional -- like PayPal above, unset means
+`domain/notifications/mailer.py::is_configured` is False and every
+notification (invoice sent, payment received) is a silent no-op.
+Nothing in the invoice/payment flow depends on email actually being
+deliverable.
+
+To turn email on with **Google Workspace**: enable 2-Step Verification
+on the sending account, generate an
+[App Password](https://myaccount.google.com/apppasswords) (a regular
+account password will not work with SMTP), then set:
+
+```
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USERNAME=billing@yourdomain.com
+SMTP_PASSWORD=<the 16-character app password>
+SMTP_USE_TLS=true
+SMTP_FROM_ADDRESS=billing@yourdomain.com
+```
+
+Any other SMTP provider (Postmark, SES, Fastmail, a self-hosted MTA,
+etc.) works the same way -- just point `SMTP_HOST`/`SMTP_PORT` at it
+and use its own credentials.
+
+Rotating: regenerate the app password/API key at the provider, update
+`backend/.env`/GitHub Actions, restart `backend`.
+
+### `MAILING_ADDRESS`
+
+Not secret, but legally required once email is turned on: CAN-SPAM
+requires a valid physical postal address in every commercial email's
+footer (`domain/notifications/mailer.py` puts this in the footer of
+every notification it sends). Deliberately empty by default so a
+placeholder-looking address never ships to production by accident --
+set this to your real business mailing address before setting
+`SMTP_HOST`.
+
+### `SESSION_SECRET` also signs unsubscribe links
+
+Worth calling out here since it's easy to miss: the one-click
+unsubscribe token in every notification email's `List-Unsubscribe`
+header (`domain/notifications/mailer.py::sign_unsubscribe_token`) is an
+HMAC over `SESSION_SECRET`, the same secret documented above -- no
+separate secret to manage. Rotating `SESSION_SECRET` invalidates every
+unsubscribe link already sent (a real but minor tradeoff: anyone
+rotating this secret should expect a few stale unsubscribe links to
+require a fresh email before they work again).
+
 ## GitHub Actions secrets specifically
 
 `.github/workflows/deploy.yml` reads `VPS_SSH_KEY` and copies of the

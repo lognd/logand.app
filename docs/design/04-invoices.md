@@ -199,9 +199,43 @@ This is a backend domain function (`domain/invoices/recurrence.py`),
 not logic embedded in the cron entrypoint, so it's unit-testable without
 a scheduler.
 
+## Email notifications
+
+`domain/notifications/` sends a transactional email when an invoice is
+sent (from `api/invoices.py`'s `send` route) and when a payment is
+recorded (manual payment, the Stripe webhook, and the PayPal capture
+route all trigger this). Fully optional -- `mailer.is_configured()`
+gates every call, so nothing here depends on SMTP being set up (see
+[secrets.md](secrets.md)'s `SMTP_*` section).
+
+- `mailer.py` builds and sends the actual `email.message.EmailMessage`
+  (real `multipart/alternative`, not hand-built MIME strings) via
+  synchronous `smtplib` on a worker thread (`asyncio.to_thread`, same
+  pattern as the PDF renderer's `latexmk` call). Also owns unsubscribe
+  token signing (`hmac` over `SESSION_SECRET` -- no separate secret).
+- `templates.py` builds the message-specific HTML/text content only;
+  `mailer.build_message` wraps it with the CAN-SPAM footer (mailing
+  address + unsubscribe link) and the `List-Unsubscribe`/
+  `List-Unsubscribe-Post` headers (RFC 8058 one-click).
+- `notify.py` is the entry point API routes call -- looks up the
+  customer, checks `User.emails_opted_out`, and swallows (logs, never
+  raises) any send failure, since a down mail server must never block
+  an invoice from being sent or a payment from being recorded.
+- `api/notifications.py` exposes `GET`/`POST /api/unsubscribe?token=`,
+  exempt from CSRF (same reasoning as the Stripe webhook route -- the
+  signed token itself is the auth) so both a human clicking the email
+  link and a mail client's automated one-click POST work with no
+  session at all.
+- `testing/fake_smtp.py` is a real local SMTP server (`aiosmtpd`), not a
+  mock of `smtplib` -- same "real protocol double" convention as
+  `testing/fake_stripe.py`/`testing/fake_paypal.py`.
+
 ## Testing
 
 Ownership isolation (`GET /api/invoices/{id}` cross-customer), webhook
 idempotency, and amount-tampering rejection are the highest-value test
 cases for this feature -- see
 [12-testing-strategy.md](12-testing-strategy.md) for where each lives.
+Email notifications are covered in `tests/system/test_notifications.py`
+(graceful no-op when unconfigured, real send via `fake_smtp.py`,
+opt-out suppression, and the unsubscribe endpoint itself).

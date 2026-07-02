@@ -18,7 +18,13 @@ _log = get_logger(__name__)
 # - /api/webhooks/*: authenticated by Stripe signature verification instead
 #   (see api/webhooks.py), a browser-originated cookie/header pair is never
 #   present on a server-to-server webhook call.
-_CSRF_EXEMPT_PATHS = frozenset({"/api/auth/login", "/api/auth/register"})
+# - /api/unsubscribe: authenticated by the signed token in the query string
+#   instead (see api/notifications.py) -- both a human clicking a link from
+#   an email client and a mail server's own RFC 8058 one-click POST have no
+#   session cookie/CSRF token to present at all.
+_CSRF_EXEMPT_PATHS = frozenset(
+    {"/api/auth/login", "/api/auth/register", "/api/unsubscribe"}
+)
 _CSRF_EXEMPT_PREFIXES = ("/api/webhooks",)
 
 
@@ -76,6 +82,7 @@ class App:
             inventory,
             invoices,
             invoices_public,
+            notifications,
             webhooks,
         )
 
@@ -87,6 +94,7 @@ class App:
         app.include_router(inventory.router)
         app.include_router(webhooks.router)
         app.include_router(admin_users.router)
+        app.include_router(notifications.router)
 
     @asynccontextmanager
     async def _lifespan(self, _app: FastAPI) -> AsyncIterator[None]:

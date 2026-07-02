@@ -24,6 +24,10 @@ from logand_backend.domain.invoices.service import (
     send_invoice,
     void_invoice,
 )
+from logand_backend.domain.notifications.notify import (
+    notify_invoice_sent,
+    notify_payment_received,
+)
 from logand_backend.logging import get_logger
 
 _log = get_logger(__name__)
@@ -67,6 +71,10 @@ async def send(
     result = await send_invoice(db, invoice_id)
     if result.is_err:
         raise to_http_exception(result.danger_err)
+    invoice = await db.get(Invoice, invoice_id)
+    if invoice is not None:
+        cfg = AppConfig.from_external(argparse.Namespace())
+        await notify_invoice_sent(db, cfg, invoice)
     return {"status": "sent"}
 
 
@@ -167,6 +175,10 @@ async def record_manual_invoice_payment(
     result = await record_manual_payment(db, invoice_id, admin.user_id, payment)
     if result.is_err:
         raise to_http_exception(result.danger_err)
+    invoice = await db.get(Invoice, invoice_id)
+    if invoice is not None:
+        cfg = AppConfig.from_external(argparse.Namespace())
+        await notify_payment_received(db, cfg, invoice, payment.amount)
     return {"id": str(result.danger_ok)}
 
 
