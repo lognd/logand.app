@@ -34,7 +34,10 @@ interface Project {
   // every entry reads on the same scale instead of mixing granularities.
   period: string;
   description: string;
-  slides: CarouselSlide[];
+  // Empty (or omitted) skips the carousel panel entirely for this project
+  // -- rather than rendering an empty/unlabeled box, which still reserves
+  // the same fixed height for nothing.
+  slides?: CarouselSlide[];
   // Live-fetched GitHub stats cards (see GithubRepoCard) -- for repos I
   // own/maintain, preferred over a plain link since it's real, current
   // data (stars/language/last-push) rather than a static label.
@@ -217,7 +220,6 @@ const PROJECTS: Project[] = [
     period: "Aug 2024 - Jun 2025",
     description:
       "I ended up in this lab by chance: a conversation on the street about research led to a position applying signal processing and deep learning to rat neurological data. Used the synchro-squeezing transform to sharpen time-frequency structure in raw brainwave recordings, then designed a Longformer-based variational autoencoder to learn a latent space capturing long- and short-term brainwave relationships, trained remotely via SLURM on HiPerGator, UF's supercomputer. My involvement wound down as other commitments picked up, but the modeling work itself stands on its own.",
-    slides: [{ alt: "Mears' Neuroscience Lab", blankPlaceholder: true }],
     githubRepos: [{ owner: "lognd", repo: "bwave" }],
   },
 ];
@@ -279,9 +281,11 @@ export function Projects() {
               </h1>
             )}
             <div className="glass-panel flex w-full min-h-0 max-w-2xl flex-1 flex-col overflow-hidden rounded border p-4 sm:p-6">
-              <div className="shrink-0">
-                <ImageCarousel slides={project.slides} />
-              </div>
+              {project.slides && project.slides.length > 0 && (
+                <div className="shrink-0">
+                  <ImageCarousel slides={project.slides} />
+                </div>
+              )}
               <div className="mt-4 flex shrink-0 flex-wrap items-baseline justify-between gap-x-3">
                 <h2 data-wave-text className="text-2xl text-fg-primary">
                   {project.title}
