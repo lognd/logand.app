@@ -160,19 +160,19 @@ export function Landing() {
             brighter in a wave lightly originating from the point that you
             click and on first load". */}
         <div ref={contentRef} className="relative z-10 w-full max-w-2xl">
-          <h1 data-wave-text className="mb-4 text-3xl text-fg-primary">
+          <h1 data-wave-text className="mb-4 text-3xl font-bold text-fg-primary">
             Logan Dapp
           </h1>
-          {/* Three lines, haiku-shaped rather than a run-on sentence: a
-              long credential-heavy line, a hard three-beat break (each
-              period a full stop/silence, not a comma-joined list), then
-              a short callback. Design/Build/Ship are all short, stop-
-              consonant verbs on purpose -- the percussive rhythm is the
-              point, not just the word choice. */}
-          <p data-wave-text className="mb-6 text-base text-fg-primary">
-            Software, Computer and Mechanical Engineer
+          {/* Three lines, haiku-shaped rather than a run-on sentence: an
+              ascending tricolon of disciplines (2-3-4 syllables), then the
+              wry "three engineers, one brain" turn -- the joke IS the
+              credential list, so don't reorder the disciplines or the
+              punchline stops landing -- then the short callback. "Embedded"
+              over "computer" on purpose: more specific, better meter. */}
+          <p data-wave-text className="mb-4 text-base text-fg-primary">
+            Software, embedded, mechanical:
             <br />
-            Design. Build. Ship.
+            three engineers, one brain.
             <br />
             This site included.
           </p>
@@ -235,7 +235,7 @@ export function Landing() {
             aria-controls="background-picker-panel"
             onClick={() => setBgMenuOpen((open) => !open)}
           >
-            {bgMenuOpen ? "Close" : "Background"}
+            {bgMenuOpen ? "Close" : "Change background"}
           </button>
           <div
             id="background-picker-panel"
