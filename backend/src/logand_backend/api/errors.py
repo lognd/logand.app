@@ -6,6 +6,7 @@ from typani.error_set import ErrorSet
 from logand_backend.errors import (
     AuthError,
     BudgetError,
+    DocumentError,
     InventoryError,
     InvoiceError,
     MileageError,
@@ -34,6 +35,8 @@ _STATUS_MAP: dict[ErrorSet, int] = {
     MileageError.InvalidDistance: 422,
     ReceiptError.NotFound: 404,
     ReceiptError.BudgetEntryNotFound: 404,
+    DocumentError.NotFound: 404,
+    DocumentError.InventoryItemNotFound: 404,
     # 503 (not 500) -- "not configured yet" is an expected, temporary
     # deployment state, not a server error; the frontend uses this to show
     # "try Zelle/in-person instead" rather than a generic error banner.
@@ -53,6 +56,7 @@ def _verify_complete_mapping() -> None:
     for error_set_cls in (
         AuthError,
         BudgetError,
+        DocumentError,
         InventoryError,
         InvoiceError,
         MileageError,

@@ -78,6 +78,7 @@ class App:
             admin_users,
             auth,
             budget,
+            documents,
             health,
             inventory,
             invoices,
@@ -99,6 +100,7 @@ class App:
         app.include_router(notifications.router)
         app.include_router(mileage.router)
         app.include_router(receipts.router)
+        app.include_router(documents.router)
 
     @asynccontextmanager
     async def _lifespan(self, _app: FastAPI) -> AsyncIterator[None]:
