@@ -156,9 +156,18 @@ export function Landing() {
           <h1 data-wave-text className="mb-4 text-3xl text-fg-primary">
             Logan Dapp
           </h1>
+          {/* Three lines, haiku-shaped rather than a run-on sentence: a
+              long credential-heavy line, a hard three-beat break (each
+              period a full stop/silence, not a comma-joined list), then
+              a short callback. Design/Build/Ship are all short, stop-
+              consonant verbs on purpose -- the percussive rhythm is the
+              point, not just the word choice. */}
           <p data-wave-text className="mb-6 text-base text-fg-primary">
-            Software, computer, and mechanical engineer. Designing, building, and shipping
-            real systems end to end. This site included.
+            Software, Computer and Mechanical Engineer
+            <br />
+            Design. Build. Ship.
+            <br />
+            This site included.
           </p>
           <nav aria-label="primary" className="flex flex-wrap gap-4">
             <a href="/projects" aria-label="Projects" data-wave-text className={LINK_CLASS}>

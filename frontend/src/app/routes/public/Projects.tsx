@@ -194,7 +194,7 @@ const PROJECTS: Project[] = [
     title: "Head TA: Advanced Programming Fundamentals",
     period: "Aug 2025 - Present",
     description:
-      "As Head TA of UF's Advanced Programming Fundamentals, I authored the exams and nearly all of the course content: 60+ modules, each with around 4 activities and an assignment. Grading that much material by hand doesn't scale, so I also built the tooling behind it. lograder is a Python autograder library built around a composable Input -> Check -> Mixin -> Build -> Test pipeline, with Gradescope-compatible scoring. aprog-public holds the public course problem sets I maintain (Python/C++/Jinja).",
+      "As Head TA of UF's Advanced Programming Fundamentals, I authored the exams and nearly all of the course content: 60+ modules, each with around 4 activities and an assignment. Grading that much material by hand doesn't scale, so I also built the tooling behind it. lograder is a Python autograder library built around a composable Input/Check/Mixin/Build/Test pipeline, with Gradescope-compatible scoring. aprog-public holds the public course problem sets I maintain (Python/C++/Jinja).",
     slides: [{ alt: "Selfie with a fellow TA during an exam", src: media("head-ta-selfie.jpg") }],
     githubRepos: [
       { owner: "lognd", repo: "lograder" },
