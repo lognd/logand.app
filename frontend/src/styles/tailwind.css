@@ -14,35 +14,62 @@
 @tailwind components;
 @tailwind utilities;
 
-/* `html`, not just `body`: `overflow-x:hidden` on body alone doesn't
-   guarantee no horizontal scrollbar in every browser's quirks -- the
-   ROOT scrolling box in standards mode is `html`, and Firefox in
-   particular has been seen to still offer a horizontal scrollbar driven
-   by `html`'s own overflow when only `body` declares it. Setting it on
-   both closes that gap instead of relying on browser-specific behavior
-   ("the overflow is busted on mobile" recurring across different mobile
-   browsers is exactly this class of gap, not one single miscalculation). */
-html {
-  overflow-x: hidden;
+/* `html`/`body` are locked to a fixed, non-scrolling box -- height:100%
+   + overflow:hidden means NEITHER can ever scroll or bounce, full stop.
+   #root (below) becomes the REAL scroll container instead. This is the
+   standard "lock body scroll" pattern for iOS Safari, and it's load-
+   bearing, not defensive styling: `overscroll-behavior-y: none` on body
+   (tried first) does NOT stop iOS Safari's own rubber-band/bounce of the
+   whole document -- that property only contains overscroll CHAINING
+   between nested scroll containers, not the outermost document's own
+   bounce animation. On a real iPhone, that bounce was draggable past the
+   top and bottom of the page, and during it, ReportProblemButton (fixed)
+   visually glitched against the footer -- iOS animates position:fixed
+   elements as part of that same document-bounce transform in some
+   versions, instead of keeping them pinned to the true, non-bouncing
+   viewport ("scroll past the top and below the bottom... makes the
+   report button bug out with the footer"). If html/body physically
+   cannot scroll, that bounce -- and everything downstream of it -- can't
+   happen at all.
+
+   This also fixes a second, independently-reported bug: on a landscape
+   phone (a viewport short enough that header+content+footer don't fit
+   within svh), there was previously no way to scroll down and reach the
+   footer once it was pushed past the bottom edge ("on stupid aspect
+   ratios the footer gets hidden"). #root's own overflow-y:auto below
+   makes it a real, working scroll instead of a permanent clip. */
+html,
+body {
+  height: 100%;
+  overflow: hidden;
 }
 
 body {
   margin: 0;
-  /* Defense in depth against horizontal overflow: every ASCII grid
-     component already computes its own width to fit exactly, but this is
-     a zero-cost backstop against any future miscalculation (or a
-     mid-transition frame during a resize/zoom/rotation) ever producing a
-     visible horizontal scrollbar/shift ("the overflow is busted on
-     mobile"). Never legitimately needed on the vertical axis, since real
-     page content should scroll normally. */
+}
+
+#root {
+  height: 100%;
+  overflow-y: auto;
+  /* Same horizontal-overflow backstop as before, just moved to the
+     element that can actually scroll now -- every ASCII grid component
+     already computes its own width to fit exactly, this is a zero-cost
+     backstop against any future miscalculation (or a mid-transition
+     frame during a resize/zoom/rotation) ever producing a visible
+     horizontal scrollbar/shift ("the overflow is busted on mobile"). */
   overflow-x: hidden;
-  /* Stops mobile browsers' rubber-band/bounce overscroll from reading as
-     "the page is scrollable" even when real content fits exactly --
-     without this, a slightly-too-tall dvh calculation (see Shell.tsx's
-     use of svh over dvh for the same underlying reason) could still let
-     a visitor drag/bounce past the true content edge and perceive that
-     as a scrollbar, even though nothing is actually overflowing. */
-  overscroll-behavior-y: none;
+  /* `contain`, not `none` -- #root is now the thing that actually
+     bounces on iOS (any real overflow:auto + touch-scrolling element
+     can), which is fine: that bounce is purely a visual effect on
+     #root's own content, contained to itself, and can't drag a
+     viewport-fixed element along with it the way the OUTER document's
+     bounce did (see html/body's own comment above). `contain` stops
+     THIS container's overscroll from chaining to an ancestor scroll
+     (there isn't one here, since html/body can't scroll -- belt and
+     suspenders) without disabling #root's own legitimate bounce
+     feedback entirely. */
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
 }
 
 /* Used by the Projects page's vertical snap-scroll feed -- genuinely
