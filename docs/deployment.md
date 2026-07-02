@@ -11,7 +11,14 @@ first deploy, then come back here for the actual commands.
 
 - A VPS (2 vCPU / 4GB RAM minimum -- see
   [design/11-deployment.md](design/11-deployment.md)'s sizing note),
-  Docker + Docker Compose installed, ports 80/443 open.
+  Ubuntu or Debian, ports 80/443/22 reachable.
+  Docker + Docker Compose + Node (for the one-time manual frontend
+  build) + git + a firewall aren't installed yet on a bare VPS -- run
+  `ops/setup-vps.sh` to install all of them in one idempotent pass
+  (safe to re-run): `curl -fsSL <raw-url-to-this-repo>/ops/setup-vps.sh | sh`,
+  or `sh ops/setup-vps.sh` once you've already cloned the repo some
+  other way. It does NOT clone the repo, write secrets, touch DNS, or
+  start the stack -- those stay explicit, separate steps below.
 - A domain (or two -- the `Caddyfile` already handles `logand.app` and
   `logandapp.com` as aliases) with DNS **A/AAAA records pointing at the
   VPS's IP** before you start Caddy -- Caddy's automatic HTTPS
