@@ -21,7 +21,7 @@ const PERSON_JSON_LD = {
   "@type": "Person",
   name: "Logan Dapp",
   url: "https://logand.app",
-  jobTitle: "Software Engineer",
+  jobTitle: "Software, Computer, and Mechanical Engineer",
   sameAs: [
     "https://github.com/lognd",
     "https://www.youtube.com/@logandapp7542",
@@ -157,8 +157,8 @@ export function Landing() {
             Logan Dapp
           </h1>
           <p data-wave-text className="mb-6 text-base text-fg-primary">
-            Personal and professional site of Logan Dapp -- software engineer, builder of
-            logand.app.
+            Software, computer, and mechanical engineer -- I design, build, and ship real
+            systems end to end. This site included.
           </p>
           <nav aria-label="primary" className="flex flex-wrap gap-4">
             <a href="/projects" aria-label="Projects" data-wave-text className={LINK_CLASS}>
