@@ -15,7 +15,28 @@ jobs:
   cleanup:
     runs-on: ubuntu-latest
     steps:
+      # GHCR_CLEANUP_PAT is a manual, deliberate setup step (see below) --
+      # not configuring it yet is a normal, expected state, not a broken
+      # workflow. Checking via an env var (not `secrets.X == ''` directly
+      # in an `if:`) since secrets aren't reliably usable in `if:`
+      # expressions the same way plain env vars are.
+      - name: check GHCR_CLEANUP_PAT is configured
+        id: check
+        env:
+          TOKEN: ${{ secrets.GHCR_CLEANUP_PAT }}
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "GHCR_CLEANUP_PAT is not set -- skipping cleanup this run." \
+                 "See this workflow file's own comment for how to create one" \
+                 "(classic PAT, read:packages + delete:packages scopes;" \
+                 "fine-grained PATs don't currently support package permissions" \
+                 "at all)."
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
       - name: delete old backend image versions
+        if: steps.check.outputs.configured == 'true'
         uses: actions/delete-package-versions@v5
         with:
           # This package lives under a personal account (not an org) --
