@@ -11,6 +11,9 @@ import { AdminPortal } from "./app/routes/admin/Portal";
 import { AdminInvoices } from "./app/routes/admin/Invoices";
 import { AdminBudget } from "./app/routes/admin/Budget";
 import { AdminInventory } from "./app/routes/admin/Inventory";
+import { AdminBom } from "./app/routes/admin/Bom";
+import { AdminCustomers } from "./app/routes/admin/Customers";
+import { AdminData } from "./app/routes/admin/AdminData";
 import { CustomerPortal } from "./app/routes/customer/Portal";
 import { CustomerInvoices } from "./app/routes/customer/Invoices";
 import { CustomerPay } from "./app/routes/customer/Pay";
@@ -54,6 +57,30 @@ export function App() {
           element={
             <AdminGuard>
               <AdminInventory />
+            </AdminGuard>
+          }
+        />
+        <Route
+          path="/admin/boms"
+          element={
+            <AdminGuard>
+              <AdminBom />
+            </AdminGuard>
+          }
+        />
+        <Route
+          path="/admin/customers"
+          element={
+            <AdminGuard>
+              <AdminCustomers />
+            </AdminGuard>
+          }
+        />
+        <Route
+          path="/admin/data"
+          element={
+            <AdminGuard>
+              <AdminData />
             </AdminGuard>
           }
         />

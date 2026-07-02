@@ -33,6 +33,30 @@ export function AdminPortal() {
           </Link>
           <p className="text-base text-fg-muted">Manage stocked items and quantities.</p>
         </li>
+        <li>
+          <Link to="/admin/boms" className={LINK_CLASS}>
+            Bills of materials
+          </Link>
+          <p className="text-base text-fg-muted">
+            Build material/labor/overhead cost breakdowns and consume stock for a build.
+          </p>
+        </li>
+        <li>
+          <Link to="/admin/customers" className={LINK_CLASS}>
+            Customer accounts
+          </Link>
+          <p className="text-base text-fg-muted">
+            View, deactivate/reactivate, and reset passwords for customer accounts.
+          </p>
+        </li>
+        <li>
+          <Link to="/admin/data" className={LINK_CLASS}>
+            Data browser
+          </Link>
+          <p className="text-base text-fg-muted">
+            Direct, audited access to any table for one-off fixes.
+          </p>
+        </li>
       </ul>
     </main>
   );

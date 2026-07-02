@@ -5,13 +5,16 @@ from typani.error_set import ErrorSet
 
 from logand_backend.errors import (
     AuthError,
+    BomError,
     BudgetError,
+    DataError,
     DocumentError,
     InventoryError,
     InvoiceError,
     MileageError,
     PaymentProviderError,
     ReceiptError,
+    UserError,
 )
 
 # Every ErrorSet variant that can ever reach an API boundary must be mapped
@@ -31,12 +34,29 @@ _STATUS_MAP: dict[ErrorSet, int] = {
     BudgetError.EvidenceRequired: 409,
     InventoryError.NotFound: 404,
     InventoryError.LocationInUse: 409,
+    InventoryError.WouldGoNegative: 422,
     MileageError.NotFound: 404,
     MileageError.InvalidDistance: 422,
     ReceiptError.NotFound: 404,
     ReceiptError.BudgetEntryNotFound: 404,
     DocumentError.NotFound: 404,
     DocumentError.InventoryItemNotFound: 404,
+    BomError.NotFound: 404,
+    BomError.MaterialLineNotFound: 404,
+    BomError.ItemNotFound: 404,
+    BomError.DuplicateItem: 409,
+    BomError.MissingUnitCost: 422,
+    BomError.InsufficientStock: 422,
+    UserError.NotFound: 404,
+    UserError.CannotModifyAdmin: 403,
+    UserError.PasswordTooShort: 422,
+    DataError.TableNotFound: 404,
+    DataError.RowNotFound: 404,
+    DataError.ColumnNotFound: 422,
+    DataError.ColumnNotEditable: 403,
+    DataError.ConstraintViolation: 409,
+    DataError.ChangeNotFound: 404,
+    DataError.ChangeNotRevertible: 409,
     # 503 (not 500) -- "not configured yet" is an expected, temporary
     # deployment state, not a server error; the frontend uses this to show
     # "try Zelle/in-person instead" rather than a generic error banner.
@@ -55,13 +75,16 @@ _STATUS_MAP: dict[ErrorSet, int] = {
 def _verify_complete_mapping() -> None:
     for error_set_cls in (
         AuthError,
+        BomError,
         BudgetError,
+        DataError,
         DocumentError,
         InventoryError,
         InvoiceError,
         MileageError,
         PaymentProviderError,
         ReceiptError,
+        UserError,
     ):
         for variant in error_set_cls:
             if variant not in _STATUS_MAP:

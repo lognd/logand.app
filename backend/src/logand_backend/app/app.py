@@ -75,8 +75,10 @@ class App:
         # want loaded just to construct an App for, e.g., a unit test that
         # never calls __call__.
         from logand_backend.api import (
+            admin_data,
             admin_users,
             auth,
+            bom,
             budget,
             documents,
             health,
@@ -95,12 +97,14 @@ class App:
         app.include_router(invoices_public.router)
         app.include_router(budget.router)
         app.include_router(inventory.router)
+        app.include_router(bom.router)
         app.include_router(webhooks.router)
         app.include_router(admin_users.router)
         app.include_router(notifications.router)
         app.include_router(mileage.router)
         app.include_router(receipts.router)
         app.include_router(documents.router)
+        app.include_router(admin_data.router)
 
     @asynccontextmanager
     async def _lifespan(self, _app: FastAPI) -> AsyncIterator[None]:
