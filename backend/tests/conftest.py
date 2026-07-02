@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+import tempfile
+from collections.abc import AsyncIterator, Iterator
 from typing import Awaitable, Callable
 from uuid import uuid4
 
@@ -8,6 +9,22 @@ import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
+
+
+@pytest.fixture(autouse=True)
+def _isolated_local_storage_dir(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[None]:
+    """AppConfig.storage_local_dir defaults to "./data/storage" (relative
+    to wherever the process is run from) -- without this, every test that
+    exercises a route writing real evidence/receipt/document bytes
+    (domain/storage/local.py) would litter backend/data/ in the repo
+    working directory instead of a real, auto-cleaned tmp dir. Autouse so
+    no test has to remember to opt in.
+    """
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        monkeypatch.setenv("STORAGE_LOCAL_DIR", tmp_dir)
+        yield
 
 
 @pytest_asyncio.fixture(scope="session")

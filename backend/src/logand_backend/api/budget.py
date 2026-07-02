@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import csv
 import io
 from datetime import date
@@ -12,10 +13,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from logand_backend.api.errors import to_http_exception
+from logand_backend.app.config import AppConfig
 from logand_backend.auth.sessions import SessionInfo, require_admin
 from logand_backend.db.base import get_db
 from logand_backend.db.models.budget import BudgetEntry
 from logand_backend.domain.budget.service import attach_evidence, create_entry
+from logand_backend.domain.storage.factory import get_storage_backend
 
 router = APIRouter(prefix="/api/admin/budget", tags=["admin", "budget"])
 
@@ -46,11 +49,19 @@ async def upload_evidence(
     if file.content_type not in {"application/pdf", "image/png", "image/jpeg"}:
         raise HTTPException(status_code=415, detail="evidence must be a PDF or image")
     contents = await file.read()
-    result = await attach_evidence(
-        db, entry_id, contents, file_path=f"budget/{entry_id}/{file.filename}"
-    )
+    file_path = f"budget-evidence/{entry_id}/{file.filename}"
+    result = await attach_evidence(db, entry_id, contents, file_path=file_path)
     if result.is_err:
         raise to_http_exception(result.danger_err)
+    # Written AFTER attach_evidence's DB row succeeds (NotFound is checked
+    # there first) -- no point uploading real bytes to storage for an
+    # entry_id that doesn't exist. See domain/storage/base.py:
+    # get_storage_backend(cfg) is the one place selecting local vs. R2 vs.
+    # a future NAS backend; this route never talks to a concrete backend
+    # directly.
+    cfg = AppConfig.from_external(argparse.Namespace())
+    storage = get_storage_backend(cfg)
+    await storage.put(file_path, contents, file.content_type)
     return {"id": str(result.danger_ok)}
 
 

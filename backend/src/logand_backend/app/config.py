@@ -80,6 +80,24 @@ class AppConfig(BaseModel):
     # placeholder address that could ship to production by accident), set
     # via env var per deployment.
     mailing_address: str = ""
+    # "local" (default, zero-config, zero-cost) or "r2" -- see
+    # domain/storage/factory.py. Deliberately not "s3"/"gcs" as separate
+    # options yet: R2's S3-compatible API covers the one cloud target this
+    # app actually needs today (see docs/design/13-storage-abstraction.md
+    # for why R2 was picked over GCS/S3/B2), and adding a real NAS backend
+    # later is a new StorageBackend implementation, not a new enum value
+    # cascading through every caller.
+    storage_backend: str = "local"
+    storage_local_dir: str = "./data/storage"
+    r2_bucket: str | None = None
+    r2_endpoint_url: str | None = None
+    r2_access_key_id: str | None = None
+    r2_secret_access_key: str | None = None
+    # None means "no public URL" -- files are only ever fetched by
+    # proxying through this backend's own authenticated API routes, never
+    # a bare public bucket URL, unless a deployment explicitly opts a
+    # custom domain into public read access and sets this.
+    r2_public_base_url: str | None = None
     host: str = "127.0.0.1"
     port: int = 8000
 
@@ -122,6 +140,13 @@ class AppConfig(BaseModel):
             "SMTP_USE_TLS": "smtp_use_tls",
             "SMTP_FROM_ADDRESS": "smtp_from_address",
             "MAILING_ADDRESS": "mailing_address",
+            "STORAGE_BACKEND": "storage_backend",
+            "STORAGE_LOCAL_DIR": "storage_local_dir",
+            "R2_BUCKET": "r2_bucket",
+            "R2_ENDPOINT_URL": "r2_endpoint_url",
+            "R2_ACCESS_KEY_ID": "r2_access_key_id",
+            "R2_SECRET_ACCESS_KEY": "r2_secret_access_key",
+            "R2_PUBLIC_BASE_URL": "r2_public_base_url",
             "HOST": "host",
             "PORT": "port",
         }
