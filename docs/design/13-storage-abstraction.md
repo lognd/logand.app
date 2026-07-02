@@ -63,6 +63,40 @@ the `StorageBackend` protocol, never a concrete class.
 See [secrets.md](../secrets.md) for the full `STORAGE_BACKEND`/`R2_*` env
 var reference.
 
+## Public assets and caching
+
+`StorageBackend.put()` takes an optional `cache_control` keyword arg,
+plumbed through to R2's `put_object` (`CacheControl=...`) and simply
+ignored by `LocalFilesystemStorage` (nothing fetches a local-backend
+object directly, so there's no HTTP response to attach a header to).
+
+This exists for a different use case than the private,
+authenticated-proxy files above: public, marketing/showcase assets --
+Projects-page photos, videos, PDFs -- that need to load on a public page
+with no session at all, and that essentially never change once
+uploaded. `backend/src/logand_backend/scripts/upload_public_asset.py`
+is the CLI for these: it uploads to the configured backend under a
+`projects/` key prefix (overridable via `--prefix`) and sets
+`Cache-Control: public, max-age=31536000, immutable`.
+
+Because that header is immutable/1-year, **replacing a file's content
+means uploading under a new key, never overwriting the old one** --
+browsers and any CDN in front of R2 will keep serving the old bytes
+from cache for up to a year regardless of what the object now contains
+server-side. In practice this means picking a new filename (add a
+version suffix, e.g. `torque-arm-diagram-v2.png`) and updating whatever
+page references the URL; the old URL is simply left unreferenced and
+can be deleted from the bucket later without needing any cache
+invalidation step at all.
+
+This is a different caching story than the frontend bundle itself --
+Caddy serves `frontend/dist` directly (see [deployment.md](../deployment.md)),
+and a normal `npm run build` produces content-hashed filenames for JS/CSS
+(cache-bust automatically on every deploy) but an unhashed `index.html`
+(must always revalidate, so a deploy is picked up immediately) --
+no extra Caddy config needed for either case, it falls out of Vite's
+default build output naming.
+
 ## Adding a NAS (or any other) backend later
 
 Implement the five `StorageBackend` methods against whatever protocol the

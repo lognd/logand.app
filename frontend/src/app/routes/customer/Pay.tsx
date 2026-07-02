@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useParams, useSearchParams } from "react-router-dom";
 import { RateLimitedError } from "../../../api/client";
@@ -7,6 +7,7 @@ import {
   getPaymentMethods,
   payInvoice,
   payInvoiceViaPaypal,
+  uploadPaymentProof,
 } from "../../../api/invoices";
 import { BUTTON_CLASS } from "../../../styles/a11y";
 
@@ -47,6 +48,19 @@ export function CustomerPay() {
       // PayPal's own site, not inside this app.
       if (order.approval_url) window.location.assign(order.approval_url);
     },
+  });
+
+  // "An optional place to put a screenshot or something to show that
+  // they sent something" -- a customer who paid via Zelle/PayPal-direct
+  // outside this app can attach proof for an admin to review.
+  const [proofFile, setProofFile] = useState<File | null>(null);
+  const proofMutation = useMutation({
+    mutationFn: () => {
+      if (!id) throw new Error("missing invoice id");
+      if (!proofFile) throw new Error("no file selected");
+      return uploadPaymentProof(id, proofFile);
+    },
+    onSuccess: () => setProofFile(null),
   });
 
   // PayPal redirects the customer back to this exact page afterward,
@@ -145,12 +159,54 @@ export function CustomerPay() {
 
       {/* Always shown -- an admin can record any of these regardless of
           whether PayPal's own API is configured, so this is never a dead
-          end even when the button above isn't offered. */}
-      <p className="mt-6 text-base text-fg-muted">
-        Prefer to pay another way? Zelle, PayPal sent directly, or in person are
-        all fine -- just contact us and we&apos;ll mark your invoice paid once we
-        receive it.
-      </p>
+          end even when the button above isn't offered. The real Zelle
+          handle is shown directly (not just "contact us about Zelle")
+          once one is actually configured -- "I need to have my Zelle tag
+          and whatnot on the customer invoice so that they can see the
+          options of where they can pay." */}
+      <div className="mt-6 rounded border border-border p-4">
+        <p className="text-base text-fg-primary">Other ways to pay</p>
+        {paymentMethods.data?.zelle_handle && (
+          <p className="mt-2 text-base text-fg-primary">
+            Zelle: <span className="font-mono">{paymentMethods.data.zelle_handle}</span>
+          </p>
+        )}
+        <p className="mt-2 text-base text-fg-muted">
+          PayPal sent directly or in person are also fine -- just contact us and
+          we&apos;ll mark your invoice paid once we receive it.
+        </p>
+
+        <div className="mt-4 border-t border-border pt-4">
+          <label htmlFor="payment-proof" className="mb-1 block text-base text-fg-primary">
+            Already sent it? Upload a screenshot as proof (optional)
+          </label>
+          <input
+            id="payment-proof"
+            type="file"
+            accept="image/png,image/jpeg,image/webp,application/pdf"
+            onChange={(e) => setProofFile(e.target.files?.[0] ?? null)}
+            className="block w-full text-base text-fg-primary"
+          />
+          <button
+            type="button"
+            disabled={!proofFile || proofMutation.isPending}
+            onClick={() => proofMutation.mutate()}
+            className={`${BUTTON_CLASS} mt-2`}
+          >
+            {proofMutation.isPending ? "Uploading..." : "Upload proof"}
+          </button>
+          {proofMutation.isSuccess && (
+            <p className="mt-2 text-base text-fg-primary">
+              Uploaded. We&apos;ll take a look and mark your invoice paid.
+            </p>
+          )}
+          {proofMutation.isError && (
+            <p role="alert" className="mt-2 text-base text-accent-red">
+              Could not upload that file -- only images and PDFs are accepted.
+            </p>
+          )}
+        </div>
+      </div>
     </main>
   );
 }

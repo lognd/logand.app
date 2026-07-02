@@ -55,6 +55,8 @@ just that something is set.
 
 - [ ] `PAYPAL_CLIENT_ID` / `PAYPAL_CLIENT_SECRET` -- see [deployment.md](deployment.md)'s
       "Turning on PayPal later" section. Falls back to Zelle/in-person/manual recording without it.
+- [ ] `ZELLE_HANDLE` -- shows a real Zelle option on the customer Pay page. See
+      [that section](#zelle_handle).
 - [ ] `SMTP_HOST` and friends, `MAILING_ADDRESS` -- invoice-sent/payment-received
       email notifications. See [that section](#smtp_host--smtp_port--smtp_username--smtp_password--smtp_use_tls--smtp_from_address).
       Silent no-op without it -- nothing else depends on email being deliverable.
@@ -190,6 +192,13 @@ Set to the real public URL the site is served at (e.g.
 
 Not secret at all -- shown on every generated invoice PDF's letterhead.
 Just real business information, no rotation concept applies.
+
+### `ZELLE_HANDLE`
+
+Optional, not secret -- a phone number or email, whatever your Zelle
+account is registered under. Once set, a customer's Pay page shows it
+directly ("Zelle: <handle>") as a real payment option, instead of just
+generic "contact us" text. Leave unset if you don't want to offer Zelle.
 
 ### `SMTP_HOST` / `SMTP_PORT` / `SMTP_USERNAME` / `SMTP_PASSWORD` / `SMTP_USE_TLS` / `SMTP_FROM_ADDRESS`
 

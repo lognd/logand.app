@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 from decimal import Decimal
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import stripe
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -18,9 +19,13 @@ from logand_backend.auth.sessions import SessionInfo, require_customer
 from logand_backend.db.base import get_db
 from logand_backend.db.models.invoices import Invoice, Payment
 from logand_backend.domain.invoices.pdf.renderer import PdfRenderError
-from logand_backend.domain.invoices.service import generate_invoice_pdf
+from logand_backend.domain.invoices.service import (
+    attach_payment_proof,
+    generate_invoice_pdf,
+)
 from logand_backend.domain.notifications.notify import notify_payment_received
 from logand_backend.domain.payments.providers import paypal
+from logand_backend.domain.storage.factory import get_storage_backend
 from logand_backend.logging import get_logger
 
 _log = get_logger(__name__)
@@ -43,6 +48,7 @@ def _invoice_summary(invoice: Invoice) -> dict:
         "currency": invoice.currency,
         "memo": invoice.memo,
         "due_date": invoice.due_date.isoformat() if invoice.due_date else None,
+        "paid_at": invoice.paid_at.isoformat() if invoice.paid_at else None,
     }
 
 
@@ -83,6 +89,10 @@ async def get_payment_methods(
         "stripe": True,
         "paypal": paypal.is_configured(cfg),
         "manual_methods_available_via_admin": ["zelle", "in_person", "other", "paypal"],
+        # None when unconfigured (see AppConfig.zelle_handle's own doc
+        # comment) -- the pay page only renders a Zelle option once this
+        # is a real value, not a blank placeholder.
+        "zelle_handle": cfg.zelle_handle,
     }
 
 
@@ -122,6 +132,43 @@ async def get_my_invoice(
 ) -> dict:
     invoice = await _get_owned_invoice(db, invoice_id, customer.user_id)
     return _invoice_summary(invoice)
+
+
+_PROOF_CONTENT_TYPES = {"image/png", "image/jpeg", "image/webp", "application/pdf"}
+
+
+@router.post("/{invoice_id}/payment-proof")
+async def upload_payment_proof(
+    invoice_id: UUID,
+    file: UploadFile,
+    customer: SessionInfo = Depends(require_customer),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, str]:
+    """"An optional place to put a screenshot or something to show that
+    they sent something" -- a customer attaching proof of an external
+    Zelle/PayPal-direct send for an admin to review before marking the
+    invoice paid. Ownership-checked the same way every other customer
+    route is (_get_owned_invoice, 404 not 403 either way -- docs/design/04).
+    """
+    await _get_owned_invoice(db, invoice_id, customer.user_id)
+    if file.content_type not in _PROOF_CONTENT_TYPES:
+        raise HTTPException(
+            status_code=415, detail="payment proof must be an image or PDF"
+        )
+    contents = await file.read()
+    file_path = f"payment-proofs/{invoice_id}/{uuid4()}-{file.filename}"
+    result = await attach_payment_proof(
+        db, invoice_id, customer.user_id, contents, file_path, file.content_type
+    )
+    if result.is_err:
+        raise to_http_exception(result.danger_err)
+    # Written AFTER the DB row succeeds -- same ordering as
+    # api/budget.py's upload_evidence and api/documents.py's upload, so a
+    # rejected/failed DB write never leaves an orphaned file in storage.
+    cfg = AppConfig.from_external(argparse.Namespace())
+    storage = get_storage_backend(cfg)
+    await storage.put(file_path, contents, file.content_type)
+    return {"id": str(result.danger_ok)}
 
 
 @router.get("/{invoice_id}/pdf")
@@ -243,6 +290,7 @@ async def capture_invoice_paypal_payment(
     paid_so_far = sum((p.amount for p in existing), Decimal(0))
     if paid_so_far >= invoice.amount_total:
         invoice.status = "paid"
+        invoice.paid_at = datetime.now(timezone.utc)
     await db.flush()
 
     await notify_payment_received(db, cfg, invoice, capture.captured_amount)
