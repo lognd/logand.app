@@ -1,0 +1,34 @@
+name: Cleanup GHCR
+
+# Every push to main leaves a permanently-tagged backend image behind
+# (see deploy.yml -- tags ghcr.io/lognd/logand.app/backend:<sha> in
+# addition to :latest), and nothing ever removes old ones. This doesn't
+# cost anything on a public package (generous free storage), but the
+# version list otherwise grows forever with no cleanup. Runs weekly, plus
+# workflow_dispatch for an on-demand manual run.
+on:
+  schedule:
+    - cron: "0 5 * * 0" # Sundays, 05:00 UTC
+  workflow_dispatch: {}
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    steps:
+      - name: delete old backend image versions
+        uses: actions/delete-package-versions@v5
+        with:
+          package-name: "logand.app/backend"
+          package-type: "container"
+          # Keep the 10 most recent versions regardless of age -- covers
+          # "roll back to a recent deploy" without needing to reason
+          # about a time window at all.
+          min-versions-to-keep: 10
+          # :latest always points at the newest build anyway (deploy.yml
+          # re-tags it every push) -- excluding it here is defense in
+          # depth against ever deleting the one tag docker-compose.yml's
+          # backend service actually pulls, not just relying on
+          # min-versions-to-keep's ordering to protect it.
+          ignore-versions: "^latest$"
