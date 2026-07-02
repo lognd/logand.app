@@ -104,7 +104,13 @@ services:
     image: ghcr.io/lognd/logand.app/backend:latest
     build:
       context: ./backend
-    command: ["uv", "run", "python", "-m", "logand_backend.scripts.scheduler"]
+    # No "uv run" prefix -- same reason as the migrate service's own
+    # comment above: the final Dockerfile stage has no uv installed (only
+    # the discarded build stage does), PATH already points at
+    # /app/.venv/bin directly. This was the actual cause of "exec: uv:
+    # executable file not found in $PATH" the one time this container
+    # tried to start.
+    command: ["python", "-m", "logand_backend.scripts.scheduler"]
     restart: unless-stopped
     env_file:
       - ./backend/.env
