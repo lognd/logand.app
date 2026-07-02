@@ -21,7 +21,12 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (isMutating) {
     const csrf = readCsrfCookie();
     if (csrf) headers.set("X-CSRF-Token", csrf);
-    if (init.body && !headers.has("Content-Type")) {
+    // FormData (file uploads, see api/budget.ts's uploadBudgetEvidence)
+    // must NOT get an explicit Content-Type -- the browser sets its own
+    // multipart/form-data boundary parameter when the body is a raw
+    // FormData object, and overriding it with a plain
+    // "multipart/form-data" (no boundary) breaks the request server-side.
+    if (init.body && !(init.body instanceof FormData) && !headers.has("Content-Type")) {
       headers.set("Content-Type", "application/json");
     }
   }
@@ -68,7 +73,12 @@ export function apiGet<T>(path: string): Promise<T> {
 export function apiPost<T>(path: string, body?: unknown): Promise<T> {
   return request<T>(path, {
     method: "POST",
-    body: body !== undefined ? JSON.stringify(body) : undefined,
+    body:
+      body === undefined
+        ? undefined
+        : body instanceof FormData
+          ? body
+          : JSON.stringify(body),
   });
 }
 

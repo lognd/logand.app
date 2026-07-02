@@ -303,17 +303,40 @@ export const handlers = [
   }),
 
   // -- admin budget ------------------------------------------------------
-  http.get("/api/admin/budget", () => {
+  http.get("/api/admin/budget", ({ request }) => {
     const denied = requireRole("admin");
     if (denied) return denied;
-    return HttpResponse.json(budgetEntries);
+    const url = new URL(request.url);
+    const category = url.searchParams.get("category");
+    const dateFrom = url.searchParams.get("date_from");
+    const dateTo = url.searchParams.get("date_to");
+    const filtered = budgetEntries.filter((b) => {
+      if (category && b.category !== category) return false;
+      if (dateFrom && b.occurred_on < dateFrom) return false;
+      if (dateTo && b.occurred_on > dateTo) return false;
+      return true;
+    });
+    return HttpResponse.json(filtered);
   }),
 
-  http.post("/api/admin/budget", async ({ request }) => {
+  // Query params, no body -- matches api/budget.py's create() route
+  // exactly (every param is a plain scalar). Was previously read as a
+  // JSON body here, silently agreeing with a frontend bug that sent one
+  // -- see api/budget.ts's doc comment for the real-vs-mocked-backend
+  // divergence this masked until a real end-to-end pass caught it.
+  http.post("/api/admin/budget", ({ request }) => {
     const denied = requireRole("admin");
     if (denied) return denied;
-    const body = (await request.json()) as Omit<BudgetEntry, "id">;
-    const entry: BudgetEntry = { id: mockId("bud"), ...body };
+    const url = new URL(request.url);
+    const entry: BudgetEntry = {
+      id: mockId("bud"),
+      amount: url.searchParams.get("amount") ?? "0",
+      category: url.searchParams.get("category") ?? "",
+      occurred_on: url.searchParams.get("occurred_on") ?? "",
+      vendor: url.searchParams.get("vendor"),
+      memo: url.searchParams.get("memo"),
+      corrects_entry_id: null,
+    };
     budgetEntries.push(entry);
     return HttpResponse.json({ id: entry.id }, { status: 201 });
   }),
@@ -332,7 +355,7 @@ export const handlers = [
     const header = "id,occurred_on,category,vendor,amount,memo";
     const rows = budgetEntries.map(
       (b) =>
-        `${b.id},${b.occurredOn},${b.category},${b.vendor ?? ""},${b.amount},${b.memo ?? ""}`,
+        `${b.id},${b.occurred_on},${b.category},${b.vendor ?? ""},${b.amount},${b.memo ?? ""}`,
     );
     return new HttpResponse<BodyInit>([header, ...rows].join("\n"), {
       headers: {

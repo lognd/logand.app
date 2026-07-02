@@ -135,7 +135,8 @@ export const budgetEntries: BudgetEntry[] = [
     category: "software",
     vendor: "JetBrains",
     memo: "Annual IDE license",
-    occurredOn: "2026-01-10",
+    occurred_on: "2026-01-10",
+    corrects_entry_id: null,
   },
   {
     id: "bud-002",
@@ -143,7 +144,8 @@ export const budgetEntries: BudgetEntry[] = [
     category: "supplies",
     vendor: "DigiKey",
     memo: "Resistor/cap assortment + soldering tips",
-    occurredOn: "2026-03-22",
+    occurred_on: "2026-03-22",
+    corrects_entry_id: null,
   },
   {
     id: "bud-003",
@@ -151,7 +153,8 @@ export const budgetEntries: BudgetEntry[] = [
     category: "travel",
     vendor: "Amtrak",
     memo: "Client site visit",
-    occurredOn: "2026-04-02",
+    occurred_on: "2026-04-02",
+    corrects_entry_id: null,
   },
 ];
 
