@@ -82,6 +82,7 @@ async def generate_due_recurring_invoices(db: AsyncSession, as_of: date) -> list
                     description=li.description,
                     quantity=li.quantity,
                     unit_price=li.unit_price,
+                    unit=li.unit,
                 )
             )
         await db.flush()

@@ -48,3 +48,17 @@ async def get_db() -> AsyncGenerator[AsyncSession]:
         except Exception:
             await session.rollback()
             raise
+
+
+def get_session() -> AsyncSession:
+    """For standalone scripts (scripts/generate_recurring_invoices.py, and
+    any future one-off maintenance entrypoint) that need a real session
+    but aren't running inside a FastAPI request -- get_db() above is a
+    dependency GENERATOR meant to be driven by FastAPI's own request
+    lifecycle (`async for` / `Depends`), not something a plain script
+    calls directly. This is just `_sessionmaker()` itself, exposed as a
+    real public function instead of every caller reaching into the
+    module's private `_sessionmaker` global."""
+    if _sessionmaker is None:
+        raise RuntimeError("init_engine() must be called before get_session() is used")
+    return _sessionmaker()

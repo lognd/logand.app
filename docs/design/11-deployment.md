@@ -13,8 +13,27 @@ docker-compose.yml
                   #   once prerendered, see 10) -- caddy serves frontend/dist as a file_server block
   postgres       # official postgres image, named volume for data
   redis          # rate limiting (see 02) + can double as a cache later
+  scheduler      # daily recurring-invoice generation, see below
   backup         # scheduled pg_dump + storage-volume tarball, pushed to off-box R2, see below
 ```
+
+## Recurring-invoice scheduler
+
+The `scheduler` service reuses the exact same built `backend` image (same
+code/deps, no second Dockerfile to keep in sync) with a different
+`command`: `scripts/scheduler.py`'s `main_loop()`, a long-running process
+that sleeps until 04:00 UTC, calls
+`domain/invoices/recurrence.py::generate_due_recurring_invoices` once via
+`scripts/generate_recurring_invoices.py`, logs the result, and loops back
+to sleep until tomorrow. A failed run is logged and does not kill the
+container -- it just tries again at the next scheduled time.
+
+No system cron/dcron here (unlike `backup`, below) -- `backend/Dockerfile`'s
+final stage runs as a non-root `appuser`, and cron's daemon needs root to
+manage per-user crontabs. A plain Python sleep loop needs no OS package
+and no elevated user at all, at the cost of only ever running this one
+job on this one fixed schedule -- which is this container's only job,
+ever, so that's not a real limitation.
 
 ## Caddy
 

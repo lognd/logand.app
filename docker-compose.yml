@@ -73,6 +73,24 @@ services:
     volumes:
       - redis_data:/data
 
+  # Recurring-invoice generation -- see domain/invoices/recurrence.py and
+  # scripts/scheduler.py's own doc comment. Reuses the SAME built backend
+  # image (same code/deps, no separate Dockerfile to keep in sync), just
+  # with a different command -- a long-running sleep-until-next-run loop
+  # instead of uvicorn, so it never needs system cron (which would need
+  # this image's non-root appuser to somehow gain crontab-management
+  # privileges it deliberately doesn't have).
+  scheduler:
+    build:
+      context: ./backend
+    command: ["uv", "run", "python", "-m", "logand_backend.scripts.scheduler"]
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   backup:
     build:
       context: ./ops

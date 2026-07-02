@@ -55,6 +55,13 @@ npm run build   # outputs frontend/dist, which docker-compose.yml mounts into ca
 cd ..
 ```
 
+Public project-showcase media (photos/videos/PDFs) is uploaded
+separately, straight to R2, via
+`backend/src/logand_backend/scripts/upload_public_asset.py` -- see
+[design/13-storage-abstraction.md](design/13-storage-abstraction.md#public-assets-and-caching)
+for the caching convention (long-lived immutable Cache-Control, new
+key per replacement, never overwrite).
+
 ## 3. Bring up the stack
 
 ```bash
