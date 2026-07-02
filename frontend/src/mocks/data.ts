@@ -19,6 +19,7 @@ export interface MockInvoiceLineItem {
   description: string;
   quantity: string;
   unit_price: string;
+  unit: string | null;
 }
 
 export interface MockPayment {
@@ -54,10 +55,11 @@ export const invoices: MockInvoiceDetail[] = [
     currency: "usd",
     memo: "Website redesign, phase 1",
     due_date: "2026-07-15",
+    paid_at: null,
     is_recurring: false,
     line_items: [
-      { id: "li-1", description: "Design mockups", quantity: "1", unit_price: "300.00" },
-      { id: "li-2", description: "Revisions", quantity: "3", unit_price: "50.00" },
+      { id: "li-1", description: "Design mockups", quantity: "1", unit_price: "300.00", unit: null },
+      { id: "li-2", description: "Revisions", quantity: "3", unit_price: "50.00", unit: "revision" },
     ],
     payments: [],
   },
@@ -69,6 +71,7 @@ export const invoices: MockInvoiceDetail[] = [
     currency: "usd",
     memo: "Monthly retainer -- June",
     due_date: "2026-06-30",
+    paid_at: null,
     is_recurring: true,
     line_items: [
       {
@@ -76,6 +79,7 @@ export const invoices: MockInvoiceDetail[] = [
         description: "Retainer hours",
         quantity: "12",
         unit_price: "100.00",
+        unit: "hr",
       },
     ],
     payments: [],
@@ -88,6 +92,7 @@ export const invoices: MockInvoiceDetail[] = [
     currency: "usd",
     memo: "Server migration",
     due_date: "2026-05-20",
+    paid_at: "2026-05-18T14:32:00Z",
     is_recurring: false,
     line_items: [
       {
@@ -95,6 +100,7 @@ export const invoices: MockInvoiceDetail[] = [
         description: "Migration labor",
         quantity: "7.5",
         unit_price: "104.0667",
+        unit: "hr",
       },
     ],
     payments: [
@@ -115,6 +121,7 @@ export const invoices: MockInvoiceDetail[] = [
     currency: "usd",
     memo: "Domain + hosting renewal",
     due_date: "2026-06-01",
+    paid_at: null,
     is_recurring: true,
     line_items: [
       {
@@ -122,6 +129,7 @@ export const invoices: MockInvoiceDetail[] = [
         description: "Hosting renewal",
         quantity: "1",
         unit_price: "199.99",
+        unit: null,
       },
     ],
     payments: [],
@@ -176,23 +184,26 @@ export const inventoryItems: InventoryItem[] = [
     name: "0603 resistor assortment",
     description: "1% tolerance, 170 values",
     quantity: 12,
-    locationId: "loc-001",
+    location_id: "loc-001",
     tags: ["resistor", "smd", "0603"],
+    unit_cost: "0.02",
   },
   {
     id: "item-002",
     name: "Soldering iron tips",
     description: "Conical, 1mm",
     quantity: 8,
-    locationId: "loc-002",
+    location_id: "loc-002",
     tags: ["soldering", "tips"],
+    unit_cost: "3.50",
   },
   {
     id: "item-003",
     name: "USB-C cables",
     description: "1m, braided",
     quantity: 15,
-    locationId: "loc-003",
+    location_id: "loc-003",
     tags: ["cable", "usb-c"],
+    unit_cost: null,
   },
 ];

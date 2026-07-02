@@ -53,9 +53,94 @@ function writeCurrentRole(role: Role): void {
   }
 }
 
+// item_id -> its adjustment history, newest first -- module-level (not
+// part of data.ts's InventoryItem fixtures) since it's a separate table
+// on the real backend (InventoryAdjustment), not a field on the item
+// itself.
+const inventoryAdjustments = new Map<
+  string,
+  {
+    id: string;
+    delta: number;
+    quantity_before: number;
+    quantity_after: number;
+    reason: string;
+    adjusted_by: string | null;
+    created_at: string;
+  }[]
+>();
+
+interface MockAdminDataChange {
+  id: string;
+  admin_id: string | null;
+  action: string;
+  target_table: string;
+  target_id: string;
+  before_state: Record<string, unknown> | null;
+  after_state: Record<string, unknown> | null;
+  created_at: string;
+}
+
+const adminDataChanges: MockAdminDataChange[] = [];
+
+interface MockBom {
+  id: string;
+  name: string;
+  description: string | null;
+  labor_hours: string;
+  labor_rate: string;
+  overhead_percent: string;
+}
+
+// A real, working starter BOM in mock mode -- resistor assortment from
+// inventoryItems above (which has a real unit_cost) -- so "Import from
+// BOM" and the /admin/boms page both have something real to demo without
+// an admin needing to create one from scratch first.
+const boms: MockBom[] = [
+  {
+    id: "bom-001",
+    name: "Sample PCB",
+    description: "Demo BOM for mock mode",
+    labor_hours: "1.5",
+    labor_rate: "35.00",
+    overhead_percent: "12.00",
+  },
+];
+
+// bom_id -> its material lines -- separate from the boms array itself,
+// same real-table-not-a-field reasoning as inventoryAdjustments above.
+const bomMaterialLines = new Map<
+  string,
+  { item_id: string; quantity_per_unit: number }[]
+>([["bom-001", [{ item_id: "item-001", quantity_per_unit: 25 }]]]);
+
+// invoice_id -> its uploaded payment-proof records, newest first --
+// same real-table-not-a-field reasoning as inventoryAdjustments/
+// bomMaterialLines above.
+const paymentProofs = new Map<
+  string,
+  { id: string; content_type: string; created_at: string }[]
+>();
+
+// customer id -> the ISO timestamp it was deactivated at -- absent means
+// active. Same real-table-not-a-field reasoning as the other mock state
+// maps above.
+const disabledCustomers = new Map<string, string>();
+
 const MOCK_ADMIN_EMAIL = "admin@logand.app";
 const MOCK_CUSTOMER_EMAIL = "customer@example.com";
 const MIN_PASSWORD_LENGTH = 8;
+
+// A few extra mock customers beyond MOCK_CUSTOMER_EMAIL so the admin
+// create-invoice form's search/filter combobox has something real to
+// search over in mock/dev mode -- one customer alone can't demonstrate
+// "in case I have a lot of people."
+const EXTRA_MOCK_CUSTOMERS = [
+  { id: "cust-alice", email: "alice.wong@gmail.com" },
+  { id: "cust-bob", email: "bob.martinez@outlook.com" },
+  { id: "cust-carol", email: "carol.singh@example.com" },
+  { id: "cust-dave", email: "dave.oconnor@yahoo.com" },
+];
 
 // Self-registered (mock) accounts, beyond the two seeded fixtures above.
 // sessionStorage-backed for the same reason readCurrentRole/writeCurrentRole
@@ -94,8 +179,8 @@ function requireRole(role: Exclude<Role, null>): HttpResponse<DefaultBodyType> |
 }
 
 function toListShape(inv: MockInvoiceDetail): Invoice {
-  const { id, status, amount_total, currency, memo, due_date } = inv;
-  return { id, status, amount_total, currency, memo, due_date };
+  const { id, status, amount_total, currency, memo, due_date, paid_at } = inv;
+  return { id, status, amount_total, currency, memo, due_date, paid_at };
 }
 
 export const handlers = [
@@ -166,8 +251,13 @@ export const handlers = [
     // PayPal always "unavailable" in mock mode -- there's no real
     // provider to hook the fake create/capture flow up to here, so the
     // mock UI shows only the always-real Stripe path plus the "contact
-    // us for Zelle/PayPal/in-person" messaging.
-    return HttpResponse.json({ stripe: true, paypal: false });
+    // us for Zelle/PayPal/in-person" messaging. A real-looking Zelle
+    // handle so the mock Pay page actually demos that display too.
+    return HttpResponse.json({
+      stripe: true,
+      paypal: false,
+      zelle_handle: "logan@logand.app",
+    });
   }),
 
   http.get("/api/invoices/:id", ({ params }) => {
@@ -190,10 +280,64 @@ export const handlers = [
   }),
 
   // -- admin customers (lookup for the create-invoice form) --------------
-  http.get("/api/admin/customers", () => {
+  http.get("/api/admin/customers", ({ request }) => {
     const denied = requireRole("admin");
     if (denied) return denied;
-    return HttpResponse.json([{ id: MOCK_CUSTOMER_ID, email: MOCK_CUSTOMER_EMAIL }]);
+    const all = [
+      { id: MOCK_CUSTOMER_ID, email: MOCK_CUSTOMER_EMAIL },
+      ...EXTRA_MOCK_CUSTOMERS,
+    ];
+    const q = new URL(request.url).searchParams.get("q");
+    const filtered = q
+      ? all.filter((c) => c.email.toLowerCase().includes(q.toLowerCase()))
+      : all;
+    return HttpResponse.json(filtered);
+  }),
+
+  http.get("/api/admin/customers/:id", ({ params }) => {
+    const denied = requireRole("admin");
+    if (denied) return denied;
+    const all = [
+      { id: MOCK_CUSTOMER_ID, email: MOCK_CUSTOMER_EMAIL },
+      ...EXTRA_MOCK_CUSTOMERS,
+    ];
+    const customer = all.find((c) => c.id === params.id);
+    if (!customer) return HttpResponse.json({ detail: "not found" }, { status: 404 });
+    return HttpResponse.json({
+      id: customer.id,
+      email: customer.email,
+      role: "customer",
+      emails_opted_out: false,
+      disabled_at: disabledCustomers.get(customer.id) ?? null,
+      created_at: "2026-01-01T00:00:00Z",
+    });
+  }),
+
+  http.post("/api/admin/customers/:id/deactivate", ({ params }) => {
+    const denied = requireRole("admin");
+    if (denied) return denied;
+    disabledCustomers.set(params.id as string, new Date().toISOString());
+    return HttpResponse.json({ status: "deactivated" });
+  }),
+
+  http.post("/api/admin/customers/:id/reactivate", ({ params }) => {
+    const denied = requireRole("admin");
+    if (denied) return denied;
+    disabledCustomers.delete(params.id as string);
+    return HttpResponse.json({ status: "reactivated" });
+  }),
+
+  http.post("/api/admin/customers/:id/reset-password", async ({ request }) => {
+    const denied = requireRole("admin");
+    if (denied) return denied;
+    const body = (await request.json()) as { new_password: string };
+    if (body.new_password.length < 8) {
+      return HttpResponse.json(
+        { detail: "password must be at least 8 characters" },
+        { status: 422 },
+      );
+    }
+    return HttpResponse.json({ status: "reset" });
   }),
 
   // -- admin invoices --------------------------------------------------
@@ -226,12 +370,14 @@ export const handlers = [
       description: string;
       quantity: string;
       unit_price: string;
+      unit?: string | null;
     }[];
     const lineItems = rawLineItems.map((li) => ({
       id: mockId("li"),
       description: li.description,
       quantity: li.quantity,
       unit_price: li.unit_price,
+      unit: li.unit ?? null,
     }));
     const amountTotal = lineItems
       .reduce((sum, li) => sum + Number(li.quantity) * Number(li.unit_price), 0)
@@ -244,6 +390,7 @@ export const handlers = [
       currency: "usd",
       memo: memo ?? null,
       due_date: null,
+      paid_at: null,
       is_recurring: false,
       line_items: lineItems,
       payments: [],
@@ -298,8 +445,54 @@ export const handlers = [
     const paidSoFar = invoice.payments.reduce((sum, p) => sum + Number(p.amount), 0);
     if (paidSoFar >= Number(invoice.amount_total)) {
       invoice.status = "paid";
+      invoice.paid_at = new Date().toISOString();
     }
     return HttpResponse.json({ id: paymentId });
+  }),
+
+  // Real multipart upload -- mirrors api/invoices_public.py's
+  // upload_payment_proof, same as budget evidence's mock handler.
+  http.post(
+    "/api/invoices/:id/payment-proof",
+    async ({ params, request }) => {
+      const denied = requireRole("customer");
+      if (denied) return denied;
+      const invoice = invoices.find((i) => i.id === params.id);
+      if (!invoice) return HttpResponse.json({ detail: "not found" }, { status: 404 });
+      if (invoice.status === "draft" || invoice.status === "void") {
+        return HttpResponse.json(
+          { detail: "invoice is not in a state that allows this operation" },
+          { status: 409 },
+        );
+      }
+      const formData = await request.formData();
+      const file = formData.get("file") as File | null;
+      if (!file) return HttpResponse.json({ detail: "no file" }, { status: 422 });
+      const allowed = ["image/png", "image/jpeg", "image/webp", "application/pdf"];
+      if (!allowed.includes(file.type)) {
+        return HttpResponse.json(
+          { detail: "payment proof must be an image or PDF" },
+          { status: 415 },
+        );
+      }
+      const proof = {
+        id: mockId("proof"),
+        content_type: file.type,
+        created_at: new Date().toISOString(),
+      };
+      const proofs = paymentProofs.get(invoice.id) ?? [];
+      proofs.unshift(proof);
+      paymentProofs.set(invoice.id, proofs);
+      return HttpResponse.json({ id: proof.id });
+    },
+  ),
+
+  http.get("/api/admin/invoices/:id/payment-proof", ({ params }) => {
+    const denied = requireRole("admin");
+    if (denied) return denied;
+    const invoice = invoices.find((i) => i.id === params.id);
+    if (!invoice) return HttpResponse.json({ detail: "not found" }, { status: 404 });
+    return HttpResponse.json(paymentProofs.get(invoice.id) ?? []);
   }),
 
   // -- admin budget ------------------------------------------------------
@@ -396,7 +589,7 @@ export const handlers = [
     const locationId = url.searchParams.get("location_id");
     const tag = url.searchParams.get("tag");
     let results: InventoryItem[] = inventoryItems;
-    if (locationId) results = results.filter((i) => i.locationId === locationId);
+    if (locationId) results = results.filter((i) => i.location_id === locationId);
     if (tag) results = results.filter((i) => i.tags.includes(tag));
     if (q) {
       results = results.filter(
@@ -408,24 +601,93 @@ export const handlers = [
     return HttpResponse.json(results);
   }),
 
-  http.post("/api/admin/inventory/items", async ({ request }) => {
+  // Query params, not a JSON body -- matches the real backend's actual
+  // request shape (api/inventory.py's create() route), same fix as
+  // api/inventory.ts's own createInventoryItem doc comment.
+  http.post("/api/admin/inventory/items", ({ request }) => {
     const denied = requireRole("admin");
     if (denied) return denied;
-    const body = (await request.json()) as Omit<InventoryItem, "id">;
-    const item: InventoryItem = { id: mockId("item"), ...body };
+    const params = new URL(request.url).searchParams;
+    const item: InventoryItem = {
+      id: mockId("item"),
+      name: params.get("name") ?? "",
+      location_id: params.get("location_id") ?? "",
+      quantity: Number(params.get("quantity") ?? "1"),
+      description: params.get("description"),
+      tags: params.getAll("tags"),
+      unit_cost: params.get("unit_cost"),
+    };
     inventoryItems.push(item);
     return HttpResponse.json({ id: item.id }, { status: 201 });
   }),
 
-  http.patch("/api/admin/inventory/items/:id", async ({ params, request }) => {
+  http.patch("/api/admin/inventory/items/:id", ({ params, request }) => {
     const denied = requireRole("admin");
     if (denied) return denied;
     const item = inventoryItems.find((i) => i.id === params.id);
     if (!item) return HttpResponse.json({ detail: "not found" }, { status: 404 });
-    const body = (await request.json()) as Partial<InventoryItem>;
-    if (body.locationId !== undefined) item.locationId = body.locationId;
-    if (body.quantity !== undefined) item.quantity = body.quantity;
+    const q = new URL(request.url).searchParams;
+    const newLocationId = q.get("location_id");
+    const newQuantity = q.get("quantity");
+    if (newLocationId !== null) item.location_id = newLocationId;
+    if (newQuantity !== null) item.quantity = Number(newQuantity);
     return HttpResponse.json({ status: "ok" });
+  }),
+
+  http.patch("/api/admin/inventory/items/:id/unit-cost", ({ params, request }) => {
+    const denied = requireRole("admin");
+    if (denied) return denied;
+    const item = inventoryItems.find((i) => i.id === params.id);
+    if (!item) return HttpResponse.json({ detail: "not found" }, { status: 404 });
+    const unitCost = new URL(request.url).searchParams.get("unit_cost");
+    item.unit_cost = unitCost;
+    return HttpResponse.json({ status: "ok" });
+  }),
+
+  // The audited delta-based adjustment path (distinct from the plain
+  // PATCH above) -- mirrors api/inventory.py's real
+  // adjust_item_quantity/list_item_adjustments behavior closely enough
+  // to exercise the frontend's confirm+diff UI and history view against
+  // real request/response shapes in mock mode.
+  http.post(
+    "/api/admin/inventory/items/:id/adjust",
+    async ({ params, request }) => {
+      const denied = requireRole("admin");
+      if (denied) return denied;
+      const item = inventoryItems.find((i) => i.id === params.id);
+      if (!item) return HttpResponse.json({ detail: "not found" }, { status: 404 });
+      const body = (await request.json()) as { delta: number; reason: string };
+      const quantityAfter = item.quantity + body.delta;
+      if (quantityAfter < 0) {
+        return HttpResponse.json(
+          { detail: "adjustment would take quantity below zero" },
+          { status: 422 },
+        );
+      }
+      const adjustment = {
+        id: mockId("adj"),
+        delta: body.delta,
+        quantity_before: item.quantity,
+        quantity_after: quantityAfter,
+        reason: body.reason,
+        adjusted_by:
+          readCurrentRole() === "admin" ? "mock-admin-id" : null,
+        created_at: new Date().toISOString(),
+      };
+      item.quantity = quantityAfter;
+      const history = inventoryAdjustments.get(item.id) ?? [];
+      history.unshift(adjustment);
+      inventoryAdjustments.set(item.id, history);
+      return HttpResponse.json({ id: adjustment.id });
+    },
+  ),
+
+  http.get("/api/admin/inventory/items/:id/adjustments", ({ params }) => {
+    const denied = requireRole("admin");
+    if (denied) return denied;
+    const item = inventoryItems.find((i) => i.id === params.id);
+    if (!item) return HttpResponse.json({ detail: "not found" }, { status: 404 });
+    return HttpResponse.json(inventoryAdjustments.get(item.id) ?? []);
   }),
 
   http.delete("/api/admin/inventory/items/:id", ({ params }) => {
@@ -436,5 +698,303 @@ export const handlers = [
       return HttpResponse.json({ detail: "not found" }, { status: 404 });
     inventoryItems.splice(index, 1);
     return HttpResponse.json({ status: "deleted" });
+  }),
+
+  // -- admin bills of materials -------------------------------------------
+  http.get("/api/admin/boms", () => {
+    const denied = requireRole("admin");
+    if (denied) return denied;
+    return HttpResponse.json(boms);
+  }),
+
+  http.post("/api/admin/boms", async ({ request }) => {
+    const denied = requireRole("admin");
+    if (denied) return denied;
+    const body = (await request.json()) as {
+      name: string;
+      labor_hours?: string;
+      labor_rate?: string;
+      overhead_percent?: string;
+      description?: string | null;
+    };
+    const bom: MockBom = {
+      id: mockId("bom"),
+      name: body.name,
+      description: body.description ?? null,
+      labor_hours: body.labor_hours ?? "0",
+      labor_rate: body.labor_rate ?? "0",
+      overhead_percent: body.overhead_percent ?? "0",
+    };
+    boms.push(bom);
+    bomMaterialLines.set(bom.id, []);
+    return HttpResponse.json({ id: bom.id }, { status: 201 });
+  }),
+
+  http.get("/api/admin/boms/:id", ({ params }) => {
+    const denied = requireRole("admin");
+    if (denied) return denied;
+    const bom = boms.find((b) => b.id === params.id);
+    if (!bom) return HttpResponse.json({ detail: "not found" }, { status: 404 });
+    return HttpResponse.json(bom);
+  }),
+
+  http.delete("/api/admin/boms/:id", ({ params }) => {
+    const denied = requireRole("admin");
+    if (denied) return denied;
+    const index = boms.findIndex((b) => b.id === params.id);
+    if (index === -1)
+      return HttpResponse.json({ detail: "not found" }, { status: 404 });
+    boms.splice(index, 1);
+    bomMaterialLines.delete(params.id as string);
+    return HttpResponse.json({ status: "deleted" });
+  }),
+
+  http.post("/api/admin/boms/:id/lines", async ({ params, request }) => {
+    const denied = requireRole("admin");
+    if (denied) return denied;
+    const bom = boms.find((b) => b.id === params.id);
+    if (!bom) return HttpResponse.json({ detail: "not found" }, { status: 404 });
+    const body = (await request.json()) as {
+      item_id: string;
+      quantity_per_unit: number;
+    };
+    const item = inventoryItems.find((i) => i.id === body.item_id);
+    if (!item) return HttpResponse.json({ detail: "item not found" }, { status: 404 });
+    const lines = bomMaterialLines.get(bom.id) ?? [];
+    if (lines.some((l) => l.item_id === body.item_id)) {
+      return HttpResponse.json(
+        { detail: "this item already has a material line on this bom" },
+        { status: 409 },
+      );
+    }
+    lines.push({ item_id: body.item_id, quantity_per_unit: body.quantity_per_unit });
+    bomMaterialLines.set(bom.id, lines);
+    return HttpResponse.json({ id: mockId("line") });
+  }),
+
+  http.delete("/api/admin/boms/:bomId/lines/:itemId", ({ params }) => {
+    const denied = requireRole("admin");
+    if (denied) return denied;
+    const lines = bomMaterialLines.get(params.bomId as string);
+    if (!lines) return HttpResponse.json({ detail: "not found" }, { status: 404 });
+    const next = lines.filter((l) => l.item_id !== params.itemId);
+    if (next.length === lines.length) {
+      return HttpResponse.json({ detail: "not found" }, { status: 404 });
+    }
+    bomMaterialLines.set(params.bomId as string, next);
+    return HttpResponse.json({ status: "removed" });
+  }),
+
+  http.get("/api/admin/boms/:id/cost", ({ params, request }) => {
+    const denied = requireRole("admin");
+    if (denied) return denied;
+    const bom = boms.find((b) => b.id === params.id);
+    if (!bom) return HttpResponse.json({ detail: "not found" }, { status: 404 });
+    const buildQuantity = Number(
+      new URL(request.url).searchParams.get("build_quantity") ?? "1",
+    );
+    const lines = bomMaterialLines.get(bom.id) ?? [];
+    const materialLines = [];
+    let materialCost = 0;
+    for (const line of lines) {
+      const item = inventoryItems.find((i) => i.id === line.item_id);
+      if (!item || item.unit_cost === null) {
+        return HttpResponse.json(
+          { detail: "an item on this bill of materials has no unit_cost set" },
+          { status: 422 },
+        );
+      }
+      const quantity = line.quantity_per_unit * buildQuantity;
+      const lineCost = Number(item.unit_cost) * quantity;
+      materialCost += lineCost;
+      materialLines.push({
+        item_id: item.id,
+        item_name: item.name,
+        quantity,
+        unit_cost: item.unit_cost,
+        line_cost: lineCost.toFixed(4),
+      });
+    }
+    const laborHours = Number(bom.labor_hours) * buildQuantity;
+    const laborCost = laborHours * Number(bom.labor_rate);
+    const overheadCost = (materialCost + laborCost) * (Number(bom.overhead_percent) / 100);
+    const totalCost = materialCost + laborCost + overheadCost;
+    return HttpResponse.json({
+      material_lines: materialLines,
+      material_cost: materialCost.toFixed(4),
+      labor_hours: String(laborHours),
+      labor_cost: laborCost.toFixed(4),
+      overhead_percent: bom.overhead_percent,
+      overhead_cost: overheadCost.toFixed(4),
+      total_cost: totalCost.toFixed(4),
+    });
+  }),
+
+  http.post("/api/admin/boms/:id/consume", async ({ params, request }) => {
+    const denied = requireRole("admin");
+    if (denied) return denied;
+    const bom = boms.find((b) => b.id === params.id);
+    if (!bom) return HttpResponse.json({ detail: "not found" }, { status: 404 });
+    const body = (await request.json()) as {
+      build_quantity: number;
+      reason?: string;
+    };
+    const lines = bomMaterialLines.get(bom.id) ?? [];
+    // Two-phase, same as the real backend: check every line first, only
+    // apply if everything has enough stock.
+    for (const line of lines) {
+      const item = inventoryItems.find((i) => i.id === line.item_id);
+      if (!item || item.quantity < line.quantity_per_unit * body.build_quantity) {
+        return HttpResponse.json(
+          { detail: "adjustment would take quantity below zero" },
+          { status: 422 },
+        );
+      }
+    }
+    const adjustmentIds: string[] = [];
+    for (const line of lines) {
+      const item = inventoryItems.find((i) => i.id === line.item_id)!;
+      const need = line.quantity_per_unit * body.build_quantity;
+      const quantityBefore = item.quantity;
+      item.quantity -= need;
+      const adjustment = {
+        id: mockId("adj"),
+        delta: -need,
+        quantity_before: quantityBefore,
+        quantity_after: item.quantity,
+        reason: body.reason || `BOM consumption: ${bom.name} x${body.build_quantity}`,
+        adjusted_by: readCurrentRole() === "admin" ? "mock-admin-id" : null,
+        created_at: new Date().toISOString(),
+      };
+      const history = inventoryAdjustments.get(item.id) ?? [];
+      history.unshift(adjustment);
+      inventoryAdjustments.set(item.id, history);
+      adjustmentIds.push(adjustment.id);
+    }
+    return HttpResponse.json({ adjustment_ids: adjustmentIds });
+  }),
+
+  // -- admin generic data browser/editor -----------------------------------
+  // Mocked over just "inventory_items" (the real backend is reflection-based
+  // over every table -- see domain/admin_data/service.py -- but a full mock
+  // of every table's schema isn't worth it for a demo dataset) so the page
+  // has something real to browse/edit/revert without a backend.
+  http.get("/api/admin/data/tables", () => {
+    const denied = requireRole("admin");
+    if (denied) return denied;
+    return HttpResponse.json(["inventory_items", "inventory_locations"]);
+  }),
+
+  http.get("/api/admin/data/tables/:table/schema", ({ params }) => {
+    const denied = requireRole("admin");
+    if (denied) return denied;
+    if (params.table === "inventory_items") {
+      return HttpResponse.json([
+        { name: "id", type: "UUID", nullable: false, primary_key: true, editable: false },
+        {
+          name: "name",
+          type: "VARCHAR",
+          nullable: false,
+          primary_key: false,
+          editable: true,
+        },
+        {
+          name: "quantity",
+          type: "INTEGER",
+          nullable: false,
+          primary_key: false,
+          editable: true,
+        },
+      ]);
+    }
+    return HttpResponse.json({ detail: "no such table" }, { status: 404 });
+  }),
+
+  http.get("/api/admin/data/tables/:table/rows", ({ params }) => {
+    const denied = requireRole("admin");
+    if (denied) return denied;
+    if (params.table === "inventory_items") return HttpResponse.json(inventoryItems);
+    if (params.table === "inventory_locations")
+      return HttpResponse.json(inventoryLocations);
+    return HttpResponse.json({ detail: "no such table" }, { status: 404 });
+  }),
+
+  http.get("/api/admin/data/tables/:table/rows/:id", ({ params }) => {
+    const denied = requireRole("admin");
+    if (denied) return denied;
+    const row = inventoryItems.find((i) => i.id === params.id);
+    if (!row) return HttpResponse.json({ detail: "row was not found" }, { status: 404 });
+    return HttpResponse.json(row);
+  }),
+
+  http.patch("/api/admin/data/tables/:table/rows/:id", async ({ params, request }) => {
+    const denied = requireRole("admin");
+    if (denied) return denied;
+    const item = inventoryItems.find((i) => i.id === params.id) as
+      | Record<string, unknown>
+      | undefined;
+    if (!item) return HttpResponse.json({ detail: "row was not found" }, { status: 404 });
+    const body = (await request.json()) as { changes: Record<string, unknown> };
+    const before = { ...item };
+    Object.assign(item, body.changes);
+    const changeId = mockId("change");
+    adminDataChanges.unshift({
+      id: changeId,
+      admin_id: "mock-admin-id",
+      action: "data.update",
+      target_table: String(params.table),
+      target_id: String(params.id),
+      before_state: before,
+      after_state: { ...item },
+      created_at: new Date().toISOString(),
+    });
+    return HttpResponse.json({ change_id: changeId });
+  }),
+
+  http.delete("/api/admin/data/tables/:table/rows/:id", ({ params }) => {
+    const denied = requireRole("admin");
+    if (denied) return denied;
+    const index = inventoryItems.findIndex((i) => i.id === params.id);
+    if (index === -1)
+      return HttpResponse.json({ detail: "row was not found" }, { status: 404 });
+    const [removed] = inventoryItems.splice(index, 1);
+    const changeId = mockId("change");
+    adminDataChanges.unshift({
+      id: changeId,
+      admin_id: "mock-admin-id",
+      action: "data.delete",
+      target_table: String(params.table),
+      target_id: String(params.id),
+      before_state: removed as unknown as Record<string, unknown>,
+      after_state: null,
+      created_at: new Date().toISOString(),
+    });
+    return HttpResponse.json({ change_id: changeId });
+  }),
+
+  http.get("/api/admin/data/changes", () => {
+    const denied = requireRole("admin");
+    if (denied) return denied;
+    return HttpResponse.json(adminDataChanges);
+  }),
+
+  http.post("/api/admin/data/changes/:id/revert", ({ params }) => {
+    const denied = requireRole("admin");
+    if (denied) return denied;
+    const entry = adminDataChanges.find((c) => c.id === params.id);
+    if (!entry)
+      return HttpResponse.json(
+        { detail: "audit log entry was not found" },
+        { status: 404 },
+      );
+    if (entry.action === "data.update" && entry.before_state) {
+      const item = inventoryItems.find((i) => i.id === entry.target_id) as
+        | Record<string, unknown>
+        | undefined;
+      if (item) Object.assign(item, entry.before_state);
+    } else if (entry.action === "data.delete" && entry.before_state) {
+      inventoryItems.push(entry.before_state as unknown as InventoryItem);
+    }
+    return HttpResponse.json({ change_id: mockId("change") });
   }),
 ];
