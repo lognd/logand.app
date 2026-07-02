@@ -1,4 +1,4 @@
-.PHONY: install test test-system coverage lint typecheck check fmt clean bump migrate
+.PHONY: install test test-system coverage lint typecheck check fmt clean bump migrate healthcheck
 
 install:
 	uv sync
@@ -34,6 +34,14 @@ check: lint typecheck test
 
 migrate:
 	uv run alembic upgrade head
+
+# Checks every real subsystem/dependency (DB, redis, Stripe, PayPal,
+# SMTP, storage backend, latexmk, backups, public reachability) against
+# whatever backend/.env currently points at -- see docs/usage.md's
+# health-check section. --skip-http since a local `make healthcheck`
+# usually isn't run against a live public domain.
+healthcheck:
+	uv run python -m logand_backend.scripts.health_check --skip-http
 
 bump:
 	uv run python scripts/bump_version.py

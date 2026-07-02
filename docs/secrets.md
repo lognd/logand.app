@@ -19,7 +19,12 @@ Each line links to its own section below for the *how*; this is the
 before running through [deployment.md](deployment.md) step by step.
 Items marked **optional** can be skipped entirely for a first deploy
 (the site works completely without them) and turned on later with zero
-code changes, just an env var + restart.
+code changes, just an env var + restart. Once you've filled in
+`backend/.env`, run [deployment.md](deployment.md)'s health check
+(`make healthcheck`, or `docker compose exec backend python -m
+logand_backend.scripts.health_check`) to verify every value actually
+works (a real Postgres connection, a real Stripe API call, etc.), not
+just that something is set.
 
 **Required (the site does not run correctly without these):**
 

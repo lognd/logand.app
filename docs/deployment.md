@@ -154,6 +154,44 @@ staging only ever keeps the most recent 3 runs (it's a short buffer for
 See [runbooks/restore.md](runbooks/restore.md) for the restore
 procedure.
 
+## Health check -- verify everything is actually wired up correctly
+
+`backend/src/logand_backend/scripts/health_check.py` checks every real
+subsystem/dependency against whatever `backend/.env` currently points
+at -- not just "is a value set," but real, live checks: a real
+`SELECT 1` against Postgres, a real Redis `PING`, a real Stripe API
+call with your actual key, a real PayPal OAuth token fetch, a real
+write/read/delete round trip against whichever storage backend is
+configured (`local` or `r2`), and (unless `--skip-http`) a real HTTP
+request to your own `PUBLIC_BASE_URL`.
+
+Run it after any first deploy or config change:
+
+```bash
+docker compose exec backend python -m logand_backend.scripts.health_check
+# or locally against backend/.env directly, before DNS/deploy is live:
+cd backend && make healthcheck
+```
+
+Output is one line per check, colored and grouped by section:
+
+- `[  OK]` -- verified working.
+- `[WARN]` -- a graceful, expected fallback is active (PayPal/SMTP not
+  configured, no off-box backup destination set, `latexmk` missing
+  locally) -- not broken, just not fully set up yet. Review these, but
+  they don't block anything.
+- `[FAIL]` -- something is actually broken (can't reach Postgres, a
+  real API key was rejected, still running the dev-only default
+  `SESSION_SECRET`/`PAYMENT_PROCESSOR_SECRET`/`STRIPE_WEBHOOK_SECRET`).
+  Exits non-zero if any check fails -- safe to wire into a post-deploy
+  CI/CD step or a monitoring cron if you want an automated page on
+  regression.
+
+A clean first-deploy run should show zero `FAIL`s and only the `WARN`s
+you're deliberately deferring (PayPal, SMTP, off-box backups are all
+fine to defer -- see [secrets.md](secrets.md)'s Go-live checklist for
+what's actually required vs. optional).
+
 ## Redeploying / restarting after config changes
 
 Most `backend/.env` changes just need `docker compose up -d backend`
