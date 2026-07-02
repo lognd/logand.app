@@ -4,7 +4,33 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Logan Dapp</title>
-    <meta name="description" content="Personal and professional site of Logan Dapp." />
+    <meta
+      name="description"
+      content="Logan Dapp: software, embedded, mechanical -- three engineers, one brain. Real systems designed, built, and shipped end to end, from PCB firmware to production backend infrastructure, this site included."
+    />
+    <meta name="robots" content="index, follow" />
+    <link rel="canonical" href="https://logand.app/" />
+    <!-- Route-specific title/description/canonical/OG/Twitter overrides are
+         applied client-side per page (see src/app/layout/usePageMeta.ts) --
+         these are the defaults a crawler/scraper sees before that runs, and
+         what non-JS-executing scrapers (some social-card fetchers) fall
+         back to. No og:image yet -- no site logo/screenshot asset exists to
+         point one at; add one and set it here once it does, rather than
+         shipping a link to a 404. -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Logan Dapp" />
+    <meta property="og:title" content="Logan Dapp" />
+    <meta
+      property="og:description"
+      content="Logan Dapp: software, embedded, mechanical -- three engineers, one brain. Real systems designed, built, and shipped end to end, from PCB firmware to production backend infrastructure, this site included."
+    />
+    <meta property="og:url" content="https://logand.app/" />
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content="Logan Dapp" />
+    <meta
+      name="twitter:description"
+      content="Logan Dapp: software, embedded, mechanical -- three engineers, one brain. Real systems designed, built, and shipped end to end, from PCB firmware to production backend infrastructure, this site included."
+    />
     <!-- JetBrains Mono / IBM Plex Mono, see docs/design/09-design-system.md -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />

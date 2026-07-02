@@ -2,6 +2,7 @@ import { useRef } from "react";
 import { MatrixRain } from "../../../ascii/MatrixRain";
 import { ParticleLayer } from "../../../ascii/ParticleLayer";
 import { useBrightnessWave } from "../../layout/useBrightnessWave";
+import { usePageMeta } from "../../layout/usePageMeta";
 import {
   EmailIcon,
   GithubIcon,
@@ -86,9 +87,40 @@ const CONTACT_ENTRIES: ContactEntry[] = [
 // Same MatrixRain background + ParticleLayer interaction as Landing's
 // "Rain" option -- see Projects.tsx for why this is unconditional here
 // rather than picker-selectable.
+// Person schema with an embedded ContactPoint, per
+// docs/design/10-seo-and-agent-accessibility.md ("Contact: ContactPoint
+// embedded in the Person schema, not a separate page-level schema") --
+// mirrors Landing.tsx's PERSON_JSON_LD rather than duplicating a second
+// Person entity, with the real channels from CONTACT_ENTRIES above.
+const CONTACT_PERSON_JSON_LD = {
+  "@context": "https://schema.org",
+  "@type": "Person",
+  name: "Logan Dapp",
+  url: "https://logand.app",
+  jobTitle: "Software, Embedded, and Mechanical Engineer",
+  sameAs: [
+    "https://github.com/lognd",
+    "https://www.youtube.com/@logandapp7542",
+    "https://instagram.com/logan.dapp",
+    "https://www.linkedin.com/in/logandapp",
+  ],
+  contactPoint: {
+    "@type": "ContactPoint",
+    email: "logan@logand.app",
+    telephone: "+1-423-779-2811",
+    contactType: "personal",
+  },
+};
+
 export function Contact() {
   const contentRef = useRef<HTMLDivElement | null>(null);
   useBrightnessWave(contentRef);
+  usePageMeta({
+    title: "Contact",
+    description:
+      "Get in touch with Logan Dapp -- email, GitHub, LinkedIn, Instagram, YouTube, and phone.",
+    path: "/contact",
+  });
 
   return (
     // No min-h-[480px] floor -- see Landing.tsx's identical fix; it forced
@@ -96,6 +128,10 @@ export function Contact() {
     // flex-1 (not h-full) for the same reason as Landing.tsx's <main> --
     // see Shell.tsx's content-wrapper comment.
     <main className="relative isolate flex flex-1 flex-col">
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(CONTACT_PERSON_JSON_LD) }}
+      />
       <MatrixRain className="absolute inset-0 -z-[5]" />
       <ParticleLayer className="pointer-events-none fixed inset-0 -z-[4]" />
       <div className="relative z-10 flex flex-1 items-center justify-center overflow-y-auto px-4 py-12">

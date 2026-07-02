@@ -7,6 +7,7 @@ import { SpinningShape } from "../../../ascii/SpinningShape";
 import { LINK_CLASS } from "../../../styles/a11y";
 import { GlitchText } from "../../layout/GlitchText";
 import { useBrightnessWave } from "../../layout/useBrightnessWave";
+import { usePageMeta } from "../../layout/usePageMeta";
 
 const BACKGROUND_OPTIONS: BackgroundOption[] = ["donut", "cube", "sphere", "rain"];
 
@@ -21,7 +22,7 @@ const PERSON_JSON_LD = {
   "@type": "Person",
   name: "Logan Dapp",
   url: "https://logand.app",
-  jobTitle: "Software, Computer, and Mechanical Engineer",
+  jobTitle: "Software, Embedded, and Mechanical Engineer",
   sameAs: [
     "https://github.com/lognd",
     "https://www.youtube.com/@logandapp7542",
@@ -81,6 +82,12 @@ export function Landing() {
   const [bgMenuOpen, setBgMenuOpen] = useState(false);
   const contentRef = useRef<HTMLDivElement | null>(null);
   useBrightnessWave(contentRef);
+  usePageMeta({
+    title: "Logan Dapp",
+    description:
+      "Logan Dapp: software, embedded, mechanical -- three engineers, one brain. Real systems designed, built, and shipped end to end, from PCB firmware to production backend infrastructure, this site included.",
+    path: "/",
+  });
 
   return (
     // `isolate` for the same reason as Shell.tsx's root div -- without its

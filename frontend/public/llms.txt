@@ -1,0 +1,30 @@
+# Logan Dapp
+
+> Logan Dapp: software, embedded, mechanical -- three engineers, one
+> brain. This site (logand.app) is his personal site and portfolio, and
+> is itself one of his projects: a FastAPI + Postgres backend, a
+> React/TypeScript frontend, a Rust/WASM ASCII renderer for the animated
+> background, and a native Android companion app, all built, deployed,
+> and maintained end to end by him.
+
+## Pages
+
+- [Home](https://logand.app/): who Logan is, one-line summary, and
+  primary navigation.
+- [Projects](https://logand.app/projects): a chronological feed of real
+  projects -- software, embedded electronics, mechanical/FEA
+  engineering, ML research, and teaching -- each with a description,
+  timeframe, and links to source code or writeups where available.
+- [Contact](https://logand.app/contact): real, current contact
+  channels (email, GitHub, LinkedIn, Instagram, YouTube, phone), each
+  with reliability notes where relevant.
+
+## Notes for agents
+
+- Structured data (schema.org JSON-LD: `Person`, `ItemList` of
+  `SoftwareSourceCode`/`CreativeWork`) is embedded in each page and is
+  the most reliable way to extract project/contact details
+  programmatically.
+- `/admin/*`, `/portal`, and `/invoices` are authenticated,
+  non-public application surfaces -- not part of this site's public
+  content and disallowed in robots.txt.

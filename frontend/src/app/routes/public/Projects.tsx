@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { MatrixRain } from "../../../ascii/MatrixRain";
 import { ParticleLayer } from "../../../ascii/ParticleLayer";
 import { useBrightnessWave } from "../../layout/useBrightnessWave";
+import { usePageMeta } from "../../layout/usePageMeta";
 import { GithubRepoCard, LinkChip } from "./GithubRepoCard";
 import { ImageCarousel, type CarouselSlide } from "./ImageCarousel";
 import { TerminalWindow } from "./TerminalWindow";
@@ -224,6 +225,34 @@ const PROJECTS: Project[] = [
   },
 ];
 
+// One CreativeWork entry per project, per
+// docs/design/10-seo-and-agent-accessibility.md ("Projects page:
+// CreativeWork/SoftwareSourceCode entries per project") -- SoftwareSourceCode
+// for anything with a real owned repo (a codeRepository an LLM/crawler can
+// follow), the plainer CreativeWork otherwise (papers, coursework with no
+// repo of its own).
+const PROJECTS_JSON_LD = {
+  "@context": "https://schema.org",
+  "@type": "ItemList",
+  itemListElement: PROJECTS.map((project, i) => {
+    const primaryRepo = project.githubRepos?.[0];
+    return {
+      "@type": "ListItem",
+      position: i + 1,
+      item: {
+        "@type": primaryRepo ? "SoftwareSourceCode" : "CreativeWork",
+        name: project.title,
+        description: project.description,
+        temporalCoverage: project.period,
+        author: { "@type": "Person", name: "Logan Dapp" },
+        ...(primaryRepo
+          ? { codeRepository: `https://github.com/${primaryRepo.owner}/${primaryRepo.repo}` }
+          : {}),
+      },
+    };
+  }),
+};
+
 // Same MatrixRain background + ParticleLayer (mouse-drag/explosion)
 // interaction as Landing's "Rain" option, always on here (no picker).
 //
@@ -233,6 +262,12 @@ const PROJECTS: Project[] = [
 export function Projects() {
   const feedRef = useRef<HTMLDivElement | null>(null);
   useBrightnessWave(feedRef);
+  usePageMeta({
+    title: "Projects",
+    description:
+      "Real projects by Logan Dapp: this site's own FastAPI/React/Rust-WASM stack, embedded electronics, finite-element analysis, ML research, and dev tooling like frob and typani.",
+    path: "/projects",
+  });
   const [feedHeight, setFeedHeight] = useState<number | null>(null);
   useEffect(() => {
     function measure() {
@@ -252,6 +287,10 @@ export function Projects() {
 
   return (
     <main className="relative isolate flex flex-1 flex-col">
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(PROJECTS_JSON_LD) }}
+      />
       <MatrixRain className="absolute inset-0 -z-[5]" />
       <ParticleLayer className="pointer-events-none fixed inset-0 -z-[4]" />
       <div
