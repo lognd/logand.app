@@ -175,6 +175,19 @@ jobs:
           key: ${{ secrets.VPS_SSH_KEY }}
           script: |
             cd /home/logand/logand.app
+            # Without this, docker-compose.yml/Caddyfile/Dockerfile changes
+            # on this exact SHA never reach the VPS at all -- only image
+            # PULLS happen below, and those are built from whatever the
+            # VPS's own checked-out docker-compose.yml/Dockerfiles say to
+            # build, not from what was actually just merged to main. This
+            # was confirmed as a real gap after a deploy failed with
+            # "exec: uv: executable file not found" from a scheduler
+            # command fix that had been committed but never reached this
+            # checkout. git reset --hard (not just pull) since this
+            # working tree should never have local changes of its own to
+            # preserve -- it exists only to mirror main exactly.
+            git fetch origin main
+            git reset --hard origin/main
             docker compose pull backend scheduler
             docker compose --profile migrate run --rm migrate
             docker compose up -d backend caddy scheduler
