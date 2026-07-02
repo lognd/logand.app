@@ -442,16 +442,26 @@ export function SpinningShape({
     <div className={className} ref={containerRef}>
       <pre
         aria-hidden="true"
-        // Listeners are window-level now (see the effect above), not on
-        // this element -- touchAction/preventDefault-avoidance no longer
-        // gates "does the shape see the gesture" (it always does), only
-        // "does the browser's native scroll still happen alongside it",
-        // which it does since nothing here ever calls preventDefault.
+        // Listeners are window-level now (see the effect above), so the
+        // shape always SEES the gesture regardless of touchAction -- but
+        // without touchAction:none, the browser's native scroll/pan still
+        // runs concurrently with it on a touch device, and the two
+        // compete for the same touch sequence. A quick flick ("swipe")
+        // finishes before native scrolling fully takes over, so it still
+        // read as a rotation; a slower sustained press-and-move ("drag")
+        // got interrupted mid-gesture as the page started scrolling
+        // instead, truncating the pointermove stream (confirmed: "sized
+        // correctly on Chrome mobile, but can't handle drags, only
+        // swipes"). touchAction:none dedicates this area's touch input to
+        // the custom rotation logic exclusively, the same way it already
+        // worked with a mouse (which never had a competing native-scroll
+        // gesture to begin with).
         // userSelect: "none" stops a drag gesture from also
         // highlighting/selecting the rendered characters as text, which
         // was visually distracting mid-drag.
         style={{
           cursor: "grab",
+          touchAction: "none",
           fontSize: `${fontSize}px`,
           lineHeight: `${fontSize}px`,
           display: "block",

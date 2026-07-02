@@ -14,6 +14,18 @@
 @tailwind components;
 @tailwind utilities;
 
+/* `html`, not just `body`: `overflow-x:hidden` on body alone doesn't
+   guarantee no horizontal scrollbar in every browser's quirks -- the
+   ROOT scrolling box in standards mode is `html`, and Firefox in
+   particular has been seen to still offer a horizontal scrollbar driven
+   by `html`'s own overflow when only `body` declares it. Setting it on
+   both closes that gap instead of relying on browser-specific behavior
+   ("the overflow is busted on mobile" recurring across different mobile
+   browsers is exactly this class of gap, not one single miscalculation). */
+html {
+  overflow-x: hidden;
+}
+
 body {
   margin: 0;
   /* Defense in depth against horizontal overflow: every ASCII grid
@@ -24,6 +36,13 @@ body {
      mobile"). Never legitimately needed on the vertical axis, since real
      page content should scroll normally. */
   overflow-x: hidden;
+  /* Stops mobile browsers' rubber-band/bounce overscroll from reading as
+     "the page is scrollable" even when real content fits exactly --
+     without this, a slightly-too-tall dvh calculation (see Shell.tsx's
+     use of svh over dvh for the same underlying reason) could still let
+     a visitor drag/bounce past the true content edge and perceive that
+     as a scrollbar, even though nothing is actually overflowing. */
+  overscroll-behavior-y: none;
 }
 
 /* Used by the Projects page's vertical snap-scroll feed -- genuinely

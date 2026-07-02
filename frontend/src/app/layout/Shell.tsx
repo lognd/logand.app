@@ -127,14 +127,26 @@ export function Shell({ children }: { children: ReactNode }) {
     // wants to fill its container (Landing's <main className="h-full">)
     // does so without exceeding the viewport.
     //
-    // min-h-dvh (dynamic viewport height), not min-h-screen (100vh) -- on
-    // mobile browsers, 100vh is measured against the LARGEST possible
-    // viewport (address bar hidden), so with the address bar visible
-    // (the common case) an element sized to 100vh is taller than what's
-    // actually visible, forcing a scrollbar/overflow that has nothing to
-    // do with real content ("the overflow is busted on mobile"). 100dvh
-    // tracks the viewport's actual current size, address bar and all.
-    <div className="relative isolate flex min-h-dvh flex-col bg-bg-primary text-fg-primary">
+    // min-h-svh (SMALLEST viewport height), not min-h-screen (100vh) and
+    // not min-h-dvh either -- 100vh is measured against the LARGEST
+    // possible viewport (address bar hidden), so with the address bar
+    // visible (the common case) an element sized to 100vh is taller than
+    // what's actually visible, forcing a scrollbar/overflow that has
+    // nothing to do with real content ("the overflow is busted on
+    // mobile"). dvh (dynamic viewport height) was tried next, on the
+    // assumption it tracks the CURRENT viewport size as toolbars show/
+    // hide -- but that tracking is exactly where mobile Firefox and
+    // Chrome disagree (confirmed: same layout was correctly sized on
+    // Chrome mobile but scrollable on Firefox mobile), since dvh's
+    // resize-driven recalculation isn't implemented identically across
+    // engines. svh is always pinned to the SMALLEST the viewport can
+    // ever be (toolbars fully expanded) -- guaranteed to fit inside the
+    // visible area on every browser regardless of toolbar state or how
+    // faithfully that engine recomputes dvh, at the cost of a few pixels
+    // of unused space at the very bottom on a browser that DOES hide its
+    // toolbar and DOES recompute dvh correctly. Trading a harmless gap
+    // for guaranteed no-scrollbar is the right side of that tradeoff.
+    <div className="relative isolate flex min-h-svh flex-col bg-bg-primary text-fg-primary">
       {/* `isolate` is load-bearing, not decorative: without it this div doesn't
           establish its own stacking context (position:relative + no z-index
           doesn't), so its own bg-bg-primary paints OVER any negative-z-index

@@ -180,8 +180,21 @@ export function Landing() {
           viewport. This footer is deliberately its own opaque-background
           territory now (bg-bg-primary, not bg-transparent) -- the
           animated background belongs to the content area above it, not
-          behind the footer's own controls. */}
-      <footer className="relative z-10 shrink-0 border-t border-border bg-bg-primary px-4 py-4">
+          behind the footer's own controls.
+
+          pb-20 (below sm; back to a plain pb-4 at sm+) reserves the exact
+          footprint ReportProblemButton's `fixed bottom-4 right-4` occupies
+          (its own height plus the 1rem gap from the viewport edge) --
+          without it, this row and that fixed button both land in the same
+          bottom-of-viewport band on a narrow screen, so the "Rain" option
+          (the row's rightmost/last item) rendered directly underneath
+          "Report a problem." ReportProblemButton is `fixed` (viewport-
+          relative, needed since most other pages have no footer at all to
+          anchor to), which means normal document flow has no idea that
+          corner is spoken for -- reserving the clearance here, rather than
+          hoping the row happens to wrap clear of it, is what keeps this
+          fixed the next time an option is added to BackgroundPicker too. */}
+      <footer className="relative z-10 shrink-0 border-t border-border bg-bg-primary px-4 pb-20 pt-4 sm:pb-4">
         <BackgroundPicker value={background} onChange={setBackground} />
       </footer>
       {/* Moved out here as `main`'s LAST child (a sibling of both the
