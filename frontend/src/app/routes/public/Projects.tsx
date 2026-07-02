@@ -53,7 +53,7 @@ const PROJECTS: Project[] = [
     title: "logand.app",
     period: "Nov 2025 - Present",
     description:
-      "This site, and also its own case study: FastAPI + Postgres backend, React/TypeScript frontend, a Rust/WASM ASCII renderer for the animated background you're looking at right now, and a native Android companion app, all in one monorepo. I built it end to end, deploy pipeline included, on purpose: session-cookie auth, Stripe/PayPal invoicing with generated PDF letterheads, a swappable local-disk/Cloudflare-R2 storage layer, and a pre-deploy health-check tool that actually exercises every subsystem instead of trusting that config is correct. It runs as a single-VPS Docker Compose stack behind Caddy with real off-box backups, not a toy deployment.",
+      "This site, and also its own case study: FastAPI + Postgres backend, React/TypeScript frontend, a Rust/WASM ASCII renderer for the animated background you're looking at right now, and a native Android companion app, all in one monorepo. I built it end to end, deploy pipeline included, on purpose: session-cookie auth, Stripe/PayPal invoicing with generated PDF letterheads, a swappable local-disk/Cloudflare-R2 storage layer, and a pre-deploy health-check tool that actually exercises every subsystem instead of trusting that config is correct. GitHub Actions builds and pushes a versioned image to GHCR, runs it through real cross-browser Playwright system tests, and deploys to a Hetzner VPS behind Caddy as a locked-down non-root service account, not root. Public project media lives in its own Cloudflare R2 bucket, synced automatically on every push via a git hook. Real off-box backups, real CI/CD, not a toy deployment.",
     slides: [
       // "/?bg=donut" -- root-relative so this embeds whatever origin the
       // app is actually served from, pinned to one background so the
@@ -218,6 +218,7 @@ const PROJECTS: Project[] = [
     description:
       "I ended up in this lab by chance: a conversation on the street about research led to a position applying signal processing and deep learning to rat neurological data. Used the synchro-squeezing transform to sharpen time-frequency structure in raw brainwave recordings, then designed a Longformer-based variational autoencoder to learn a latent space capturing long- and short-term brainwave relationships, trained remotely via SLURM on HiPerGator, UF's supercomputer. My involvement wound down as other commitments picked up, but the modeling work itself stands on its own.",
     slides: [{ alt: "Mears' Neuroscience Lab" }],
+    githubRepos: [{ owner: "lognd", repo: "bwave" }],
   },
 ];
 

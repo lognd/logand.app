@@ -23,7 +23,10 @@ export function ReportProblemButton() {
       type="button"
       onClick={downloadLogs}
       aria-label="download a log file to report a problem"
-      className="glass-panel fixed bottom-4 right-4 z-40 min-h-11 rounded px-3 py-2 text-sm text-fg-muted hover:text-fg-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-orange"
+      // `border` (1px) added -- .glass-panel sets border-color but never
+      // an actual border-width, so without this the border was invisible
+      // (0 width) despite the color being defined all along.
+      className="glass-panel fixed bottom-4 right-4 z-40 min-h-11 rounded border px-3 py-2 text-sm text-fg-muted hover:text-fg-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-orange"
     >
       Report a problem
     </button>
