@@ -9,6 +9,10 @@ from pathlib import Path
 
 import jinja2
 
+from logand_backend.logging import get_logger
+
+_log = get_logger(__name__)
+
 # The `logandinvoice` LaTeX class + Jinja2 template live alongside this
 # module (see logandinvoice.cls and invoice.tex.jinja) -- both need to be
 # on latexmk's TEXINPUTS when compiling, which render_invoice_pdf sets
@@ -224,6 +228,18 @@ def render_invoice_pdf(data: InvoicePdfData) -> bytes:
 
         pdf_path = tmp_path / "invoice.pdf"
         if result.returncode != 0 or not pdf_path.exists():
+            # Full latexmk log captured on PdfRenderError.log AND logged
+            # here -- this is exactly the failure task #68 diagnosed by
+            # hand against a real environment; it should never again
+            # require re-running the compile manually to see why it broke.
+            _log.error(
+                "invoice PDF compile failed",
+                extra={
+                    "invoice_number": data.invoice_number,
+                    "returncode": result.returncode,
+                    "latexmk_log": (result.stdout + result.stderr)[-4000:],
+                },
+            )
             raise PdfRenderError(
                 "latexmk failed to compile invoice PDF",
                 log=result.stdout + result.stderr,

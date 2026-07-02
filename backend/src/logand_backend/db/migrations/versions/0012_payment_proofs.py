@@ -56,9 +56,7 @@ def upgrade() -> None:
         ["id"],
         ondelete="CASCADE",
     )
-    op.create_index(
-        "ix_payment_proofs_invoice_id", "payment_proofs", ["invoice_id"]
-    )
+    op.create_index("ix_payment_proofs_invoice_id", "payment_proofs", ["invoice_id"])
 
 
 def downgrade() -> None:

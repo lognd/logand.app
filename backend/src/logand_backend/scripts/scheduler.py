@@ -3,7 +3,8 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, time, timedelta, timezone
 
-from logand_backend.logging.logger import get_logger
+from logand_backend.logging.logger import get_logger, log_dir
+from logand_backend.logging.retention import prune_logs
 from logand_backend.scripts.generate_recurring_invoices import run
 
 log = get_logger(__name__)
@@ -49,6 +50,17 @@ async def main_loop() -> None:
             # blip, say) must not kill the whole long-running container;
             # it'll just try again at tomorrow's scheduled time.
             log.exception("recurring-invoice run failed")
+
+        # Same daily cadence as the recurring-invoice job above -- log
+        # rotation/pruning needs to run somewhere on a schedule, and this
+        # container already has the one always-on daily loop, so it just
+        # rides along rather than needing its own separate service.
+        try:
+            deleted = prune_logs(log_dir())
+            if deleted:
+                log.info("log retention: pruned %d old log file(s)", len(deleted))
+        except Exception:
+            log.exception("log retention run failed")
 
 
 if __name__ == "__main__":

@@ -8,6 +8,9 @@ from botocore.client import Config as BotoConfig
 from botocore.exceptions import ClientError
 
 from logand_backend.domain.storage.base import StorageObjectNotFound
+from logand_backend.logging import get_logger
+
+_log = get_logger(__name__)
 
 # Cloudflare R2 is S3-API-compatible -- boto3's plain S3 client works
 # against it unmodified, just pointed at R2's own endpoint_url with R2's
@@ -57,9 +60,17 @@ class CloudflareR2Storage:
         extra: dict[str, Any] = {}
         if cache_control is not None:
             extra["CacheControl"] = cache_control
-        self._client.put_object(
-            Bucket=self._bucket, Key=key, Body=data, ContentType=content_type, **extra
-        )
+        try:
+            self._client.put_object(
+                Bucket=self._bucket,
+                Key=key,
+                Body=data,
+                ContentType=content_type,
+                **extra,
+            )
+        except ClientError:
+            _log.error("r2 upload failed", exc_info=True, extra={"key": key})
+            raise
 
     async def get(self, key: str) -> bytes:
         return await asyncio.to_thread(self._get_sync, key)
@@ -71,6 +82,7 @@ class CloudflareR2Storage:
             code = exc.response.get("Error", {}).get("Code")
             if code in ("NoSuchKey", "404"):
                 raise StorageObjectNotFound(key) from exc
+            _log.error("r2 download failed", exc_info=True, extra={"key": key})
             raise
         return resp["Body"].read()
 

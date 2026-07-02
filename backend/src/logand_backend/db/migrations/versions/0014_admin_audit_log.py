@@ -27,9 +27,7 @@ def upgrade() -> None:
     op.create_table(
         "admin_audit_log",
         sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
-        sa.Column(
-            "admin_id", sa.dialects.postgresql.UUID(as_uuid=True), nullable=True
-        ),
+        sa.Column("admin_id", sa.dialects.postgresql.UUID(as_uuid=True), nullable=True),
         sa.Column("action", sa.Text(), nullable=False),
         sa.Column("target_table", sa.Text(), nullable=True),
         sa.Column("target_id", sa.Text(), nullable=True),

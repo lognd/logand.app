@@ -144,7 +144,7 @@ async def upload_payment_proof(
     customer: SessionInfo = Depends(require_customer),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, str]:
-    """"An optional place to put a screenshot or something to show that
+    """ "An optional place to put a screenshot or something to show that
     they sent something" -- a customer attaching proof of an external
     Zelle/PayPal-direct send for an admin to review before marking the
     invoice paid. Ownership-checked the same way every other customer

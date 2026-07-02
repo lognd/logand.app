@@ -142,10 +142,14 @@ async def test_generate_due_recurring_invoices_creates_next_draft(
     assert new_invoice.customer_id == customer.id
 
     new_line_items = (
-        await db_session.execute(
-            select(InvoiceLineItem).where(InvoiceLineItem.invoice_id == created[0])
+        (
+            await db_session.execute(
+                select(InvoiceLineItem).where(InvoiceLineItem.invoice_id == created[0])
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert len(new_line_items) == 1
     # The unit label ("mo") must carry over to the new draft too -- a real
     # bug caught here: the copy loop in recurrence.py originally only

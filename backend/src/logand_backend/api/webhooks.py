@@ -14,8 +14,10 @@ from logand_backend.app.config import AppConfig
 from logand_backend.db.base import get_db
 from logand_backend.db.models.invoices import Invoice, Payment
 from logand_backend.domain.notifications.notify import notify_payment_received
+from logand_backend.logging import get_logger
 
 router = APIRouter(prefix="/api/webhooks", tags=["webhooks"])
+_log = get_logger(__name__)
 
 
 @router.post("/stripe")
@@ -36,10 +38,22 @@ async def stripe_webhook(
             payload, sig_header, cfg.stripe_webhook_secret
         )
     except (ValueError, stripe.error.SignatureVerificationError) as exc:
+        _log.warning("stripe webhook rejected: bad signature", exc_info=exc)
         raise HTTPException(
             status_code=400, detail="invalid webhook signature"
         ) from exc
 
+    _log.info(
+        "stripe webhook received",
+        extra={
+            "event_type": event["type"],
+            # NOT event.get("id") -- event is a stripe.StripeObject, not a
+            # plain dict; this SDK version's StripeObject only implements
+            # __getitem__/__contains__, not .get() (same real bug already
+            # documented above at intent["latest_charge"]).
+            "event_id": event["id"] if "id" in event else None,
+        },
+    )
     if event["type"] in ("payment_intent.succeeded", "payment_intent.payment_failed"):
         await _handle_payment_intent_event(db, event, cfg)
 
@@ -72,6 +86,10 @@ async def _handle_payment_intent_event(
         )
     ).scalar_one_or_none()
     if invoice is None:
+        _log.warning(
+            "stripe webhook: no invoice matches this payment intent",
+            extra={"stripe_payment_intent_id": intent_id},
+        )
         return
 
     existing = (
@@ -121,8 +139,19 @@ async def _handle_payment_intent_event(
         invoice.status = "paid"
         invoice.paid_at = datetime.now(timezone.utc)
         await db.flush()
+        _log.info(
+            "invoice marked paid via stripe",
+            extra={
+                "invoice_id": str(invoice.id),
+                "stripe_payment_intent_id": intent_id,
+            },
+        )
         await notify_payment_received(
             db, cfg, invoice, Decimal(str(intent["amount"] / 100))
         )
         return
+    _log.warning(
+        "stripe payment_intent failed",
+        extra={"invoice_id": str(invoice.id), "stripe_payment_intent_id": intent_id},
+    )
     await db.flush()

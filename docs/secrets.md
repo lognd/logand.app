@@ -281,6 +281,19 @@ update `backend/.env`/GitHub Actions, restart `backend`. Rotating does
 NOT invalidate already-stored files -- only the credentials used to
 access them.
 
+### `LOG_DIR`
+
+Not secret. Where the backend/scheduler containers write rotating JSON
+log files -- see `backend/src/logand_backend/logging/`. Defaults to
+`./logs` (relative to the image's `WORKDIR /app`); `docker-compose.yml`
+mounts a real named volume (`app_logs`) there so logs survive
+restarts/redeploys. Retrievable by an admin via `/api/admin/logs`
+(list/tail/download) without shelling into the VPS. Logs rotate daily
+and are bounded in size (`logging/handler.py`'s size-forced mid-day
+rotation), with old rotated files thinned on an exponential daily
+-> weekly -> monthly schedule plus a hard total-size cap
+(`logging/retention.py`) -- disk usage can never grow unbounded.
+
 ### `BACKUP_R2_BUCKET` / `BACKUP_R2_ENDPOINT_URL` / `BACKUP_R2_ACCESS_KEY_ID` / `BACKUP_R2_SECRET_ACCESS_KEY`
 
 Deliberately separate from the `R2_*` set above, even though they're

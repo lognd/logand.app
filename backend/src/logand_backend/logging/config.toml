@@ -4,9 +4,15 @@ disable_existing_loggers = false
 [formatters.plain]
 "()" = "logand_backend.logging.formatter.PlainLevelFormatter"
 
+[formatters.json_line]
+"()" = "logand_backend.logging.json_formatter.JsonLineFormatter"
+
 [filters.below_warning]
 "()" = "logand_backend.logging.filter.BelowLevelFilter"
 below = "WARNING"
+
+[filters.request_id]
+"()" = "logand_backend.logging.request_context.RequestIdFilter"
 
 [handlers.stdout]
 class = "logging.StreamHandler"
@@ -21,11 +27,33 @@ formatter = "plain"
 stream = "ext://sys.stderr"
 level = "WARNING"
 
+# filename is patched in at runtime by logger.py (env-driven LOG_DIR) --
+# the literal value here is just a placeholder so the config is valid
+# TOML/dictConfig on its own (e.g. under a tool that only parses it).
+# when="midnight" + utc=true: one file per UTC calendar day, so
+# retention.py's exponential pruning (daily/weekly/monthly buckets) has a
+# stable, unambiguous file-per-day to reason about regardless of what
+# timezone the host machine is in. backupCount=0 -- this handler does NOT
+# self-delete old files; retention.py (invoked by scripts/rotate_logs.py
+# on the scheduler) is solely responsible for pruning, so there is exactly
+# one place that decides what old logs are worth keeping, not two
+# independent, possibly-disagreeing deletion policies.
+[handlers.file]
+class = "logand_backend.logging.handler.SizeCappedTimedRotatingFileHandler"
+formatter = "json_line"
+filters = ["request_id"]
+filename = "./logs/app.log"
+when = "midnight"
+utc = true
+backupCount = 0
+maxBytes = 20971520
+level = "DEBUG"
+
 [loggers.logand_backend]
 level = "INFO"
-handlers = ["stdout", "stderr"]
+handlers = ["stdout", "stderr", "file"]
 propagate = false
 
 [root]
 level = "WARNING"
-handlers = ["stdout", "stderr"]
+handlers = ["stdout", "stderr", "file"]

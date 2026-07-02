@@ -33,6 +33,12 @@ services:
       # volume for correctness (R2 is the real persistence), but it's
       # harmless to leave mounted either way.
       - storage_data:/app/data/storage
+      # Shared with the scheduler service below -- both processes' logs
+      # land in one place (logging/logger.py's LOG_DIR, default ./logs
+      # relative to the image's WORKDIR /app) so an admin retrieving logs
+      # via /api/admin/logs sees the scheduler's activity too, not just
+      # the API server's own. See docs/design/11-deployment.md.
+      - app_logs:/app/logs
     depends_on:
       postgres:
         condition: service_healthy
@@ -87,6 +93,8 @@ services:
     restart: unless-stopped
     env_file:
       - ./backend/.env
+    volumes:
+      - app_logs:/app/logs
     depends_on:
       postgres:
         condition: service_healthy
@@ -115,3 +123,4 @@ volumes:
   caddy_config:
   storage_data:
   backup_staging:
+  app_logs:

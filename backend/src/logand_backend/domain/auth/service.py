@@ -11,6 +11,9 @@ from logand_backend.auth.passwords import hash_password, verify_password
 from logand_backend.auth.sessions import SessionInfo, create_session
 from logand_backend.db.models.users import User
 from logand_backend.errors import AuthError
+from logand_backend.logging import get_logger
+
+_log = get_logger(__name__)
 
 
 async def login(
@@ -32,11 +35,21 @@ async def login(
         await db.execute(select(User).where(User.email == email))
     ).scalar_one_or_none()
     if user is None:
+        _log.warning("login failed: no such account", extra={"email": email})
         return Err(AuthError.InvalidCredentials)
     if not verify_password(password, user.password_hash):
+        _log.warning(
+            "login failed: wrong password",
+            extra={"email": email, "user_id": str(user.id)},
+        )
         return Err(AuthError.InvalidCredentials)
     if user.disabled_at is not None:
+        _log.warning(
+            "login failed: account disabled",
+            extra={"email": email, "user_id": str(user.id)},
+        )
         return Err(AuthError.InvalidCredentials)
+    _log.info("login succeeded", extra={"email": email, "user_id": str(user.id)})
     return await create_session(db, user.id, user.role)
 
 

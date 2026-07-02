@@ -57,9 +57,7 @@ async def test_bom_full_lifecycle(db_client: AsyncClient, make_user, login_as) -
     )
     assert remove_resp.status_code == 200
 
-    delete_resp = await db_client.delete(
-        f"/api/admin/boms/{bom_id}", headers=headers
-    )
+    delete_resp = await db_client.delete(f"/api/admin/boms/{bom_id}", headers=headers)
     assert delete_resp.status_code == 200
 
     get_after_delete = await db_client.get(f"/api/admin/boms/{bom_id}")
@@ -176,9 +174,7 @@ async def test_bom_consume_endpoint_deducts_real_stock(
         "/api/admin/inventory/items", params={"q": "screw"}
     )
     # 50 - (4 * 5) = 30
-    assert any(
-        i["id"] == item_id and i["quantity"] == 30 for i in search_resp.json()
-    )
+    assert any(i["id"] == item_id and i["quantity"] == 30 for i in search_resp.json())
 
     history_resp = await db_client.get(
         f"/api/admin/inventory/items/{item_id}/adjustments"

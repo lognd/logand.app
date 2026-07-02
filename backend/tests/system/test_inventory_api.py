@@ -190,9 +190,7 @@ async def test_adjust_quantity_and_view_audit_history(
     search_resp = await db_client.get(
         "/api/admin/inventory/items", params={"q": "widget"}
     )
-    assert any(
-        i["id"] == item_id and i["quantity"] == 7 for i in search_resp.json()
-    )
+    assert any(i["id"] == item_id and i["quantity"] == 7 for i in search_resp.json())
 
     history_resp = await db_client.get(
         f"/api/admin/inventory/items/{item_id}/adjustments"

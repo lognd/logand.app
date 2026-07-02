@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 
@@ -9,8 +10,10 @@ from fastapi.responses import JSONResponse
 from logand_backend.app.config import AppConfig
 from logand_backend.db.base import dispose_engine, init_engine
 from logand_backend.logging import get_logger
+from logand_backend.logging.request_context import new_request_id, set_request_id
 
 _log = get_logger(__name__)
+_access_log = get_logger("logand_backend.access")
 
 # Routes exempt from the CSRF double-submit check in _csrf_middleware:
 # - /api/auth/login, /api/auth/register: no session cookie exists yet to
@@ -41,8 +44,86 @@ class App:
     def __call__(self) -> FastAPI:
         app = FastAPI(title="logand.app backend", lifespan=self._lifespan)
         app.middleware("http")(self._csrf_middleware)
+        # Registered AFTER _csrf_middleware -- Starlette's http middleware
+        # wraps in reverse registration order, so this one ends up
+        # OUTERMOST and its request id is already set (via the contextvar
+        # in logging/request_context.py) by the time the CSRF check itself
+        # runs and might log something.
+        app.middleware("http")(self._request_logging_middleware)
         self._mount_routers(app)
         return app
+
+    async def _request_logging_middleware(
+        self, request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
+        """The single place every request is logged -- "centralized, not
+        scattered" per the user's own requirement. One JSON line per
+        request (method, path, status, duration_ms, request_id) regardless
+        of which router handled it, plus the request id is what ties this
+        line to any error/exception lines logged deeper in the call stack
+        and to whatever request id a frontend crash report (see
+        frontend/src/lib/logging.ts) hands back for correlation.
+        """
+        # Deliberately NOT cleared in a finally: each request is handled in
+        # its own asyncio Task with its own copy of the contextvar context
+        # (Starlette/anyio propagate a snapshot per request), so this
+        # never leaks into a concurrent request -- and NOT clearing it
+        # means _unhandled_exception_handler below still sees the right
+        # request id even though ServerErrorMiddleware invokes it further
+        # up the stack, after this function's frame would otherwise have
+        # already torn down a `finally`-cleared value.
+        request_id = request.headers.get("X-Request-Id") or new_request_id()
+        set_request_id(request_id)
+        start = time.monotonic()
+        try:
+            response = await call_next(request)
+        except Exception as exc:
+            # NOTE: caught HERE, not via app.add_exception_handler(Exception,
+            # ...) -- Starlette's BaseHTTPMiddleware (what app.middleware
+            # ("http") uses under the hood) has a long-standing limitation
+            # where an exception raised past call_next does NOT reach
+            # exception handlers registered that way; it just propagates
+            # out of the ASGI app entirely. Confirmed against a real test:
+            # a registered Exception handler never fired with this
+            # middleware present. Catching directly here is what actually
+            # converts every unhandled exception to a real 500 response
+            # instead of a raw connection failure.
+            #
+            # Anything reaching here is a genuine bug (an ErrorSet variant
+            # never raises a bare Exception -- see api/errors.py's
+            # to_http_exception, which is how every EXPECTED domain error
+            # already becomes a real HTTPException upstream of this).
+            # Full traceback + request id logged server-side; the client
+            # gets a generic message, never exc's own text (could leak
+            # internals).
+            duration_ms = round((time.monotonic() - start) * 1000, 2)
+            _log.error(
+                "unhandled exception",
+                exc_info=exc,
+                extra={
+                    "method": request.method,
+                    "path": request.url.path,
+                    "duration_ms": duration_ms,
+                    "request_id": request_id,
+                },
+            )
+            response = JSONResponse(
+                status_code=500, content={"detail": "internal server error"}
+            )
+        duration_ms = round((time.monotonic() - start) * 1000, 2)
+        response.headers["X-Request-Id"] = request_id
+        level = _access_log.warning if response.status_code >= 500 else _access_log.info
+        level(
+            "request complete",
+            extra={
+                "method": request.method,
+                "path": request.url.path,
+                "status": response.status_code,
+                "duration_ms": duration_ms,
+                "request_id": request_id,
+            },
+        )
+        return response
 
     async def _csrf_middleware(
         self, request: Request, call_next: Callable[[Request], Awaitable[Response]]
@@ -76,6 +157,7 @@ class App:
         # never calls __call__.
         from logand_backend.api import (
             admin_data,
+            admin_logs,
             admin_users,
             auth,
             bom,
@@ -105,6 +187,7 @@ class App:
         app.include_router(receipts.router)
         app.include_router(documents.router)
         app.include_router(admin_data.router)
+        app.include_router(admin_logs.router)
 
     @asynccontextmanager
     async def _lifespan(self, _app: FastAPI) -> AsyncIterator[None]:

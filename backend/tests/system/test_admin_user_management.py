@@ -9,9 +9,7 @@ def _csrf_headers(db_client: AsyncClient) -> dict[str, str]:
     return {"X-CSRF-Token": db_client.cookies["csrf_token"]}
 
 
-async def test_get_customer_detail(
-    db_client: AsyncClient, make_user, login_as
-) -> None:
+async def test_get_customer_detail(db_client: AsyncClient, make_user, login_as) -> None:
     admin = await make_user(role="admin", password="pw")
     customer = await make_user(role="customer", password="pw")
     await login_as(db_client, admin.email, "pw")
