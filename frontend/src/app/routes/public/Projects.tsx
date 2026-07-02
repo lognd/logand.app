@@ -64,6 +64,7 @@ const PROJECTS: Project[] = [
       // preview looks the same every time rather than a random pick.
       { alt: "logand.app (embedded live)", iframeSrc: "/?bg=donut" },
     ],
+    githubRepos: [{ owner: "lognd", repo: "logand.app" }],
   },
   {
     title: "Malmberg: Self-Hosted Photo & Video Wall",
