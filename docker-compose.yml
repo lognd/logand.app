@@ -17,6 +17,12 @@ services:
       - backend
 
   backend:
+    # Both fields intentional: `build` lets a dev build+run locally with
+    # no registry involved; `image` is what makes `docker compose pull`
+    # (deploy.yml's actual VPS-side deploy step) fetch the exact image
+    # ci.yml's build-and-push job just pushed, instead of silently
+    # having nothing to pull.
+    image: ghcr.io/lognd/logand.app/backend:latest
     build:
       context: ./backend
     restart: unless-stopped

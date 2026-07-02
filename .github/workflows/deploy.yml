@@ -134,13 +134,16 @@ jobs:
       - name: rsync frontend build to VPS
         # NOTE(logan): requires VPS_HOST, VPS_USER, VPS_SSH_KEY secrets set in repo settings.
         # Never echo or log these -- see docs/design/00-overview.md and 11-deployment.md.
+        # VPS_USER should be the non-root 'logand' service account (see
+        # ops/setup-vps.sh) -- not root -- and its home is where the repo
+        # actually lives, not /srv (an earlier, never-deployed assumption).
         uses: easingthemes/ssh-deploy@v5
         with:
           SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_KEY }}
           REMOTE_HOST: ${{ secrets.VPS_HOST }}
           REMOTE_USER: ${{ secrets.VPS_USER }}
           SOURCE: "frontend-dist/"
-          TARGET: "/srv/logand-app/frontend/dist"
+          TARGET: "/home/logand/logand.app/frontend/dist"
       - name: pull + restart backend on VPS
         uses: appleboy/ssh-action@v1
         with:
@@ -148,7 +151,7 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           script: |
-            cd /srv/logand-app
+            cd /home/logand/logand.app
             docker compose pull backend
             docker compose --profile migrate run --rm migrate
             docker compose up -d backend caddy
