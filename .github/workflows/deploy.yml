@@ -90,6 +90,15 @@ jobs:
   build-and-push:
     runs-on: ubuntu-latest
     needs: wait-for-ci
+    # Without this, GITHUB_TOKEN inherits the repo/org's default
+    # permissions -- read-only by default on newer accounts -- and
+    # docker/build-push-action's push to ghcr.io fails with "denied:
+    # installation not allowed to Create organization package" even
+    # though the login step itself succeeds (login only needs read
+    # access; the push is what actually needs write).
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v4
       - uses: docker/login-action@v3
