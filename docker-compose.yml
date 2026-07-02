@@ -22,6 +22,17 @@ services:
     restart: unless-stopped
     env_file:
       - ./backend/.env
+    volumes:
+      # STORAGE_BACKEND=local (the default -- see backend/.env.example)
+      # writes here; without a real named volume this is just container-
+      # ephemeral storage, silently losing every uploaded budget-evidence/
+      # receipt/document file on the next redeploy or container restart.
+      # Mounted at STORAGE_LOCAL_DIR's default value (./data/storage,
+      # relative to the image's WORKDIR /app -- see backend/Dockerfile).
+      # A deployment using STORAGE_BACKEND=r2 instead doesn't need this
+      # volume for correctness (R2 is the real persistence), but it's
+      # harmless to leave mounted either way.
+      - storage_data:/app/data/storage
     depends_on:
       postgres:
         condition: service_healthy
@@ -71,7 +82,12 @@ services:
       - ./backend/.env
     volumes:
       - postgres_data:/var/lib/postgresql/data:ro
-      - budget_evidence:/evidence:ro
+      # Same volume the backend writes STORAGE_BACKEND=local files to --
+      # see backend service's own doc comment above. Renamed from the old
+      # budget_evidence (pre-dates the general storage abstraction; budget
+      # evidence, receipts, and documents/CAD files all now live under one
+      # storage root).
+      - storage_data:/evidence:ro
       - backup_staging:/backup
 
 volumes:
@@ -79,5 +95,5 @@ volumes:
   redis_data:
   caddy_data:
   caddy_config:
-  budget_evidence:
+  storage_data:
   backup_staging:
