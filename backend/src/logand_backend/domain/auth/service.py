@@ -20,6 +20,13 @@ async def login(
     creates a session. Deliberately returns the same AuthError.InvalidCredentials
     for both "no such user" and "wrong password" -- never let the error
     distinguish account existence (standard login-enumeration defense).
+
+    Also rejects a disabled account (User.disabled_at set -- see
+    api/admin_users.py's deactivate route) with that SAME
+    InvalidCredentials error, for the same reason: "wrong password" and
+    "this account exists but was deactivated" must be indistinguishable
+    from the outside, or the error itself becomes a way to enumerate
+    which accounts an admin has disabled.
     """
     user = (
         await db.execute(select(User).where(User.email == email))
@@ -27,6 +34,8 @@ async def login(
     if user is None:
         return Err(AuthError.InvalidCredentials)
     if not verify_password(password, user.password_hash):
+        return Err(AuthError.InvalidCredentials)
+    if user.disabled_at is not None:
         return Err(AuthError.InvalidCredentials)
     return await create_session(db, user.id, user.role)
 

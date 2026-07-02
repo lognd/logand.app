@@ -31,6 +31,16 @@ class User(Base):
     emails_opted_out: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False
     )
+    # None = active (the default for every existing/new account). Set to
+    # a real timestamp to deactivate -- checked at login (see
+    # domain/auth/service.py::login) so a disabled account genuinely
+    # can't authenticate, not just "hidden" from some admin list while
+    # still able to log in. Deliberately a nullable timestamp, not a
+    # plain boolean -- "when was this disabled" is itself useful audit
+    # information a bare is_active flag would throw away.
+    disabled_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

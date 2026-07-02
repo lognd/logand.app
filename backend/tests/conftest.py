@@ -153,11 +153,13 @@ def make_user(
     from logand_backend.db.models.users import User
 
     async def _make_user(
-        role: str = "customer", password: str = "correct horse battery staple"
+        role: str = "customer",
+        password: str = "correct horse battery staple",
+        email: str | None = None,
     ) -> User:
         user = User(
             id=uuid4(),
-            email=f"{uuid4()}@example.com",
+            email=email or f"{uuid4()}@example.com",
             password_hash=hash_password(password),
             role=role,
         )
