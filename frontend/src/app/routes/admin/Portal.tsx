@@ -65,6 +65,14 @@ export function AdminPortal() {
             Browse and download real backend log files, or tail the live one.
           </p>
         </li>
+        <li>
+          <Link to="/admin/version" className={LINK_CLASS}>
+            Server version
+          </Link>
+          <p className="text-base text-fg-muted">
+            App version, deployed git commit, and every dependency's real version.
+          </p>
+        </li>
       </ul>
     </main>
   );

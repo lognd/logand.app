@@ -135,6 +135,21 @@ every log file concatenated -- reachable from the login screen
 regardless of session state ("Share app logs"), reusing the same
 `FileProvider` authority already declared for receipt-photo capture.
 
+## Version/environment introspection (`api/admin_version.py`)
+
+`GET /api/admin/version` (admin-only) answers "what is actually running
+on this server right now" without shelling in: the app's own version
+(`pyproject.toml`, read via `importlib.metadata`), the deployed git
+commit (baked into the Docker image at build time -- see `Dockerfile`'s
+`GIT_COMMIT` build arg and `.github/workflows/deploy.yml`, which passes
+`--build-arg GIT_COMMIT=${{ github.sha }}`; there is no `.git` directory
+in the built image to introspect at runtime instead), the Python
+version, and the real, currently-installed version of every single
+dependency (`importlib.metadata.distributions()` -- reflects what's
+actually resolved in this environment, not a static re-read of
+`pyproject.toml`/`uv.lock`, so it stays correct even after a lockfile
+update this endpoint's own code was never touched for).
+
 ## Testing
 
 - `domain/admin_data/service.py`: integration tests cover every write

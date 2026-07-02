@@ -15,6 +15,7 @@ import { AdminBom } from "./app/routes/admin/Bom";
 import { AdminCustomers } from "./app/routes/admin/Customers";
 import { AdminData } from "./app/routes/admin/AdminData";
 import { AdminLogs } from "./app/routes/admin/AdminLogs";
+import { AdminVersion } from "./app/routes/admin/AdminVersion";
 import { CustomerPortal } from "./app/routes/customer/Portal";
 import { CustomerInvoices } from "./app/routes/customer/Invoices";
 import { CustomerPay } from "./app/routes/customer/Pay";
@@ -90,6 +91,14 @@ export function App() {
           element={
             <AdminGuard>
               <AdminLogs />
+            </AdminGuard>
+          }
+        />
+        <Route
+          path="/admin/version"
+          element={
+            <AdminGuard>
+              <AdminVersion />
             </AdminGuard>
           }
         />

@@ -35,6 +35,20 @@ COPY --from=build /app /app
 # stack actually works end to end").
 COPY alembic.ini ./
 ENV PATH="/app/.venv/bin:${PATH}"
+
+# Baked in at image-build time (deploy.yml passes --build-arg
+# GIT_COMMIT=${{ github.sha }}) since the built image has no .git
+# directory to introspect at runtime -- api/admin_version.py reads this
+# env var to answer "what commit is actually running right now,"
+# distinct from `version` in pyproject.toml (the app's own semver,
+# bumped manually/rarely) and distinct from any dependency's own
+# version (read live via importlib.metadata at request time, not baked
+# in -- always reflects what's ACTUALLY installed in this image, not
+# what pyproject.toml asked for, which can differ after a lockfile
+# update this ARG wasn't rebuilt for).
+ARG GIT_COMMIT=unknown
+ENV GIT_COMMIT=${GIT_COMMIT}
+
 USER appuser
 
 EXPOSE 8000

@@ -159,6 +159,7 @@ class App:
             admin_data,
             admin_logs,
             admin_users,
+            admin_version,
             auth,
             bom,
             budget,
@@ -188,6 +189,7 @@ class App:
         app.include_router(documents.router)
         app.include_router(admin_data.router)
         app.include_router(admin_logs.router)
+        app.include_router(admin_version.router)
 
     @asynccontextmanager
     async def _lifespan(self, _app: FastAPI) -> AsyncIterator[None]:

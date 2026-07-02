@@ -102,6 +102,11 @@ jobs:
           context: ./backend
           push: true
           tags: ghcr.io/${{ github.repository }}/backend:${{ github.sha }},ghcr.io/${{ github.repository }}/backend:latest
+          # Baked into the image so /api/admin/version can report exactly
+          # what commit is actually deployed -- see Dockerfile's own
+          # comment on this ARG and api/admin_version.py.
+          build-args: |
+            GIT_COMMIT=${{ github.sha }}
       - name: build frontend static assets
         working-directory: frontend
         run: npm ci && npm run build

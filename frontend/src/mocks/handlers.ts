@@ -1034,4 +1034,17 @@ export const handlers = [
       headers: { "Content-Type": "application/x-ndjson" },
     });
   }),
+
+  // -- admin server version --------------------------------------------
+  http.get("/api/admin/version", () => {
+    const denied = requireRole("admin");
+    if (denied) return denied;
+    return HttpResponse.json({
+      app_version: "0.1.0",
+      git_commit: "mock-commit-sha",
+      python_version: "3.12.0",
+      platform: "Linux-mock",
+      dependencies: { fastapi: "0.111.0", sqlalchemy: "2.0.30", pydantic: "2.7.1" },
+    });
+  }),
 ];

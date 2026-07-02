@@ -294,6 +294,16 @@ rotation), with old rotated files thinned on an exponential daily
 -> weekly -> monthly schedule plus a hard total-size cap
 (`logging/retention.py`) -- disk usage can never grow unbounded.
 
+### `GIT_COMMIT`
+
+Not a secret, not a `.env` value -- a Docker build ARG, set by
+`.github/workflows/deploy.yml` (`--build-arg GIT_COMMIT=${{ github.sha }}`)
+and baked into the image at build time (see `backend/Dockerfile`).
+Read by `/api/admin/version` to report exactly what commit is deployed
+without needing to SSH in and check. Building the image locally without
+this arg leaves it at its `unknown` default -- harmless, just less
+informative.
+
 ### `BACKUP_R2_BUCKET` / `BACKUP_R2_ENDPOINT_URL` / `BACKUP_R2_ACCESS_KEY_ID` / `BACKUP_R2_SECRET_ACCESS_KEY`
 
 Deliberately separate from the `R2_*` set above, even though they're
