@@ -109,9 +109,7 @@ async def test_send_nonexistent_invoice_returns_404(
     await login_as(db_client, admin.email, "pw")
     headers = _csrf_headers(db_client)
 
-    resp = await db_client.post(
-        f"/api/admin/invoices/{uuid4()}/send", headers=headers
-    )
+    resp = await db_client.post(f"/api/admin/invoices/{uuid4()}/send", headers=headers)
     assert resp.status_code == 404
 
 
@@ -145,9 +143,7 @@ async def test_void_nonexistent_invoice_returns_404(
     await login_as(db_client, admin.email, "pw")
     headers = _csrf_headers(db_client)
 
-    resp = await db_client.post(
-        f"/api/admin/invoices/{uuid4()}/void", headers=headers
-    )
+    resp = await db_client.post(f"/api/admin/invoices/{uuid4()}/void", headers=headers)
     assert resp.status_code == 404
 
 

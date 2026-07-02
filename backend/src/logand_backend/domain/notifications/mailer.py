@@ -32,7 +32,7 @@ def is_configured(cfg: AppConfig) -> bool:
 
 
 def sign_unsubscribe_token(user_id: UUID, cfg: AppConfig) -> str:
-    """"{user_id}.{hmac-sha256 hex digest}" -- verifiable without a DB
+    """ "{user_id}.{hmac-sha256 hex digest}" -- verifiable without a DB
     lookup (a lookup is still done afterward, but only to actually apply
     the opt-out, not to validate the token itself), and without a separate
     secrets table: reuses session_secret as the HMAC key, the same

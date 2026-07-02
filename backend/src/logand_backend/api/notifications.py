@@ -41,8 +41,7 @@ async def unsubscribe_get(
     if not await _apply_unsubscribe(db, token):
         raise HTTPException(status_code=400, detail=_INVALID_TOKEN_DETAIL)
     return HTMLResponse(
-        "<html><body><p>You have been unsubscribed from these emails.</p>"
-        "</body></html>"
+        "<html><body><p>You have been unsubscribed from these emails.</p></body></html>"
     )
 
 

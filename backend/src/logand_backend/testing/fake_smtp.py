@@ -20,6 +20,7 @@ def _free_port() -> int:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
 
+
 # A real local SMTP server (aiosmtpd), not a mock of smtplib -- same
 # reasoning as testing/fake_stripe.py and testing/fake_paypal.py: the real
 # code in domain/notifications/mailer.py runs its actual smtplib.SMTP
