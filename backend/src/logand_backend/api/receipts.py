@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from fastapi.responses import RedirectResponse, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from logand_backend.api._uploads import read_upload_capped
 from logand_backend.api.errors import to_http_exception
 from logand_backend.app.config import AppConfig
 from logand_backend.auth.sessions import SessionInfo, require_admin
@@ -63,7 +64,7 @@ async def create(
     """
     if file.content_type not in _ALLOWED_CONTENT_TYPES:
         raise HTTPException(status_code=415, detail="receipt must be a PDF or image")
-    contents = await file.read()
+    contents = await read_upload_capped(file)
     if not contents:
         raise HTTPException(status_code=422, detail="uploaded file is empty")
 

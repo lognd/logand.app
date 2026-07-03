@@ -2,6 +2,9 @@
 	encode gzip
 
 	handle /api/* {
+		request_body {
+			max_size 25MB
+		}
 		reverse_proxy backend:8000
 	}
 
