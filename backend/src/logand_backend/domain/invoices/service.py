@@ -381,6 +381,27 @@ async def reconcile_pending_paypal_captures(db: AsyncSession, cfg: AppConfig) ->
             )
         ).scalar_one_or_none()
         if invoice is not None:
+            # Check BEFORE settle_invoice_if_paid, which only ever flips
+            # invoice.status -- it never changes what get_paid_so_far
+            # sums, so the amount-due comparison is unaffected by call
+            # order. Mirrors the synchronous capture route's own
+            # overpayment log (api/invoices_public.py) for the case this
+            # reconciler is uniquely exposed to: the invoice was already
+            # paid another way (manual/Stripe/an earlier capture) while
+            # this capture sat PENDING, so completing it now is real
+            # double-collected money with no other signal raised.
+            paid_so_far = await get_paid_so_far(db, invoice)
+            if paid_so_far > invoice.amount_total:
+                _log.warning(
+                    "paypal reconciled capture overpays invoice; "
+                    "recorded anyway, needs follow-up/refund",
+                    extra={
+                        "invoice_id": str(invoice.id),
+                        "payment_id": str(payment.id),
+                        "paid_so_far": str(paid_so_far),
+                        "amount_total": str(invoice.amount_total),
+                    },
+                )
             await settle_invoice_if_paid(db, invoice)
             # Release the invoice/payment row locks before the
             # notification email send -- same early-commit-before-
