@@ -304,4 +304,86 @@ class ApiClientTest {
 
         assertIs<ApiResult.HttpError>(result)
     }
+
+    @Test
+    fun `onUnauthorized fires on any 401, not just login`() = runTest {
+        // Regression test for AND2: a session expiring mid-use must be
+        // caught the moment ANY call returns 401, not only login()/me().
+        var unauthorizedCallCount = 0
+        val clientWithHook = ApiClient(
+            baseUrl = server.url("/").toString(),
+            onUnauthorized = { unauthorizedCallCount++ },
+        )
+        server.enqueue(
+            MockResponse().setResponseCode(401)
+                .setBody("""{"detail":"session expired"}""")
+        )
+
+        val result = clientWithHook.deleteMileageEntry("m-1")
+
+        assertIs<ApiResult.HttpError>(result)
+        assertEquals(401, result.statusCode)
+        assertEquals(1, unauthorizedCallCount)
+    }
+
+    @Test
+    fun `onUnauthorized does not fire on login's own 401`() = runTest {
+        // Regression test for L2: a bad-password attempt at login must
+        // not be treated the same as an existing session expiring --
+        // firing onUnauthorized here would tear down global session
+        // state that was never established in the first place.
+        var unauthorizedCallCount = 0
+        val clientWithHook = ApiClient(
+            baseUrl = server.url("/").toString(),
+            onUnauthorized = { unauthorizedCallCount++ },
+        )
+        server.enqueue(
+            MockResponse().setResponseCode(401)
+                .setBody("""{"detail":"email or password is incorrect"}""")
+        )
+
+        val result = clientWithHook.login("a@example.com", "wrong")
+
+        assertIs<ApiResult.HttpError>(result)
+        assertEquals(401, result.statusCode)
+        assertEquals(0, unauthorizedCallCount)
+    }
+
+    @Test
+    fun `onUnauthorized does not fire on logout's own 401`() = runTest {
+        // Regression test for L3: an already-expired session makes
+        // POST /api/auth/logout itself return 401. logout() already
+        // unconditionally clears the cookie jar; onUnauthorized firing
+        // too would be a second, redundant teardown of session state
+        // logout() is already tearing down itself.
+        var unauthorizedCallCount = 0
+        val clientWithHook = ApiClient(
+            baseUrl = server.url("/").toString(),
+            onUnauthorized = { unauthorizedCallCount++ },
+        )
+        server.enqueue(
+            MockResponse().setResponseCode(401)
+                .setBody("""{"detail":"session expired"}""")
+        )
+
+        val result = clientWithHook.logout()
+
+        assertIs<ApiResult.HttpError>(result)
+        assertEquals(401, result.statusCode)
+        assertEquals(0, unauthorizedCallCount)
+    }
+
+    @Test
+    fun `onUnauthorized does not fire on a non-401 error`() = runTest {
+        var unauthorizedCallCount = 0
+        val clientWithHook = ApiClient(
+            baseUrl = server.url("/").toString(),
+            onUnauthorized = { unauthorizedCallCount++ },
+        )
+        server.enqueue(MockResponse().setResponseCode(422).setBody("""{"detail":"bad"}"""))
+
+        clientWithHook.deleteMileageEntry("m-1")
+
+        assertEquals(0, unauthorizedCallCount)
+    }
 }
