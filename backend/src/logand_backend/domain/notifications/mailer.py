@@ -5,6 +5,7 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import smtplib
 import ssl
 import time
@@ -35,6 +36,8 @@ from logand_backend.app.config import AppConfig
 _GOOGLE_TOKEN_API_BASE = "https://oauth2.googleapis.com"
 _GMAIL_API_BASE = "https://gmail.googleapis.com"
 _GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send"
+
+logger = logging.getLogger(__name__)
 
 
 def is_configured(cfg: AppConfig) -> bool:
@@ -223,7 +226,21 @@ _gmail_token_cache: dict[tuple[str, str, str], tuple[str, float]] = {}
 _GMAIL_TOKEN_REFRESH_SKEW = 60.0
 
 
-async def _get_gmail_access_token(cfg: AppConfig, client: httpx.AsyncClient) -> str:
+def _gmail_cache_key(cfg: AppConfig) -> tuple[str, str, str]:
+    """Computes the cache key for the current Gmail service-account
+    identity, so a 401 handler can evict exactly the entry that just
+    proved stale without recomputing token-exchange internals.
+    """
+    assert cfg.gmail_service_account_json is not None
+    assert cfg.gmail_sender_email is not None
+    info = json.loads(cfg.gmail_service_account_json)
+    token_url = f"{cfg.gmail_token_api_base or _GOOGLE_TOKEN_API_BASE}/token"
+    return (info["client_email"], cfg.gmail_sender_email, token_url)
+
+
+async def _get_gmail_access_token(
+    cfg: AppConfig, client: httpx.AsyncClient, *, force_refresh: bool = False
+) -> str:
     """Exchanges a JWT Bearer assertion for a short-lived access token,
     reusing a cached token for its remaining lifetime instead of hitting
     Google on every send. This IS a hot-ish path in one case: a dispute
@@ -232,6 +249,10 @@ async def _get_gmail_access_token(cfg: AppConfig, client: httpx.AsyncClient) -> 
     collapses that burst to one token exchange instead of N (FINDINGS.md
     L1). The cache is process-local and unsynchronized; a rare concurrent
     miss just costs one extra exchange, not a correctness problem.
+
+    `force_refresh` skips the cache lookup entirely -- used by
+    `_send_via_gmail_api` after a 401 to mint a fresh token instead of
+    re-returning the same dead one (FINDINGS.md M1).
     """
     assert cfg.gmail_service_account_json is not None
     assert cfg.gmail_sender_email is not None
@@ -239,11 +260,12 @@ async def _get_gmail_access_token(cfg: AppConfig, client: httpx.AsyncClient) -> 
     token_url = f"{cfg.gmail_token_api_base or _GOOGLE_TOKEN_API_BASE}/token"
     cache_key = (info["client_email"], cfg.gmail_sender_email, token_url)
 
-    cached = _gmail_token_cache.get(cache_key)
-    if cached is not None:
-        token, expires_at = cached
-        if time.monotonic() < expires_at:
-            return token
+    if not force_refresh:
+        cached = _gmail_token_cache.get(cache_key)
+        if cached is not None:
+            token, expires_at = cached
+            if time.monotonic() < expires_at:
+                return token
 
     assertion = _build_signed_jwt(
         info,
@@ -285,6 +307,22 @@ async def _send_via_gmail_api(cfg: AppConfig, msg: EmailMessage) -> None:
             headers={"Authorization": f"Bearer {token}"},
             json={"raw": raw},
         )
+        if resp.status_code == 401:
+            # Cached token was revoked/rotated out from under us (FINDINGS.md
+            # M1). Evict it so every subsequent send doesn't keep replaying
+            # the same dead token for up to ~59 minutes, mint a fresh one,
+            # and retry exactly once.
+            logger.warning(
+                "gmail_api_401_evicting_cached_token",
+                extra={"cache_key": _gmail_cache_key(cfg)[:2]},
+            )
+            _gmail_token_cache.pop(_gmail_cache_key(cfg), None)
+            token = await _get_gmail_access_token(cfg, client, force_refresh=True)
+            resp = await client.post(
+                f"{api_base}/gmail/v1/users/me/messages/send",
+                headers={"Authorization": f"Bearer {token}"},
+                json={"raw": raw},
+            )
         resp.raise_for_status()
 
 

@@ -4,7 +4,7 @@ import base64
 from email import message_from_bytes, policy
 from email.message import EmailMessage
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
 
 # A local HTTP double for the slice of Google's real OAuth2 token endpoint
 # + Gmail API this backend calls (domain/notifications/mailer.py) -- same
@@ -29,6 +29,12 @@ _FAKE_ACCESS_TOKEN = "fake-gmail-access-token"
 # In-memory only, module-level state for the lifetime of this process --
 # same convention as fake_paypal.py's _orders.
 _sent_messages: list[EmailMessage] = []
+# When > 0, the next `_reject_401_remaining` sends return 401 instead of
+# succeeding, regardless of the bearer token presented -- lets a system
+# test simulate Google revoking/rotating an outstanding access token out
+# from under mailer.py's process-local cache (FINDINGS.md M1) without
+# needing to fake an actually-expired-looking token.
+_reject_401_remaining = 0
 
 
 @app.post("/token")
@@ -47,7 +53,12 @@ async def token(request: Request) -> dict:
 
 
 @app.post("/gmail/v1/users/me/messages/send")
-async def send_message(request: Request) -> dict:
+async def send_message(request: Request, response: Response) -> dict | None:
+    global _reject_401_remaining
+    if _reject_401_remaining > 0:
+        _reject_401_remaining -= 1
+        response.status_code = 401
+        return None
     auth = request.headers.get("authorization", "")
     assert auth == f"Bearer {_FAKE_ACCESS_TOKEN}", (
         "fake-gmail: missing or wrong bearer token"
@@ -75,10 +86,21 @@ def sent_messages() -> list[EmailMessage]:
     return _sent_messages
 
 
+def force_401_once(times: int = 1) -> None:
+    """Test-only control: makes the next `times` calls to the send
+    endpoint return 401 regardless of the bearer token, simulating Google
+    revoking/rotating a token mailer.py still has cached (FINDINGS.md M1).
+    """
+    global _reject_401_remaining
+    _reject_401_remaining = times
+
+
 def reset() -> None:
     """Module-level state persists for the process lifetime (see
     _sent_messages' own comment) -- tests must reset between cases,
     same convention fake_paypal.py's _orders would need if two tests in
     the same session cared about seeing an empty state.
     """
+    global _reject_401_remaining
     _sent_messages.clear()
+    _reject_401_remaining = 0

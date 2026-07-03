@@ -177,6 +177,56 @@ async def test_opted_out_customer_is_not_emailed_via_gmail_oauth(
     assert fake_gmail.sent_messages() == []
 
 
+async def test_401_evicts_cached_token_and_retries_once(
+    db_client: AsyncClient,
+    make_user,
+    login_as,
+    monkeypatch: pytest.MonkeyPatch,
+    fake_gmail_server: str,
+) -> None:
+    """Regression coverage for FINDINGS.md M1: a stale/revoked cached
+    access token must not silently kill every subsequent send for up to
+    ~59 minutes. The fake-gmail double is told to 401 exactly once; if
+    mailer.py evicted the cache and re-minted, the send still succeeds
+    (single retry). Sends before/after also prove the cache is reused
+    normally (only one token exchange per identity, aside from the
+    forced re-mint).
+    """
+    _configure_gmail_oauth(monkeypatch, fake_gmail_server)
+    admin = await make_user(role="admin", password="pw")
+    customer = await make_user(role="customer", password="pw")
+    await login_as(db_client, admin.email, "pw")
+    headers = _csrf_headers(db_client)
+
+    create_resp = await db_client.post(
+        "/api/admin/invoices",
+        params={"customer_id": str(customer.id)},
+        json=[{"description": "widget", "quantity": "1", "unit_price": "10.00"}],
+        headers=headers,
+    )
+    invoice_id = create_resp.json()["id"]
+
+    # Warm the cache with a real token first.
+    resp = await db_client.post(
+        f"/api/admin/invoices/{invoice_id}/send", headers=headers
+    )
+    assert resp.status_code == 200
+    assert len(fake_gmail.sent_messages()) == 1
+
+    # Simulate Google revoking the outstanding token: the next send call
+    # 401s once. mailer.py must evict its cache entry and re-mint rather
+    # than surfacing the failure or repeating it on every later send.
+    fake_gmail.force_401_once(1)
+
+    resp = await db_client.post(
+        f"/api/admin/invoices/{invoice_id}/payments/manual",
+        json={"method": "zelle", "amount": "10.00"},
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    assert len(fake_gmail.sent_messages()) == 2
+
+
 async def test_gmail_oauth_takes_precedence_when_smtp_also_configured(
     db_client: AsyncClient,
     make_user,
