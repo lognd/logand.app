@@ -180,6 +180,23 @@ async def has_pending_payment(db: AsyncSession, invoice_id: UUID) -> bool:
     return existing is not None
 
 
+async def flag_invoice_needs_review(
+    db: AsyncSession, invoice: Invoice, reason: str
+) -> None:
+    """Persists a durable, admin-facing "needs review" signal on `invoice`
+    (see M2/L2 in FINDINGS.md) -- called from every place that detects a
+    suspected double-collect/overpayment, which previously surfaced only
+    as a warning log line nobody necessarily sees. Idempotent-ish: does
+    not clear a previously-set flag, and if called more than once just
+    overwrites the reason with the latest one (multiple flags on one
+    invoice are rare enough that a single reason string is sufficient --
+    the caller's own log line still records every individual occurrence).
+    """
+    invoice.needs_review = True
+    invoice.needs_review_reason = reason
+    await db.flush()
+
+
 async def record_manual_payment(
     db: AsyncSession, invoice_id: UUID, admin_id: UUID, payment: ManualPaymentInput
 ) -> Result[UUID, InvoiceError]:
@@ -422,6 +439,12 @@ async def reconcile_pending_paypal_captures(db: AsyncSession, cfg: AppConfig) ->
                         "paid_so_far": str(paid_so_far),
                         "amount_total": str(invoice.amount_total),
                     },
+                )
+                await flag_invoice_needs_review(
+                    db,
+                    invoice,
+                    "paypal reconciled capture overpays invoice "
+                    f"(paid_so_far={paid_so_far}, amount_total={invoice.amount_total})",
                 )
             await settle_invoice_if_paid(db, invoice)
             # Release the invoice/payment row locks before the

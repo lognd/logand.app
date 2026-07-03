@@ -97,6 +97,18 @@ class Invoice(Base):
     paid_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # Durable admin-facing signal for a suspected double-collect/overpayment
+    # (see M2/L2 in FINDINGS.md) -- previously these were logged as a
+    # warning ONLY, which nobody sees unless they're grepping logs. Set by
+    # domain/invoices/service.py::flag_invoice_needs_review from the PayPal
+    # capture route's overpaid branch, reconcile_pending_paypal_captures'
+    # overpaid branch, and the Stripe webhook when a payment_intent
+    # succeeds while a PayPal capture is still pending on the same invoice.
+    # Never cleared automatically -- an admin resolves it out-of-band (e.g.
+    # after issuing a manual refund); surfacing/clearing it in the admin
+    # UI is future work, not part of this fix.
+    needs_review: Mapped[bool] = mapped_column(default=False, nullable=False)
+    needs_review_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     deleted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
