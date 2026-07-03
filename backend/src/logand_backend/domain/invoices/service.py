@@ -207,6 +207,35 @@ async def record_manual_payment(
     return Ok(payment_id)
 
 
+async def get_paid_so_far(db: AsyncSession, invoice: Invoice) -> Decimal:
+    """Sums every succeeded `Payment` recorded against `invoice`. Shared by
+    `settle_invoice_if_paid` and by the self-serve pay entry points
+    (`api/invoices_public.py::pay_invoice` and `pay_invoice_via_paypal`) so
+    both "is this invoice fully paid" and "how much is still owed" are
+    derived from the same source of truth.
+    """
+    existing_total = (
+        await db.execute(
+            select(Payment).where(
+                Payment.invoice_id == invoice.id, Payment.status == "succeeded"
+            )
+        )
+    ).scalars()
+    return sum((p.amount for p in existing_total), Decimal(0))
+
+
+async def get_amount_due(db: AsyncSession, invoice: Invoice) -> Decimal:
+    """Outstanding remainder on `invoice`: `amount_total` minus every
+    succeeded payment recorded so far (manual, Stripe, or PayPal), floored
+    at zero. Used to bill only what's actually still owed instead of
+    always billing the full invoice total regardless of prior partial
+    payments (see H1 in FINDINGS.md).
+    """
+    paid_so_far = await get_paid_so_far(db, invoice)
+    remainder = invoice.amount_total - paid_so_far
+    return remainder if remainder > 0 else Decimal(0)
+
+
 async def settle_invoice_if_paid(db: AsyncSession, invoice: Invoice) -> bool:
     """Marks `invoice` "paid" once its succeeded payments cover
     `amount_total`. Shared by every path that can record a succeeded
@@ -218,14 +247,7 @@ async def settle_invoice_if_paid(db: AsyncSession, invoice: Invoice) -> bool:
     """
     if invoice.status == "paid":
         return False
-    existing_total = (
-        await db.execute(
-            select(Payment).where(
-                Payment.invoice_id == invoice.id, Payment.status == "succeeded"
-            )
-        )
-    ).scalars()
-    paid_so_far = sum((p.amount for p in existing_total), Decimal(0))
+    paid_so_far = await get_paid_so_far(db, invoice)
     if paid_so_far >= invoice.amount_total:
         invoice.status = "paid"
         invoice.paid_at = datetime.now(timezone.utc)

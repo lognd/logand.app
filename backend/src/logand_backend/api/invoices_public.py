@@ -21,6 +21,7 @@ from logand_backend.domain.invoices.pdf.renderer import PdfRenderError
 from logand_backend.domain.invoices.service import (
     attach_payment_proof,
     generate_invoice_pdf,
+    get_amount_due,
     settle_invoice_if_paid,
 )
 from logand_backend.domain.notifications.notify import notify_payment_received
@@ -228,10 +229,16 @@ async def pay_invoice_via_paypal(
         raise HTTPException(
             status_code=409, detail="invoice is not payable in its current state"
         )
+    amount_due = await get_amount_due(db, invoice)
+    if amount_due <= 0:
+        raise HTTPException(
+            status_code=409,
+            detail="invoice is already fully paid pending settlement; refresh the page",
+        )
 
     cfg = AppConfig.from_external(argparse.Namespace())
     result = await paypal.create_order(
-        cfg, str(invoice.id), invoice.amount_total, invoice.currency
+        cfg, str(invoice.id), amount_due, invoice.currency
     )
     if result.is_err:
         # NotConfigured surfaces as a real 503 here (see api/errors.py) --
@@ -293,17 +300,20 @@ async def capture_invoice_paypal_payment(
         raise HTTPException(
             status_code=409, detail="PayPal capture currency does not match invoice"
         )
-    # Defense-in-depth: create_order sets `value` to invoice.amount_total
-    # server-side, so captured_amount == amount_total in the happy path
-    # today -- but nothing upstream of this handler actually guarantees
-    # that stays true (a future partial-capture flow, a PayPal-side
-    # rounding quirk), and "paid" is otherwise decided purely by summing
-    # whatever amount got recorded. Reject a mismatch outright rather than
-    # silently trusting PayPal's number.
-    if capture.captured_amount != invoice.amount_total:
+    # Defense-in-depth: create_order sets `value` to the outstanding
+    # remainder (amount_total minus payments already recorded) rather than
+    # always the full amount_total -- see H1 in FINDINGS.md, this used to
+    # always bill the full total and overcharge a customer who'd already
+    # made a partial payment. Recompute that same remainder here (still
+    # excluding this capture, which hasn't been recorded yet) and reject a
+    # mismatch outright rather than trusting PayPal's number, or an amount
+    # that changed underneath the order (e.g. a manual payment recorded
+    # concurrently) silently getting summed in as if it were expected.
+    expected_amount = await get_amount_due(db, invoice)
+    if expected_amount <= 0 or capture.captured_amount != expected_amount:
         raise HTTPException(
             status_code=409,
-            detail="PayPal captured amount does not match invoice total",
+            detail="PayPal captured amount does not match amount due",
         )
 
     db.add(
@@ -354,6 +364,12 @@ async def pay_invoice(
         raise HTTPException(
             status_code=409, detail="invoice is not payable in its current state"
         )
+    amount_due = await get_amount_due(db, invoice)
+    if amount_due <= 0:
+        raise HTTPException(
+            status_code=409,
+            detail="invoice is already fully paid pending settlement; refresh the page",
+        )
 
     # NOTE: card data never touches this server -- Stripe Checkout/PaymentIntents
     # handles capture entirely on Stripe's side, see docs/design/04.
@@ -393,24 +409,23 @@ async def pay_invoice(
                 detail="this invoice has already been paid; refresh the page",
             )
         if existing_intent.status != "canceled":
-            expected_minor_units = to_minor_units(
-                invoice.amount_total, invoice.currency
-            )
+            expected_minor_units = to_minor_units(amount_due, invoice.currency)
             if existing_intent.amount == expected_minor_units:
                 assert existing_intent.client_secret is not None
                 return {"client_secret": existing_intent.client_secret}
-            # The invoice's amount changed since this intent was created
-            # (e.g. an admin edit after the customer opened the pay page)
-            # -- reusing it would let the customer confirm a payment for
-            # the OLD amount while the invoice now expects the new total,
-            # so settle_invoice_if_paid would never mark it paid. Cancel
-            # the stale intent and fall through to create a fresh one for
-            # the current amount.
+            # The amount due changed since this intent was created (e.g.
+            # an admin edit, or another payment recorded against the
+            # invoice, since the customer opened the pay page) -- reusing
+            # it would let the customer confirm a payment for the OLD
+            # amount while the invoice now expects a different remainder,
+            # so settle_invoice_if_paid could over- or under-collect.
+            # Cancel the stale intent and fall through to create a fresh
+            # one for the current amount due.
             await asyncio.to_thread(stripe.PaymentIntent.cancel, existing_intent.id)
 
     intent = await asyncio.to_thread(
         stripe.PaymentIntent.create,
-        amount=to_minor_units(invoice.amount_total, invoice.currency),
+        amount=to_minor_units(amount_due, invoice.currency),
         currency=invoice.currency,
         metadata={"invoice_id": str(invoice.id)},
     )
