@@ -156,7 +156,13 @@ export function CustomerPay() {
         {captureMutation.isPending && (
           <p className="text-base text-fg-primary">Finishing your PayPal payment...</p>
         )}
-        {captureMutation.isSuccess && (
+        {captureMutation.isSuccess && captureMutation.data?.status === "pending" && (
+          <p className="text-base text-fg-primary">
+            Your payment is being reviewed by PayPal; we&apos;ll email you once it
+            clears.
+          </p>
+        )}
+        {captureMutation.isSuccess && captureMutation.data?.status !== "pending" && (
           <p className="text-base text-fg-primary">Payment received. Thank you!</p>
         )}
         {captureMutation.isError && (
