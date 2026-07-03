@@ -179,9 +179,7 @@ async def _handle_payment_intent_event(
                 "stripe_payment_intent_id": intent_id,
             },
         )
-        await notify_payment_received(
-            db, cfg, invoice, Decimal(intent["amount"]) / 100
-        )
+        await notify_payment_received(db, cfg, invoice, Decimal(intent["amount"]) / 100)
         return
     _log.warning(
         "stripe payment_intent failed",

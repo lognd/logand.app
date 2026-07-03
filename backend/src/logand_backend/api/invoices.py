@@ -27,6 +27,7 @@ from logand_backend.domain.invoices.service import (
     send_invoice,
     void_invoice,
 )
+from logand_backend.domain.invoices.stats import InvoiceStats, get_invoice_stats
 from logand_backend.domain.notifications.notify import (
     notify_invoice_sent,
     notify_payment_received,
@@ -115,6 +116,17 @@ async def list_invoices(
         query = query.where(Invoice.due_date <= date_to)
     rows = (await db.execute(query.order_by(Invoice.created_at.desc()))).scalars().all()
     return [_invoice_summary(row) for row in rows]
+
+
+@router.get("/stats")
+async def get_stats(
+    _admin: SessionInfo = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+) -> InvoiceStats:
+    # Declared before GET /{invoice_id} -- Starlette matches routes in
+    # registration order, and "/{invoice_id}" would otherwise swallow
+    # "/stats" as a literal (invalid) invoice_id first.
+    return await get_invoice_stats(db)
 
 
 @router.get("/{invoice_id}")

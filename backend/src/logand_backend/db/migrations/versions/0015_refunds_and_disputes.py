@@ -28,13 +28,9 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "payments", sa.Column("paypal_capture_id", sa.Text(), nullable=True)
-    )
+    op.add_column("payments", sa.Column("paypal_capture_id", sa.Text(), nullable=True))
     op.add_column("payments", sa.Column("dispute_status", sa.Text(), nullable=True))
-    op.add_column(
-        "payments", sa.Column("stripe_dispute_id", sa.Text(), nullable=True)
-    )
+    op.add_column("payments", sa.Column("stripe_dispute_id", sa.Text(), nullable=True))
     op.create_index(
         "uq_payments_stripe_dispute_id",
         "payments",

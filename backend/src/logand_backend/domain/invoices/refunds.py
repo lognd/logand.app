@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from typani.result import Err, Ok, Result
 
 from logand_backend.app.config import AppConfig
-from logand_backend.db.models.invoices import Invoice, Payment, Refund
+from logand_backend.db.models.invoices import Payment, Refund
 from logand_backend.domain.invoices.service import lock_invoice_for_update
 from logand_backend.domain.payments.providers import paypal
 from logand_backend.errors import PaymentProviderError, RefundError

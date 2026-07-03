@@ -6,7 +6,10 @@ from decimal import Decimal
 from sqlalchemy import select
 
 from logand_backend.db.models.invoices import Invoice, InvoiceLineItem
-from logand_backend.domain.invoices.recurrence import generate_due_recurring_invoices
+from logand_backend.domain.invoices.recurrence import (
+    generate_due_recurring_invoices,
+    mark_overdue_invoices,
+)
 from logand_backend.domain.invoices.service import (
     LineItemInput,
     create_invoice,
@@ -158,6 +161,70 @@ async def test_generate_due_recurring_invoices_creates_next_draft(
     assert new_line_items[0].unit == "mo"
 
 
+async def test_generate_due_recurring_invoices_does_not_duplicate_on_rerun(
+    db_session, make_user
+) -> None:
+    """Regression test for H1: the scheduler runs this once a day, every
+    day, forever -- an unpaid recurring invoice whose due_date has passed
+    must NOT spawn a fresh draft on every single run. The parent invoice
+    should stop matching this query once it has generated its successor
+    (is_recurring flips to False on the parent, True on the new child).
+    """
+    customer = await make_user(role="customer")
+    invoice_id = (await create_invoice(db_session, customer.id, [])).danger_ok
+    invoice = await db_session.get(Invoice, invoice_id)
+    invoice.is_recurring = True
+    invoice.recurrence_interval = "monthly"
+    invoice.due_date = date(2026, 1, 1)
+    await send_invoice(db_session, invoice_id)
+
+    first_run = await generate_due_recurring_invoices(
+        db_session, as_of=date(2026, 1, 15)
+    )
+    second_run = await generate_due_recurring_invoices(
+        db_session, as_of=date(2026, 1, 16)
+    )
+    third_run = await generate_due_recurring_invoices(
+        db_session, as_of=date(2026, 2, 20)
+    )
+
+    assert len(first_run) == 1
+    assert second_run == []
+    assert third_run == []
+
+    await db_session.refresh(invoice)
+    assert invoice.is_recurring is False
+
+    new_invoice = await db_session.get(Invoice, first_run[0])
+    assert new_invoice.is_recurring is True
+
+
+async def test_generate_due_recurring_invoices_still_recurs_once_paid(
+    db_session, make_user
+) -> None:
+    """Regression test for H1: billing cadence is driven by due_date, not
+    payment state -- an invoice that gets paid before its next cycle is
+    generated must still spawn its successor, not silently stop
+    recurring forever just because status left 'sent'.
+    """
+    customer = await make_user(role="customer")
+    invoice_id = (await create_invoice(db_session, customer.id, [])).danger_ok
+    invoice = await db_session.get(Invoice, invoice_id)
+    invoice.is_recurring = True
+    invoice.recurrence_interval = "monthly"
+    invoice.due_date = date(2026, 1, 1)
+    await send_invoice(db_session, invoice_id)
+    invoice.status = "paid"
+    await db_session.flush()
+
+    created = await generate_due_recurring_invoices(db_session, as_of=date(2026, 1, 15))
+
+    assert len(created) == 1
+    new_invoice = await db_session.get(Invoice, created[0])
+    assert new_invoice.due_date == date(2026, 2, 1)
+    assert new_invoice.is_recurring is True
+
+
 async def test_generate_due_recurring_invoices_skips_non_recurring(
     db_session, make_user
 ) -> None:
@@ -186,3 +253,67 @@ async def test_generate_due_recurring_invoices_skips_not_yet_due(
     created = await generate_due_recurring_invoices(db_session, as_of=date.today())
 
     assert created == []
+
+
+async def test_mark_overdue_invoices_flips_past_due_sent_invoice(
+    db_session, make_user
+) -> None:
+    """Regression test for FINDINGS.md M1: "overdue" was write-never --
+    every read path treated it as real but nothing ever set it."""
+    customer = await make_user(role="customer")
+    invoice_id = (await create_invoice(db_session, customer.id, [])).danger_ok
+    invoice = await db_session.get(Invoice, invoice_id)
+    invoice.due_date = date(2026, 1, 1)
+    await send_invoice(db_session, invoice_id)
+
+    updated = await mark_overdue_invoices(db_session, as_of=date(2026, 1, 15))
+
+    assert updated == [invoice_id]
+    await db_session.refresh(invoice)
+    assert invoice.status == "overdue"
+
+
+async def test_mark_overdue_invoices_is_idempotent(db_session, make_user) -> None:
+    customer = await make_user(role="customer")
+    invoice_id = (await create_invoice(db_session, customer.id, [])).danger_ok
+    invoice = await db_session.get(Invoice, invoice_id)
+    invoice.due_date = date(2026, 1, 1)
+    await send_invoice(db_session, invoice_id)
+
+    await mark_overdue_invoices(db_session, as_of=date(2026, 1, 15))
+    second_run = await mark_overdue_invoices(db_session, as_of=date(2026, 1, 16))
+
+    assert second_run == []
+
+
+async def test_mark_overdue_invoices_skips_not_yet_due_and_no_due_date(
+    db_session, make_user
+) -> None:
+    customer = await make_user(role="customer")
+    not_yet_due = (await create_invoice(db_session, customer.id, [])).danger_ok
+    invoice_a = await db_session.get(Invoice, not_yet_due)
+    invoice_a.due_date = date(2026, 2, 1)
+    await send_invoice(db_session, not_yet_due)
+
+    no_due_date = (await create_invoice(db_session, customer.id, [])).danger_ok
+    await send_invoice(db_session, no_due_date)
+
+    updated = await mark_overdue_invoices(db_session, as_of=date(2026, 1, 15))
+
+    assert updated == []
+
+
+async def test_mark_overdue_invoices_skips_draft_and_paid(
+    db_session, make_user
+) -> None:
+    customer = await make_user(role="customer")
+    draft_id = (await create_invoice(db_session, customer.id, [])).danger_ok
+    draft = await db_session.get(Invoice, draft_id)
+    draft.due_date = date(2026, 1, 1)
+    await db_session.flush()
+
+    updated = await mark_overdue_invoices(db_session, as_of=date(2026, 1, 15))
+
+    assert updated == []
+    await db_session.refresh(draft)
+    assert draft.status == "draft"

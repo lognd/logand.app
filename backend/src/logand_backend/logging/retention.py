@@ -47,9 +47,7 @@ def _parse_rotated_files(log_dir: Path, base_name: str) -> list[RotatedLogFile]:
             continue
         log_date = datetime.strptime(match.group(1), "%Y-%m-%d").date()
         files.append(
-            RotatedLogFile(
-                path=path, log_date=log_date, size_bytes=path.stat().st_size
-            )
+            RotatedLogFile(path=path, log_date=log_date, size_bytes=path.stat().st_size)
         )
     return files
 

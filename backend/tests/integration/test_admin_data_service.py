@@ -63,6 +63,41 @@ async def test_get_row_never_leaks_a_real_password_hash(db_session, make_user) -
     assert row["password_hash"] == "<redacted>"
 
 
+async def test_list_rows_pagination_is_stably_ordered_by_id(db_session) -> None:
+    """Regression test for FINDINGS.md L4: select(table).limit().offset()
+    with no ORDER BY has no row-order guarantee in Postgres, so paging
+    could skip or repeat rows. Same page boundary, queried twice, must
+    return identical rows in identical order.
+    """
+    for i in range(5):
+        location = InventoryLocation(id=uuid4(), name=f"Shelf {i}")
+        db_session.add(location)
+        await db_session.flush()
+        await create_item(db_session, f"widget-{i}", location.id, quantity=1)
+    await db_session.flush()
+
+    page_1a = (
+        await list_rows(db_session, "inventory_items", limit=2, offset=0)
+    ).danger_ok
+    page_1b = (
+        await list_rows(db_session, "inventory_items", limit=2, offset=0)
+    ).danger_ok
+    page_2 = (
+        await list_rows(db_session, "inventory_items", limit=2, offset=2)
+    ).danger_ok
+
+    assert [r["id"] for r in page_1a] == [r["id"] for r in page_1b]
+    page_1_ids = {r["id"] for r in page_1a}
+    page_2_ids = {r["id"] for r in page_2}
+    assert page_1_ids.isdisjoint(page_2_ids)
+    # Actually ordered by id (ascending), not incidentally consistent.
+    all_rows = (
+        await list_rows(db_session, "inventory_items", limit=200, offset=0)
+    ).danger_ok
+    all_ids = [r["id"] for r in all_rows]
+    assert all_ids == sorted(all_ids)
+
+
 async def test_update_row_applies_change_and_writes_audit_log(db_session) -> None:
     item_id = await _make_item(db_session)
 
@@ -203,3 +238,59 @@ async def test_revert_insert_deletes_row(db_session) -> None:
 async def test_revert_unknown_change_is_err(db_session) -> None:
     result = await revert_change(db_session, uuid4(), admin_id=None)
     assert result.is_err
+
+
+async def test_revert_update_on_users_table_succeeds_despite_password_hash_snapshot(
+    db_session, make_user
+) -> None:
+    """Regression test for M5: before_state on a users-table row snapshot
+    ALWAYS includes a "password_hash": "<redacted>" entry (see
+    _serialize_row) -- revert_change must strip that (and "id") out of
+    the changes it replays through update_row, or every single revert of
+    a users-table UPDATE fails outright via ColumnNotEditable, even when
+    password_hash itself was never part of the actual edit.
+    """
+    user = await make_user(role="customer", email="revert-target@example.com")
+
+    change = await update_row(
+        db_session,
+        "users",
+        str(user.id),
+        {"emails_opted_out": True},
+        admin_id=None,
+    )
+    assert change.is_ok
+
+    revert_result = await revert_change(db_session, change.danger_ok, admin_id=None)
+    assert revert_result.is_ok, revert_result
+
+    row = (await get_row(db_session, "users", str(user.id))).danger_ok
+    assert row["emails_opted_out"] is False
+    # Never leaked, before or after the revert.
+    assert row["password_hash"] == "<redacted>"
+
+
+async def test_revert_delete_on_users_table_fails_with_constraint_violation(
+    db_session, make_user
+) -> None:
+    """The one genuine, permanent limitation M5 leaves in place: a
+    deleted users row can never be fully un-deleted through this tool,
+    because the only password_hash ever recorded in its snapshot is the
+    literal string "<redacted>", never a real hash -- restoring that
+    would either brick the account (if written) or violate the column's
+    NOT NULL constraint (since it's correctly stripped out before the
+    INSERT). The real, actionable outcome must be a clear
+    ConstraintViolation, not the previous ColumnNotEditable dead end
+    disguising the same fact, and not a silent success that quietly
+    bricks the account.
+    """
+    user = await make_user(role="customer", email="undelete-target@example.com")
+
+    change = await delete_row(db_session, "users", str(user.id), admin_id=None)
+    assert change.is_ok
+
+    from logand_backend.errors import DataError
+
+    revert_result = await revert_change(db_session, change.danger_ok, admin_id=None)
+    assert revert_result.is_err
+    assert revert_result.danger_err == DataError.ConstraintViolation

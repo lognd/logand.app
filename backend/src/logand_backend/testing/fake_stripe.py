@@ -91,6 +91,31 @@ async def retrieve_payment_intent(intent_id: str) -> dict:
     return _intents[intent_id]
 
 
+@app.post("/v1/refunds")
+async def create_refund(request: Request) -> dict:
+    # Used by domain/invoices/refunds.py::refund_payment's stripe.Refund.create
+    # call -- same form-encoded convention as create_payment_intent above.
+    form = await request.form()
+    payment_intent = ""
+    amount = 0
+    for key, value in form.multi_items():
+        if not isinstance(value, str):
+            continue
+        if key == "payment_intent":
+            payment_intent = value
+        elif key == "amount":
+            amount = int(value)
+
+    refund_id = f"re_fake_{uuid.uuid4().hex[:24]}"
+    return {
+        "id": refund_id,
+        "object": "refund",
+        "payment_intent": payment_intent,
+        "amount": amount,
+        "status": "succeeded",
+    }
+
+
 if __name__ == "__main__":
     import uvicorn
 

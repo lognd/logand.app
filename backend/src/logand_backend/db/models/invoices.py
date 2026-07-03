@@ -256,13 +256,17 @@ class Refund(Base):
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     payment_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("payments.id", ondelete="RESTRICT"), nullable=False
+        UUID(as_uuid=True),
+        ForeignKey("payments.id", ondelete="RESTRICT"),
+        nullable=False,
     )
     # Denormalized from payment.invoice_id -- lets the admin invoice-detail
     # view fetch every refund for an invoice in one query instead of a
     # join through payments for every row.
     invoice_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("invoices.id", ondelete="RESTRICT"), nullable=False
+        UUID(as_uuid=True),
+        ForeignKey("invoices.id", ondelete="RESTRICT"),
+        nullable=False,
     )
     amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     # Free-form admin-entered reason ("customer cancelled," "duplicate

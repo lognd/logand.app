@@ -153,17 +153,121 @@ async def test_full_paypal_create_and_capture_marks_invoice_paid(
     assert invoice.status == "paid"
 
 
-async def test_capture_with_bogus_order_id_still_succeeds_against_fake_server(
+async def test_capture_rejects_amount_mismatch_against_invoice_total(
+    db_client: AsyncClient,
+    make_user,
+    login_as,
+    fake_paypal_server: str,
+    monkeypatch: pytest.MonkeyPatch,
+    db_session,
+) -> None:
+    """Regression test for FINDINGS.md M2: the capture route never
+    asserted captured_amount == invoice.amount_total, relying only on the
+    running paid-so-far sum. Simulates the invoice's total changing
+    between order creation and capture (a race, or a future partial-
+    capture flow) by mutating amount_total directly after the order is
+    created -- the fake server still echoes back the ORIGINAL amount the
+    order was created with, so the mismatch is real from the route's
+    point of view.
+    """
+    from sqlalchemy import select
+
+    from logand_backend.db.models.invoices import Invoice
+
+    _configure_paypal(monkeypatch, fake_paypal_server)
+    invoice_id, _customer = await _sent_invoice_as_customer(
+        db_client, make_user, login_as, unit_price="50.00"
+    )
+    headers = _csrf_headers(db_client)
+
+    order_resp = await db_client.post(
+        f"/api/invoices/{invoice_id}/pay/paypal", headers=headers
+    )
+    assert order_resp.status_code == 200, order_resp.text
+    order_id = order_resp.json()["order_id"]
+
+    invoice = (
+        await db_session.execute(select(Invoice).where(Invoice.id == invoice_id))
+    ).scalar_one()
+    invoice.amount_total = invoice.amount_total + 1
+    await db_session.commit()
+
+    capture_resp = await db_client.post(
+        f"/api/invoices/{invoice_id}/pay/paypal/capture",
+        json={"order_id": order_id},
+        headers=headers,
+    )
+    assert capture_resp.status_code == 409, capture_resp.text
+
+    await db_session.refresh(invoice)
+    assert invoice.status == "sent"
+
+
+async def test_capture_rejects_an_order_created_for_a_different_invoice(
+    db_client: AsyncClient,
+    make_user,
+    login_as,
+    fake_paypal_server: str,
+    monkeypatch: pytest.MonkeyPatch,
+    db_session,
+) -> None:
+    """The real regression test for the reference_id check: a customer
+    (or a compromised client) captures a PayPal order that was genuinely
+    created and approved -- just for SOMEONE ELSE'S invoice -- against
+    their own invoice's capture endpoint. Before the reference_id check
+    was added, this silently recorded the captured amount as a real
+    payment against the wrong invoice.
+    """
+    from sqlalchemy import select
+
+    from logand_backend.db.models.invoices import Invoice
+
+    _configure_paypal(monkeypatch, fake_paypal_server)
+    invoice_a_id, _customer_a = await _sent_invoice_as_customer(
+        db_client, make_user, login_as, unit_price="10.00"
+    )
+    headers = _csrf_headers(db_client)
+    order_resp = await db_client.post(
+        f"/api/invoices/{invoice_a_id}/pay/paypal", headers=headers
+    )
+    assert order_resp.status_code == 200, order_resp.text
+    order_id_for_a = order_resp.json()["order_id"]
+    await db_client.post("/api/auth/logout", headers=headers)
+
+    invoice_b_id, _customer_b = await _sent_invoice_as_customer(
+        db_client, make_user, login_as, unit_price="10.00"
+    )
+    headers_b = _csrf_headers(db_client)
+
+    capture_resp = await db_client.post(
+        f"/api/invoices/{invoice_b_id}/pay/paypal/capture",
+        json={"order_id": order_id_for_a},
+        headers=headers_b,
+    )
+    assert capture_resp.status_code == 409, capture_resp.text
+
+    invoice_b = (
+        await db_session.execute(select(Invoice).where(Invoice.id == invoice_b_id))
+    ).scalar_one()
+    assert invoice_b.status == "sent"
+
+
+async def test_capture_with_bogus_order_id_is_rejected(
     db_client: AsyncClient,
     make_user,
     login_as,
     fake_paypal_server: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # The fake server doesn't validate that a captured order_id was ever
-    # actually created (see fake_paypal.py's capture_order) -- this test
-    # documents that as a known simplification of the double, not a
-    # real-PayPal behavior being asserted here.
+    # The fake server still returns a COMPLETED capture even for an
+    # order_id it never actually created (see fake_paypal.py's
+    # capture_order, which falls back to a "reference_id": "unknown"
+    # placeholder in that case) -- the REAL guard against this is the
+    # capture route itself comparing PayPal's echoed reference_id against
+    # the invoice being captured against, not the fake server rejecting
+    # the call. A client-supplied order_id that doesn't actually belong
+    # to this invoice must be rejected with 409, never silently recorded
+    # as a real payment.
     _configure_paypal(monkeypatch, fake_paypal_server)
     invoice_id, _customer = await _sent_invoice_as_customer(
         db_client, make_user, login_as
@@ -175,7 +279,7 @@ async def test_capture_with_bogus_order_id_still_succeeds_against_fake_server(
         json={"order_id": "FAKE-ORDER-NEVERCREATED"},
         headers=headers,
     )
-    assert resp.status_code == 200
+    assert resp.status_code == 409
 
 
 async def test_pay_via_paypal_rejects_non_payable_invoice(

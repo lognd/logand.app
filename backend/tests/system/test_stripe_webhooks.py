@@ -249,3 +249,185 @@ async def test_webhook_ignores_unhandled_event_types(db_client: AsyncClient) -> 
         headers={"stripe-signature": _stripe_signature_header(payload)},
     )
     assert resp.status_code == 200
+
+
+async def test_webhook_retried_intent_settles_invoice_that_failed_then_succeeded(
+    db_client: AsyncClient, make_user, login_as, db_session: AsyncSession
+) -> None:
+    """Regression test for FINDINGS.md H1: a PaymentIntent that first
+    fails then succeeds on retry must still settle the invoice -- the
+    idempotency "existing payment" branch used to only flip that row's
+    status and return, never running the settlement logic, leaving the
+    invoice "sent" forever even though the card was actually charged.
+    """
+    intent_id = "pi_retried"
+    invoice_id = await _create_sent_invoice_with_intent(
+        db_client, make_user, login_as, intent_id
+    )
+    invoice = (
+        await db_session.execute(select(Invoice).where(Invoice.id == invoice_id))
+    ).scalar_one()
+    invoice.stripe_payment_intent_id = intent_id
+    await db_session.commit()
+
+    failed_payload = _payment_intent_event(
+        "payment_intent.payment_failed", intent_id, 4200
+    )
+    resp = await db_client.post(
+        "/api/webhooks/stripe",
+        content=failed_payload,
+        headers={"stripe-signature": _stripe_signature_header(failed_payload)},
+    )
+    assert resp.status_code == 200
+    await db_session.refresh(invoice)
+    assert invoice.status == "sent"
+
+    succeeded_payload = _payment_intent_event(
+        "payment_intent.succeeded", intent_id, 4200
+    )
+    resp = await db_client.post(
+        "/api/webhooks/stripe",
+        content=succeeded_payload,
+        headers={"stripe-signature": _stripe_signature_header(succeeded_payload)},
+    )
+    assert resp.status_code == 200
+
+    await db_session.refresh(invoice)
+    assert invoice.status == "paid"
+    assert invoice.paid_at is not None
+
+    payment = (
+        await db_session.execute(
+            select(Payment).where(Payment.stripe_payment_intent_id == intent_id)
+        )
+    ).scalar_one()
+    assert payment.status == "succeeded"
+
+
+def _dispute_event(
+    event_type: str, dispute_id: str, charge_id: str, status: str
+) -> bytes:
+    return json.dumps(
+        {
+            "id": "evt_" + dispute_id,
+            "object": "event",
+            "type": event_type,
+            "data": {
+                "object": {
+                    "id": dispute_id,
+                    "charge": charge_id,
+                    "status": status,
+                }
+            },
+        }
+    ).encode()
+
+
+async def test_dispute_created_event_sets_payment_dispute_status(
+    db_client: AsyncClient, make_user, login_as, db_session: AsyncSession
+) -> None:
+    intent_id = "pi_disputed"
+    charge_id = "ch_disputed"
+    invoice_id = await _create_sent_invoice_with_intent(
+        db_client, make_user, login_as, intent_id
+    )
+    invoice = (
+        await db_session.execute(select(Invoice).where(Invoice.id == invoice_id))
+    ).scalar_one()
+    invoice.stripe_payment_intent_id = intent_id
+    await db_session.commit()
+
+    paid_payload = _payment_intent_event(
+        "payment_intent.succeeded", intent_id, 4200, latest_charge=charge_id
+    )
+    resp = await db_client.post(
+        "/api/webhooks/stripe",
+        content=paid_payload,
+        headers={"stripe-signature": _stripe_signature_header(paid_payload)},
+    )
+    assert resp.status_code == 200
+
+    dispute_payload = _dispute_event(
+        "charge.dispute.created", "dp_1", charge_id, "needs_response"
+    )
+    resp = await db_client.post(
+        "/api/webhooks/stripe",
+        content=dispute_payload,
+        headers={"stripe-signature": _stripe_signature_header(dispute_payload)},
+    )
+    assert resp.status_code == 200
+
+    payment = (
+        await db_session.execute(
+            select(Payment).where(Payment.stripe_payment_intent_id == intent_id)
+        )
+    ).scalar_one()
+    assert payment.dispute_status == "needs_response"
+    assert payment.stripe_dispute_id == "dp_1"
+
+    # Invoice itself is untouched -- disputes are tracked on the payment,
+    # not folded into Invoice.status (see api/webhooks.py's
+    # _handle_dispute_event doc comment).
+    await db_session.refresh(invoice)
+    assert invoice.status == "paid"
+
+
+async def test_dispute_closed_lost_updates_existing_dispute_status(
+    db_client: AsyncClient, make_user, login_as, db_session: AsyncSession
+) -> None:
+    intent_id = "pi_disputed_lost"
+    charge_id = "ch_disputed_lost"
+    invoice_id = await _create_sent_invoice_with_intent(
+        db_client, make_user, login_as, intent_id
+    )
+    invoice = (
+        await db_session.execute(select(Invoice).where(Invoice.id == invoice_id))
+    ).scalar_one()
+    invoice.stripe_payment_intent_id = intent_id
+    await db_session.commit()
+
+    paid_payload = _payment_intent_event(
+        "payment_intent.succeeded", intent_id, 4200, latest_charge=charge_id
+    )
+    await db_client.post(
+        "/api/webhooks/stripe",
+        content=paid_payload,
+        headers={"stripe-signature": _stripe_signature_header(paid_payload)},
+    )
+    created_payload = _dispute_event(
+        "charge.dispute.created", "dp_2", charge_id, "needs_response"
+    )
+    await db_client.post(
+        "/api/webhooks/stripe",
+        content=created_payload,
+        headers={"stripe-signature": _stripe_signature_header(created_payload)},
+    )
+
+    closed_payload = _dispute_event("charge.dispute.closed", "dp_2", charge_id, "lost")
+    resp = await db_client.post(
+        "/api/webhooks/stripe",
+        content=closed_payload,
+        headers={"stripe-signature": _stripe_signature_header(closed_payload)},
+    )
+    assert resp.status_code == 200
+
+    payment = (
+        await db_session.execute(
+            select(Payment).where(Payment.stripe_payment_intent_id == intent_id)
+        )
+    ).scalar_one()
+    assert payment.dispute_status == "lost"
+
+
+async def test_dispute_event_for_unknown_charge_is_ignored_not_a_500(
+    db_client: AsyncClient,
+) -> None:
+    payload = _dispute_event(
+        "charge.dispute.created", "dp_unknown", "ch_unknown", "needs_response"
+    )
+    resp = await db_client.post(
+        "/api/webhooks/stripe",
+        content=payload,
+        headers={"stripe-signature": _stripe_signature_header(payload)},
+    )
+    assert resp.status_code == 200

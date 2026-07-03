@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-from datetime import datetime, timezone
-from decimal import Decimal
 from uuid import UUID, uuid4
 
 import stripe
