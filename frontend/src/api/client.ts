@@ -44,6 +44,31 @@ function readCsrfCookie(): string | null {
   return match ? decodeURIComponent(match[1]) : null;
 }
 
+// Shared by request() and apiGetBlob() so the two never drift on how they
+// unwrap the backend's structured error body (see api/errors.py's
+// to_http_exception, which nests {detail, code} inside the top-level
+// `detail` field). Previously apiGetBlob had its own stale copy that read
+// body.detail as a plain string, which -- now that it is an object --
+// stringified to the literal text "[object Object]" (FINDINGS.md M1).
+async function parseErrorBody(res: Response): Promise<{ detail?: string; code?: string }> {
+  let detail: string | undefined;
+  let code: string | undefined;
+  try {
+    const body = (await res.clone().json()) as { detail?: unknown };
+    const rawDetail = body?.detail;
+    if (typeof rawDetail === "string") {
+      detail = rawDetail;
+    } else if (rawDetail && typeof rawDetail === "object") {
+      const nested = rawDetail as { detail?: unknown; code?: unknown };
+      if (typeof nested.detail === "string") detail = nested.detail;
+      if (typeof nested.code === "string") code = nested.code;
+    }
+  } catch {
+    // Non-JSON or empty body -- fall back to the generic message below.
+  }
+  return { detail, code };
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const isMutating = !!init.method && init.method !== "GET";
   const headers = new Headers(init.headers);
@@ -106,23 +131,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     // other refund conflicts) via the stable `code`, not by matching
     // prose, instead of getting only a generic status line for every
     // non-ok response.
-    let detail: string | undefined;
-    let code: string | undefined;
-    try {
-      const body = (await res.clone().json()) as {
-        detail?: unknown;
-      };
-      const rawDetail = body?.detail;
-      if (typeof rawDetail === "string") {
-        detail = rawDetail;
-      } else if (rawDetail && typeof rawDetail === "object") {
-        const nested = rawDetail as { detail?: unknown; code?: unknown };
-        if (typeof nested.detail === "string") detail = nested.detail;
-        if (typeof nested.code === "string") code = nested.code;
-      }
-    } catch {
-      // Non-JSON or empty body -- fall back to the generic message below.
-    }
+    const { detail, code } = await parseErrorBody(res);
     throw new ApiError(
       detail ?? `request failed: ${res.status} ${res.statusText}`,
       code,
@@ -155,15 +164,20 @@ export async function apiGetBlob(path: string): Promise<Blob> {
 
   if (res.status === 401) {
     window.location.assign("/login");
-    throw new Error("unauthenticated");
+    throw new UnauthenticatedError();
+  }
+
+  if (res.status === 429) {
+    const retryAfter = Number(res.headers.get("Retry-After") ?? "1");
+    throw new RateLimitedError(retryAfter);
   }
 
   if (!res.ok) {
-    const detail = await res
-      .json()
-      .then((body: { detail?: string }) => body.detail)
-      .catch(() => null);
-    throw new Error(detail || `request failed: ${res.status} ${res.statusText}`);
+    const requestId = res.headers.get("x-request-id") ?? "unknown";
+    const log = res.status >= 500 ? logError : logWarn;
+    log(`request failed: GET ${path}`, `status=${res.status} request_id=${requestId}`);
+    const { detail, code } = await parseErrorBody(res);
+    throw new ApiError(detail ?? `request failed: ${res.status} ${res.statusText}`, code);
   }
 
   return res.blob();
