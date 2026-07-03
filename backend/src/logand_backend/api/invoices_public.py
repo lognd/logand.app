@@ -23,6 +23,7 @@ from logand_backend.domain.invoices.service import (
     attach_payment_proof,
     generate_invoice_pdf,
     get_amount_due,
+    has_pending_payment,
     settle_invoice_if_paid,
 )
 from logand_backend.domain.notifications.notify import notify_payment_received
@@ -230,6 +231,15 @@ async def pay_invoice_via_paypal(
     if invoice.status not in ("sent", "overdue"):
         raise HTTPException(
             status_code=409, detail="invoice is not payable in its current state"
+        )
+    # M1 in FINDINGS.md: a PENDING PayPal capture from an earlier attempt
+    # leaves amount_due at the full total (pending contributes nothing to
+    # get_paid_so_far), so without this guard a second order could be
+    # created and captured on top of the still-outstanding one.
+    if await has_pending_payment(db, invoice.id):
+        raise HTTPException(
+            status_code=409,
+            detail="a payment is still being reviewed for this invoice; please wait",
         )
     amount_due = await get_amount_due(db, invoice)
     if amount_due <= 0:
@@ -448,6 +458,15 @@ async def pay_invoice(
     if invoice.status not in ("sent", "overdue"):
         raise HTTPException(
             status_code=409, detail="invoice is not payable in its current state"
+        )
+    # M1 in FINDINGS.md: block starting a Stripe payment while an earlier
+    # PayPal capture is still pending review -- amount_due doesn't yet
+    # reflect it, so without this a second payment could settle on top of
+    # money PayPal already holds against this invoice.
+    if await has_pending_payment(db, invoice.id):
+        raise HTTPException(
+            status_code=409,
+            detail="a payment is still being reviewed for this invoice; please wait",
         )
     amount_due = await get_amount_due(db, invoice)
     if amount_due <= 0:

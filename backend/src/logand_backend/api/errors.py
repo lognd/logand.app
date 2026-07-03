@@ -31,6 +31,7 @@ _STATUS_MAP: dict[ErrorSet, int] = {
     # customer's invoice exists, see docs/design/04
     InvoiceError.InvalidState: 409,
     InvoiceError.AmountMismatch: 422,
+    InvoiceError.PaymentPending: 409,
     RefundError.PaymentNotFound: 404,
     RefundError.PaymentNotRefundable: 409,
     RefundError.AmountExceedsBalance: 422,

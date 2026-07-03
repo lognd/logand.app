@@ -161,6 +161,25 @@ async def void_invoice(
     return Ok(None)
 
 
+async def has_pending_payment(db: AsyncSession, invoice_id: UUID) -> bool:
+    """True if a `Payment` row for `invoice_id` is currently `pending` -- a
+    PayPal capture held for review (see M1 in FINDINGS.md). While one is
+    outstanding, `get_paid_so_far`/`get_amount_due` still show the invoice
+    as fully owed (pending contributes nothing to settlement math), so
+    every payment-initiation path (`record_manual_payment`, `pay_invoice`,
+    `pay_invoice_via_paypal`) must call this BEFORE letting a second
+    payment start, or the pending capture clearing later double-collects.
+    """
+    existing = (
+        await db.execute(
+            select(Payment.id).where(
+                Payment.invoice_id == invoice_id, Payment.status == "pending"
+            )
+        )
+    ).scalar_one_or_none()
+    return existing is not None
+
+
 async def record_manual_payment(
     db: AsyncSession, invoice_id: UUID, admin_id: UUID, payment: ManualPaymentInput
 ) -> Result[UUID, InvoiceError]:
@@ -193,6 +212,8 @@ async def record_manual_payment(
         return Err(InvoiceError.NotFound)
     if invoice.status not in ("sent", "overdue"):
         return Err(InvoiceError.InvalidState)
+    if await has_pending_payment(db, invoice_id):
+        return Err(InvoiceError.PaymentPending)
 
     payment_id = uuid4()
     db.add(

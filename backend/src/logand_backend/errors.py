@@ -36,6 +36,9 @@ class InvoiceError(ErrorSet):
     NotOwned = "invoice does not belong to the requesting customer"
     InvalidState = "invoice is not in a state that allows this operation"
     AmountMismatch = "client-supplied amount does not match server-computed total"
+    PaymentPending = (
+        "a payment is still being reviewed for this invoice; please wait"
+    )
 
 
 class RefundError(ErrorSet):
