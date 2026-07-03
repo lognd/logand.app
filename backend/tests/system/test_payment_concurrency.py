@@ -26,6 +26,7 @@ def _fake_payment_intent_create(**kwargs: object) -> SimpleNamespace:
         id=_FAKE_INTENT_ID,
         client_secret=_FAKE_CLIENT_SECRET,
         status="requires_payment_method",
+        amount=kwargs.get("amount", 6000),
     )
 
 
@@ -34,6 +35,7 @@ def _fake_payment_intent_retrieve(intent_id: str) -> SimpleNamespace:
         id=intent_id,
         client_secret=_FAKE_CLIENT_SECRET,
         status="requires_payment_method",
+        amount=6000,
     )
 
 

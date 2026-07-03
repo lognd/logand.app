@@ -89,18 +89,31 @@ async def get_invoice_stats(db: AsyncSession) -> InvoiceStats:
             count=count, amount_total=amount_total
         )
 
+    # Every money query below joins through Invoice and applies the SAME
+    # deleted_at.is_(None) predicate as by_status/outstanding above -- a
+    # soft-deleted invoice's payments/refunds must not feed these totals,
+    # or a paid invoice that gets soft-deleted leaves by_status/outstanding
+    # but keeps inflating total_collected/net_collected/by_payment_method,
+    # and the admin stats tiles stop reconciling with each other (see
+    # FINDINGS.md L2).
     total_collected = (
         await db.execute(
-            select(func.coalesce(func.sum(Payment.amount), 0)).where(
-                Payment.status.in_(("succeeded", "refunded", "partially_refunded"))
+            select(func.coalesce(func.sum(Payment.amount), 0))
+            .select_from(Payment)
+            .join(Invoice, Invoice.id == Payment.invoice_id)
+            .where(
+                Payment.status.in_(("succeeded", "refunded", "partially_refunded")),
+                Invoice.deleted_at.is_(None),
             )
         )
     ).scalar_one()
     total_refunded = (
         await db.execute(
-            select(func.coalesce(func.sum(Refund.amount), 0)).where(
-                Refund.status == "succeeded"
-            )
+            select(func.coalesce(func.sum(Refund.amount), 0))
+            .select_from(Refund)
+            .join(Payment, Payment.id == Refund.payment_id)
+            .join(Invoice, Invoice.id == Payment.invoice_id)
+            .where(Refund.status == "succeeded", Invoice.deleted_at.is_(None))
         )
     ).scalar_one()
     # A dispute Stripe resolved "lost" means the funds were clawed back --
@@ -139,15 +152,15 @@ async def get_invoice_stats(db: AsyncSession) -> InvoiceStats:
                 )
             )
             .select_from(Payment)
+            .join(Invoice, Invoice.id == Payment.invoice_id)
             .outerjoin(
                 refunded_by_payment,
                 refunded_by_payment.c.payment_id == Payment.id,
             )
             .where(
                 Payment.dispute_status == "lost",
-                Payment.status.in_(
-                    ("succeeded", "refunded", "partially_refunded")
-                ),
+                Payment.status.in_(("succeeded", "refunded", "partially_refunded")),
+                Invoice.deleted_at.is_(None),
             )
         )
     ).scalar_one()
@@ -167,7 +180,12 @@ async def get_invoice_stats(db: AsyncSession) -> InvoiceStats:
                 func.count(),
                 func.coalesce(func.sum(Payment.amount), 0),
             )
-            .where(Payment.status.in_(("succeeded", "refunded", "partially_refunded")))
+            .select_from(Payment)
+            .join(Invoice, Invoice.id == Payment.invoice_id)
+            .where(
+                Payment.status.in_(("succeeded", "refunded", "partially_refunded")),
+                Invoice.deleted_at.is_(None),
+            )
             .group_by(Payment.method)
         )
     ).all()

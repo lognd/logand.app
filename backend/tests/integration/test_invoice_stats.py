@@ -87,6 +87,55 @@ async def test_invoice_stats_breaks_down_status_payments_and_refunds(
     assert stats.disputes.needs_response == 0
 
 
+async def test_invoice_stats_excludes_payments_of_soft_deleted_invoices(
+    db_session, make_user
+) -> None:
+    """A soft-deleted invoice's payment must not feed
+    total_collected/net_collected/by_payment_method even though it drops
+    out of by_status/outstanding -- otherwise the admin stats tiles stop
+    reconciling with each other (see FINDINGS.md L2)."""
+    from datetime import datetime, timezone
+
+    from sqlalchemy import select
+
+    from logand_backend.db.models.invoices import Invoice
+
+    admin = await make_user(role="admin")
+    customer = await make_user(role="customer")
+
+    paid_id = (
+        await create_invoice(
+            db_session,
+            customer.id,
+            [
+                LineItemInput(
+                    description="a", quantity=Decimal(1), unit_price=Decimal("50.00")
+                )
+            ],
+        )
+    ).danger_ok
+    await send_invoice(db_session, paid_id)
+    await record_manual_payment(
+        db_session,
+        paid_id,
+        admin.id,
+        ManualPaymentInput(method="zelle", amount=Decimal("50.00")),
+    )
+
+    invoice = (
+        await db_session.execute(select(Invoice).where(Invoice.id == paid_id))
+    ).scalar_one()
+    invoice.deleted_at = datetime.now(timezone.utc)
+    await db_session.flush()
+
+    stats = await get_invoice_stats(db_session)
+
+    assert stats.by_status["paid"].count == 0
+    assert stats.total_collected == Decimal("0")
+    assert stats.net_collected == Decimal("0")
+    assert stats.by_payment_method.get("zelle") is None
+
+
 async def test_invoice_stats_counts_open_disputes(db_session, make_user) -> None:
     from uuid import uuid4
 
