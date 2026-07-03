@@ -60,35 +60,56 @@ def _gmail_oauth_configured(cfg: AppConfig) -> bool:
     return bool(cfg.gmail_service_account_json and cfg.gmail_sender_email)
 
 
+# Coarse expiry window for unsubscribe links: long enough that a
+# recently-sent invoice/receipt email's footer link never nags a real
+# customer, short enough that a token captured from a stale forwarded
+# thread or mail archive eventually stops being usable -- see
+# FINDINGS.md L2. Granularity is a day, not a timestamp, so the token
+# stays short and doesn't leak send-time precision.
+_UNSUBSCRIBE_TOKEN_MAX_AGE_DAYS = 180
+
+
 def sign_unsubscribe_token(user_id: UUID, cfg: AppConfig) -> str:
-    """ "{user_id}.{hmac-sha256 hex digest}" -- verifiable without a DB
-    lookup (a lookup is still done afterward, but only to actually apply
-    the opt-out, not to validate the token itself), and without a separate
-    secrets table: reuses session_secret as the HMAC key, the same
-    already-required-to-be-set secret sessions.py signs session tokens
-    with.
+    """ "{user_id}.{issued_epoch_day}.{hmac-sha256 hex digest}" --
+    verifiable without a DB lookup (a lookup is still done afterward, but
+    only to actually apply the opt-out, not to validate the token itself),
+    and without a separate secrets table: reuses session_secret as the
+    HMAC key, the same already-required-to-be-set secret sessions.py signs
+    session tokens with. Includes the day the token was issued so
+    verify_unsubscribe_token can reject tokens older than
+    _UNSUBSCRIBE_TOKEN_MAX_AGE_DAYS -- previously this was a static
+    per-user value with no expiry at all.
     """
     user_id_str = str(user_id)
+    issued_epoch_day = int(time.time() // 86400)
+    payload = f"{user_id_str}.{issued_epoch_day}"
     sig = hmac.new(
-        cfg.session_secret.encode("utf-8"), user_id_str.encode("ascii"), hashlib.sha256
+        cfg.session_secret.encode("utf-8"), payload.encode("ascii"), hashlib.sha256
     ).hexdigest()
-    return f"{user_id_str}.{sig}"
+    return f"{payload}.{sig}"
 
 
 def verify_unsubscribe_token(token: str, cfg: AppConfig) -> UUID | None:
-    """None for any malformed or tampered token -- api/notifications.py
-    treats that as 400, never distinguishing "malformed" from "wrong
-    signature" in the response.
+    """None for any malformed, tampered, or expired token --
+    api/notifications.py treats that as 400, never distinguishing
+    "malformed", "wrong signature", or "expired" in the response (the
+    existing "invalid or expired unsubscribe link" copy already covers
+    all three).
     """
     try:
-        user_id_str, sig = token.rsplit(".", 1)
+        user_id_str, issued_epoch_day_str, sig = token.rsplit(".", 2)
         user_id = UUID(user_id_str)
+        issued_epoch_day = int(issued_epoch_day_str)
     except ValueError:
         return None
+    payload = f"{user_id_str}.{issued_epoch_day}"
     expected = hmac.new(
-        cfg.session_secret.encode("utf-8"), user_id_str.encode("ascii"), hashlib.sha256
+        cfg.session_secret.encode("utf-8"), payload.encode("ascii"), hashlib.sha256
     ).hexdigest()
     if not hmac.compare_digest(expected, sig):
+        return None
+    current_epoch_day = int(time.time() // 86400)
+    if current_epoch_day - issued_epoch_day > _UNSUBSCRIBE_TOKEN_MAX_AGE_DAYS:
         return None
     return user_id
 
