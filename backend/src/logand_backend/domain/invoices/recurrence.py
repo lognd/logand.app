@@ -32,16 +32,38 @@ def _advance(d: date, interval: str | None) -> date:
     raise ValueError(f"unrecognized recurrence_interval: {interval!r}")
 
 
+# Statuses a recurring invoice can be in while it's still "the active cycle"
+# -- billing cadence is driven by due_date, not payment state, so a PAID
+# invoice must still spawn its next cycle once its due_date passes (an
+# invoice that's already void/draft was never sent for this cycle at all
+# and shouldn't spawn anything).
+_ACTIVE_RECURRING_STATUSES = ("sent", "overdue", "paid")
+
+
 async def generate_due_recurring_invoices(db: AsyncSession, as_of: date) -> list[UUID]:
-    """Walks invoices WHERE is_recurring AND status = 'sent' past their
-    recurrence_interval and creates the next draft. Pure domain function so
-    the scheduled-job entrypoint (docs/design/11) stays a thin wrapper that's
-    easy to unit test without a real scheduler -- see docs/design/04."""
+    """Walks invoices WHERE is_recurring AND status in (sent/overdue/paid)
+    past their recurrence_interval and creates the next draft. Pure domain
+    function so the scheduled-job entrypoint (docs/design/11) stays a thin
+    wrapper that's easy to unit test without a real scheduler -- see
+    docs/design/04.
+
+    Exactly one child is ever generated per due cycle: generating a child
+    flips `is_recurring` off on the PARENT (it has already spawned its
+    next cycle, so it must stop matching this query on every future run --
+    otherwise the same due, unpaid invoice would spawn a fresh draft every
+    single day the scheduler runs) and the new child carries `is_recurring
+    =True` forward, becoming the next cycle's "active" row. This also
+    fixes recurrence for a cycle that gets PAID before the next one is
+    generated: paid invoices are included in the status filter above (billing
+    cadence is about due_date, not payment state), so a paid recurring
+    invoice still generates its successor instead of the chain silently
+    dying.
+    """
     due = (
         await db.execute(
             select(Invoice).where(
                 Invoice.is_recurring.is_(True),
-                Invoice.status == "sent",
+                Invoice.status.in_(_ACTIVE_RECURRING_STATUSES),
                 Invoice.due_date.is_not(None),
                 Invoice.due_date <= as_of,
             )
@@ -67,6 +89,10 @@ async def generate_due_recurring_invoices(db: AsyncSession, as_of: date) -> list
                 due_date=next_due,
             )
         )
+        # The parent has now generated its successor -- stop it from
+        # matching this query again (see docstring above for why this is
+        # what actually prevents unbounded daily duplication).
+        invoice.is_recurring = False
         await db.flush()
 
         line_items = (
@@ -90,3 +116,33 @@ async def generate_due_recurring_invoices(db: AsyncSession, as_of: date) -> list
         created.append(new_id)
 
     return created
+
+
+async def mark_overdue_invoices(db: AsyncSession, as_of: date) -> list[UUID]:
+    """Flips `sent` -> `overdue` for every invoice whose due_date has
+    passed. `overdue` was previously write-never (see FINDINGS.md M1): it
+    appeared in every read-side filter (pay routes, recurrence's own
+    _ACTIVE_RECURRING_STATUSES, the frontend's PAYABLE_STATUSES) but
+    nothing ever produced it, so it was permanently dead state. Only
+    `sent` rows are eligible -- `overdue` ones are already flipped (this
+    is idempotent day over day), and `draft`/`paid`/`void` were never
+    payable in the first place. Invoices with no due_date can't be
+    overdue by definition and are excluded by the WHERE below.
+    """
+    rows = (
+        await db.execute(
+            select(Invoice).where(
+                Invoice.status == "sent",
+                Invoice.due_date.is_not(None),
+                Invoice.due_date < as_of,
+                Invoice.deleted_at.is_(None),
+            )
+        )
+    ).scalars()
+    updated: list[UUID] = []
+    for invoice in rows:
+        invoice.status = "overdue"
+        updated.append(invoice.id)
+    if updated:
+        await db.flush()
+    return updated

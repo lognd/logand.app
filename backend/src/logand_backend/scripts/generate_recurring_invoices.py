@@ -8,7 +8,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from logand_backend.app.config import AppConfig
 from logand_backend.db import base as db_base
-from logand_backend.domain.invoices.recurrence import generate_due_recurring_invoices
+from logand_backend.domain.invoices.recurrence import (
+    generate_due_recurring_invoices,
+    mark_overdue_invoices,
+)
 from logand_backend.logging.logger import get_logger
 
 log = get_logger(__name__)
@@ -43,9 +46,16 @@ async def run(
         session = db_base.get_session()
 
     try:
-        created = await generate_due_recurring_invoices(
-            session, as_of=as_of or date.today()
-        )
+        today = as_of or date.today()
+        # Overdue marking first, same transaction as the recurring-invoice
+        # generation below -- both are pure due_date-driven daily
+        # housekeeping, and generate_due_recurring_invoices' own
+        # _ACTIVE_RECURRING_STATUSES already treats "overdue" as an
+        # active cycle, so a freshly-flipped invoice is immediately
+        # eligible to spawn its next cycle in the same run rather than
+        # waiting a day.
+        await mark_overdue_invoices(session, as_of=today)
+        created = await generate_due_recurring_invoices(session, as_of=today)
         await session.commit()
         return [str(invoice_id) for invoice_id in created]
     finally:
