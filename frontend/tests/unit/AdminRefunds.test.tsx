@@ -60,7 +60,8 @@ describe("AdminInvoices refund UI (integration)", () => {
 
   it("shows a payment's dispute status and lets an admin issue a refund", async () => {
     const fetchMock = vi.fn().mockImplementation((path: string) => {
-      if (path === "/api/admin/invoices") return Promise.resolve(jsonResponse([paidInvoice]));
+      if (path === "/api/admin/invoices")
+        return Promise.resolve(jsonResponse([paidInvoice]));
       if (path === "/api/admin/invoices/inv-1") {
         return Promise.resolve(jsonResponse(paidInvoiceDetail));
       }
@@ -117,7 +118,8 @@ describe("AdminInvoices refund UI (integration)", () => {
       ],
     };
     const fetchMock = vi.fn().mockImplementation((path: string) => {
-      if (path === "/api/admin/invoices") return Promise.resolve(jsonResponse([paidInvoice]));
+      if (path === "/api/admin/invoices")
+        return Promise.resolve(jsonResponse([paidInvoice]));
       if (path === "/api/admin/invoices/inv-1") {
         return Promise.resolve(jsonResponse(disputedDetail));
       }

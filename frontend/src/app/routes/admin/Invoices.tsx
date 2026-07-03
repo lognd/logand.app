@@ -58,18 +58,12 @@ function PaymentProofViewer({ invoiceId }: { invoiceId: string }) {
 
   return (
     <div>
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className={BUTTON_CLASS}
-      >
+      <button type="button" onClick={() => setOpen((v) => !v)} className={BUTTON_CLASS}>
         {open ? "Hide" : "View"} payment proof
       </button>
       {open && (
         <div className="mt-2 flex flex-wrap gap-2">
-          {proofQuery.isLoading && (
-            <p className="text-sm text-fg-muted">Loading...</p>
-          )}
+          {proofQuery.isLoading && <p className="text-sm text-fg-muted">Loading...</p>}
           {proofQuery.data?.length === 0 && (
             <p className="text-sm text-fg-muted">
               No proof uploaded by the customer yet.
@@ -241,7 +235,9 @@ function PaymentsPanel({ invoice }: { invoice: Invoice }) {
   });
 
   const invalidate = () => {
-    queryClient.invalidateQueries({ queryKey: ["admin", "invoices", invoice.id, "detail"] });
+    queryClient.invalidateQueries({
+      queryKey: ["admin", "invoices", invoice.id, "detail"],
+    });
     queryClient.invalidateQueries({ queryKey: ["admin", "invoices"] });
   };
 
@@ -249,11 +245,7 @@ function PaymentsPanel({ invoice }: { invoice: Invoice }) {
 
   return (
     <div>
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className={BUTTON_CLASS}
-      >
+      <button type="button" onClick={() => setOpen((v) => !v)} className={BUTTON_CLASS}>
         {open ? "Hide" : "View"} payments
       </button>
       {open && (
@@ -276,7 +268,8 @@ function PaymentsPanel({ invoice }: { invoice: Invoice }) {
                     role="status"
                     className="rounded bg-accent-red/10 px-2 py-0.5 text-sm text-accent-red"
                   >
-                    {DISPUTE_STATUS_LABEL[payment.dispute_status] ?? payment.dispute_status}
+                    {DISPUTE_STATUS_LABEL[payment.dispute_status] ??
+                      payment.dispute_status}
                   </span>
                 )}
               </div>
@@ -294,7 +287,11 @@ function PaymentsPanel({ invoice }: { invoice: Invoice }) {
                   ))}
                 </ul>
               )}
-              <RefundForm invoiceId={invoice.id} payment={payment} onRefunded={invalidate} />
+              <RefundForm
+                invoiceId={invoice.id}
+                payment={payment}
+                onRefunded={invalidate}
+              />
             </div>
           ))}
         </div>
@@ -316,7 +313,8 @@ function ManualPaymentForm({
   const [note, setNote] = useState("");
 
   const mutation = useMutation({
-    mutationFn: () => recordManualPayment(invoice.id, { method, amount, note: note || undefined }),
+    mutationFn: () =>
+      recordManualPayment(invoice.id, { method, amount, note: note || undefined }),
     onSuccess: () => {
       onRecorded();
       setOpen(false);
@@ -395,11 +393,7 @@ function ManualPaymentForm({
         />
       </div>
       <div className="flex gap-2">
-        <button
-          type="submit"
-          disabled={mutation.isPending}
-          className={BUTTON_CLASS}
-        >
+        <button type="submit" disabled={mutation.isPending} className={BUTTON_CLASS}>
           {mutation.isPending ? "Recording..." : "Save"}
         </button>
         <button type="button" onClick={() => setOpen(false)} className={BUTTON_CLASS}>
@@ -623,7 +617,9 @@ function CreateInvoiceForm({ onCreated }: { onCreated: () => void }) {
           className={INPUT_CLASS}
         />
         <datalist id="new-invoice-customer-options">
-          {customersQuery.data?.map((c) => <option key={c.id} value={c.email} />)}
+          {customersQuery.data?.map((c) => (
+            <option key={c.id} value={c.email} />
+          ))}
         </datalist>
         {customersQuery.isLoading && (
           <p className="mt-1 text-sm text-fg-muted">Searching...</p>
@@ -683,8 +679,7 @@ function CreateInvoiceForm({ onCreated }: { onCreated: () => void }) {
           </button>
           {importMutation.isError && (
             <p role="alert" className="w-full text-sm text-accent-red">
-              Could not import -- every material line needs a real unit_cost set
-              first.
+              Could not import -- every material line needs a real unit_cost set first.
             </p>
           )}
         </div>
@@ -861,7 +856,9 @@ export function AdminInvoices() {
                   </td>
                   <td className="p-2">{invoice.due_date ?? "-"}</td>
                   <td className="p-2">
-                    {invoice.paid_at ? new Date(invoice.paid_at).toLocaleDateString() : "-"}
+                    {invoice.paid_at
+                      ? new Date(invoice.paid_at).toLocaleDateString()
+                      : "-"}
                   </td>
                   <td className="p-2">{invoice.memo ?? "-"}</td>
                   <td className="flex flex-wrap gap-2 p-2">
@@ -893,7 +890,9 @@ export function AdminInvoices() {
                     <button
                       type="button"
                       onClick={() => pdfMutation.mutate(invoice.id)}
-                      disabled={pdfMutation.isPending && pdfMutation.variables === invoice.id}
+                      disabled={
+                        pdfMutation.isPending && pdfMutation.variables === invoice.id
+                      }
                       aria-label={`Download PDF for invoice ${invoice.id}`}
                       className={BUTTON_CLASS}
                     >
