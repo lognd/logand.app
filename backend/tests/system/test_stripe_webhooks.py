@@ -304,6 +304,49 @@ async def test_webhook_retried_intent_settles_invoice_that_failed_then_succeeded
     assert payment.status == "succeeded"
 
 
+async def test_webhook_succeeded_event_flags_invoice_when_paypal_capture_still_pending(
+    db_client: AsyncClient, make_user, login_as, db_session: AsyncSession
+) -> None:
+    """Regression test for M2 in FINDINGS.md's bounded fix (a): a Stripe
+    PaymentIntent confirms entirely client-side/out-of-band, invisible to
+    a PayPal capture that went PENDING on the same invoice in the
+    meantime. The webhook can't refuse the already-happened charge, but
+    it must persist a durable needs_review flag instead of only a log
+    line, so an admin has something to act on."""
+    intent_id = "pi_succeeds_paypal_pending"
+    invoice_id = await _create_sent_invoice_with_intent(
+        db_client, make_user, login_as, intent_id
+    )
+    invoice = (
+        await db_session.execute(select(Invoice).where(Invoice.id == invoice_id))
+    ).scalar_one()
+    invoice.stripe_payment_intent_id = intent_id
+    db_session.add(
+        Payment(
+            invoice_id=invoice.id,
+            method="paypal",
+            paypal_order_id="order-still-pending",
+            amount=Decimal("42.00"),
+            status="pending",
+        )
+    )
+    await db_session.commit()
+
+    payload = _payment_intent_event("payment_intent.succeeded", intent_id, 4200)
+    resp = await db_client.post(
+        "/api/webhooks/stripe",
+        content=payload,
+        headers={"stripe-signature": _stripe_signature_header(payload)},
+    )
+    assert resp.status_code == 200
+
+    await db_session.refresh(invoice)
+    assert invoice.status == "paid"
+    assert invoice.needs_review is True
+    assert invoice.needs_review_reason is not None
+    assert "paypal" in invoice.needs_review_reason.lower()
+
+
 def _dispute_event(
     event_type: str, dispute_id: str, charge_id: str, status: str
 ) -> bytes:

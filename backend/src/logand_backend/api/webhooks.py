@@ -15,7 +15,11 @@ from logand_backend.domain.invoices.refunds import (
     STRIPE_REFUND_STATUS_MAP,
     apply_refund_settlement,
 )
-from logand_backend.domain.invoices.service import settle_invoice_if_paid
+from logand_backend.domain.invoices.service import (
+    flag_invoice_needs_review,
+    has_pending_payment,
+    settle_invoice_if_paid,
+)
 from logand_backend.domain.notifications.notify import (
     notify_dispute_updated,
     notify_payment_received,
@@ -90,6 +94,33 @@ async def stripe_webhook(
     return {"status": "received"}
 
 
+async def _flag_if_paypal_pending_race(db: AsyncSession, invoice: Invoice) -> None:
+    """M2 in FINDINGS.md: a Stripe PaymentIntent can be created and
+    confirmed entirely client-side, invisibly to a PayPal capture that
+    went PENDING on the SAME invoice in the meantime -- there is no
+    has_pending_payment guard possible at webhook-delivery time (the
+    charge already happened on Stripe's side). This is the bounded fix:
+    escalate beyond a log line by persisting a durable needs-review flag
+    the moment a Stripe success lands while a PayPal capture is still
+    pending, so an admin has something to act on (a proactive refund)
+    instead of relying on someone noticing the eventual double-collect
+    once the PayPal capture reconciles.
+    """
+    if await has_pending_payment(db, invoice.id):
+        _log.warning(
+            "stripe payment succeeded while a paypal capture is still "
+            "pending on this invoice -- possible double-collect, "
+            "flagging for admin review",
+            extra={"invoice_id": str(invoice.id)},
+        )
+        await flag_invoice_needs_review(
+            db,
+            invoice,
+            "stripe payment succeeded while a paypal capture was still "
+            "pending on this invoice",
+        )
+
+
 async def _handle_payment_intent_event(
     db: AsyncSession, event: dict, cfg: AppConfig
 ) -> None:
@@ -149,6 +180,8 @@ async def _handle_payment_intent_event(
             return
         existing.status = "succeeded" if succeeded else "failed"
         await db.flush()
+        if succeeded:
+            await _flag_if_paypal_pending_race(db, invoice)
         settled_now = succeeded and await settle_invoice_if_paid(db, invoice)
         # L1: notify whenever this delivery observes a succeeded payment
         # on a now-paid invoice, not only when THIS call is what flipped
@@ -206,6 +239,7 @@ async def _handle_payment_intent_event(
         return
 
     if succeeded:
+        await _flag_if_paypal_pending_race(db, invoice)
         await settle_invoice_if_paid(db, invoice)
         _log.info(
             "invoice marked paid via stripe",
