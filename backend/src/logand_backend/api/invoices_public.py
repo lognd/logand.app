@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 from datetime import datetime, timezone
 from decimal import Decimal
 from uuid import UUID, uuid4
@@ -22,6 +23,7 @@ from logand_backend.domain.invoices.pdf.renderer import PdfRenderError
 from logand_backend.domain.invoices.service import (
     attach_payment_proof,
     generate_invoice_pdf,
+    settle_invoice_if_paid,
 )
 from logand_backend.domain.notifications.notify import notify_payment_received
 from logand_backend.domain.payments.providers import paypal
@@ -263,6 +265,43 @@ async def capture_invoice_paypal_payment(
         raise to_http_exception(result.danger_err)
     capture = result.danger_ok
 
+    # Never trust the client-supplied order_id to actually belong to this
+    # invoice, or a PayPal capture in a non-final state, or one in a
+    # different currency than the invoice: reference_id is PayPal's own
+    # echo of the reference_id this app set on create_order (the invoice
+    # id) -- a mismatch means the order_id in the request body wasn't the
+    # one this invoice's own pay flow created. status must be COMPLETED
+    # (a capture can come back PENDING, e.g. held for review) -- anything
+    # else is not actually money received yet. currency is compared
+    # because paid_so_far below sums raw Decimal amounts across payments
+    # with no currency conversion; a capture in the wrong currency would
+    # silently count as if it were the invoice's own currency.
+    if capture.reference_id != str(invoice.id):
+        raise HTTPException(
+            status_code=409, detail="PayPal order does not belong to this invoice"
+        )
+    if capture.status != "COMPLETED":
+        raise HTTPException(
+            status_code=409,
+            detail=f"PayPal capture not completed (status={capture.status})",
+        )
+    if capture.captured_currency.lower() != invoice.currency.lower():
+        raise HTTPException(
+            status_code=409, detail="PayPal capture currency does not match invoice"
+        )
+    # Defense-in-depth: create_order sets `value` to invoice.amount_total
+    # server-side, so captured_amount == amount_total in the happy path
+    # today -- but nothing upstream of this handler actually guarantees
+    # that stays true (a future partial-capture flow, a PayPal-side
+    # rounding quirk), and "paid" is otherwise decided purely by summing
+    # whatever amount got recorded. Reject a mismatch outright rather than
+    # silently trusting PayPal's number.
+    if capture.captured_amount != invoice.amount_total:
+        raise HTTPException(
+            status_code=409,
+            detail="PayPal captured amount does not match invoice total",
+        )
+
     db.add(
         Payment(
             invoice_id=invoice.id,
@@ -276,22 +315,12 @@ async def capture_invoice_paypal_payment(
 
     # Same "sum every succeeded payment, mark paid once it covers the
     # total" logic as domain/invoices/service.py's record_manual_payment
-    # -- a customer could in principle combine a partial manual payment
-    # with a PayPal payment for the remainder, so this always sums
-    # everything rather than assuming this one capture is the only
-    # payment ever made against the invoice.
-    existing = (
-        await db.execute(
-            select(Payment).where(
-                Payment.invoice_id == invoice.id, Payment.status == "succeeded"
-            )
-        )
-    ).scalars()
-    paid_so_far = sum((p.amount for p in existing), Decimal(0))
-    if paid_so_far >= invoice.amount_total:
-        invoice.status = "paid"
-        invoice.paid_at = datetime.now(timezone.utc)
-    await db.flush()
+    # (and api/webhooks.py's Stripe path) -- a customer could in
+    # principle combine a partial manual payment with a PayPal payment
+    # for the remainder, so this always sums everything rather than
+    # assuming this one capture is the only payment ever made against
+    # the invoice.
+    await settle_invoice_if_paid(db, invoice)
 
     await notify_payment_received(db, cfg, invoice, capture.captured_amount)
 
@@ -337,15 +366,33 @@ async def pay_invoice(
     # happily create as many PaymentIntents as asked, and a customer
     # confirming two of them (two browser tabs, a slow first request
     # retried) would really charge their card twice.
+    #
+    # stripe-python's PaymentIntent.retrieve/create are synchronous
+    # (blocking DNS + socket I/O) -- asyncio.to_thread, same reasoning as
+    # render_invoice_pdf's own to_thread call for latexmk, so one slow
+    # Stripe round trip doesn't stall every other concurrent request on
+    # this process.
     if invoice.stripe_payment_intent_id:
-        existing_intent = stripe.PaymentIntent.retrieve(
-            invoice.stripe_payment_intent_id
+        existing_intent = await asyncio.to_thread(
+            stripe.PaymentIntent.retrieve, invoice.stripe_payment_intent_id
         )
-        if existing_intent.status not in ("canceled", "succeeded"):
+        if existing_intent.status == "succeeded":
+            # Already paid on Stripe's side -- either the webhook hasn't
+            # landed yet or is about to. Creating a SECOND PaymentIntent
+            # here would let the customer confirm both, charging their
+            # card twice for one invoice; refuse instead and let the
+            # webhook (or a retry once it has caught up) settle the
+            # invoice's status.
+            raise HTTPException(
+                status_code=409,
+                detail="this invoice has already been paid; refresh the page",
+            )
+        if existing_intent.status != "canceled":
             assert existing_intent.client_secret is not None
             return {"client_secret": existing_intent.client_secret}
 
-    intent = stripe.PaymentIntent.create(
+    intent = await asyncio.to_thread(
+        stripe.PaymentIntent.create,
         amount=int(invoice.amount_total * 100),
         currency=invoice.currency,
         metadata={"invoice_id": str(invoice.id)},
