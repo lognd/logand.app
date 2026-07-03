@@ -141,20 +141,33 @@ tasks.register<JacocoReport>("jacocoTestReport") {
 
 tasks.withType<Test> {
     useJUnitPlatform()
-    // robolectric.offline -- this host is aarch64 Linux; Robolectric's
-    // remote-artifact fetcher initializes conscrypt (for TLS) purely to
-    // CHECK for a newer android-all jar even when one is already cached
-    // locally, and conscrypt-openjdk-uber has never published a
-    // linux-aarch64 native build, so that initialization always throws
-    // UnsatisfiedLinkError here regardless of what the test itself
-    // does. Forcing offline mode (using only the already-resolved local
-    // Maven cache) sidesteps the network/TLS path entirely.
-    systemProperty("robolectric.offline", "true")
-    // Flat directory (Robolectric's LocalDependencyResolver expects the
-    // jar directly at <dir>/<artifact>.jar, not a real Maven layout) --
-    // populated once via `android/README.md`'s aarch64 setup steps.
-    systemProperty(
-        "robolectric.dependency.dir",
-        System.getProperty("user.home") + "/.local/opt/robolectric-deps",
+    // robolectric.offline -- ONLY on aarch64 Linux with the local jar
+    // cache actually populated (this dev host; see android/README.md's
+    // aarch64 setup steps). Robolectric's remote-artifact fetcher
+    // initializes conscrypt (for TLS) purely to CHECK for a newer
+    // android-all jar even when one is already cached locally, and
+    // conscrypt-openjdk-uber has never published a linux-aarch64 native
+    // build, so that initialization always throws UnsatisfiedLinkError
+    // on THIS architecture regardless of what the test itself does.
+    // Forcing offline mode (using only the already-resolved local Maven
+    // cache) sidesteps the network/TLS path entirely -- but unlike
+    // aarch64, x86_64 (every CI runner: android-ci.yml/
+    // release-android.yml both run on ubuntu-latest, which is x86_64)
+    // has no such conscrypt gap, so forcing offline mode there just
+    // makes Robolectric's LocalDependencyResolver fail outright looking
+    // for a flat-file jar cache directory that was never populated
+    // (IllegalArgumentException) instead of resolving normally online.
+    val robolectricDepsDir = File(
+        System.getProperty("user.home"),
+        ".local/opt/robolectric-deps",
     )
+    val isAarch64Linux = System.getProperty("os.arch") in setOf("aarch64", "arm64") &&
+        System.getProperty("os.name").contains("Linux", ignoreCase = true)
+    if (isAarch64Linux && robolectricDepsDir.isDirectory) {
+        systemProperty("robolectric.offline", "true")
+        // Flat directory (Robolectric's LocalDependencyResolver expects
+        // the jar directly at <dir>/<artifact>.jar, not a real Maven
+        // layout).
+        systemProperty("robolectric.dependency.dir", robolectricDepsDir.absolutePath)
+    }
 }
