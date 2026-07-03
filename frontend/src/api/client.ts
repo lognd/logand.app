@@ -10,6 +10,18 @@ export class RateLimitedError extends Error {
   }
 }
 
+// Thrown specifically for a 401 -- distinct from the generic Error thrown
+// for every other non-ok status, so callers (AdminGuard, CustomerGuard)
+// can tell "genuinely not authenticated" apart from a transient
+// network/5xx failure on /api/me and react differently. See those
+// guards' own comments for why conflating the two sent an already-
+// authenticated user with a flaky connection straight to /login.
+export class UnauthenticatedError extends Error {
+  constructor() {
+    super("unauthenticated");
+  }
+}
+
 function readCsrfCookie(): string | null {
   const match = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
   return match ? decodeURIComponent(match[1]) : null;
@@ -52,7 +64,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     if (path !== "/api/me") {
       window.location.assign("/login");
     }
-    throw new Error("unauthenticated");
+    throw new UnauthenticatedError();
   }
 
   if (res.status === 429) {
