@@ -162,10 +162,10 @@ class App:
             # (see M1).
             expected_secret: str | None = None
             session_token = request.cookies.get(SESSION_COOKIE_NAME)
-            # Only resolve (and thereby slide/commit) the session for a
-            # method verify_csrf will actually check below -- verify_csrf
-            # itself no-ops for _SAFE_METHODS, so doing this for every
-            # GET/HEAD/OPTIONS bought nothing but ran validate_session's
+            # Only resolve (and thereby, on success, slide/commit) the
+            # session for a method verify_csrf will actually check below --
+            # verify_csrf itself no-ops for _SAFE_METHODS, so doing this for
+            # every GET/HEAD/OPTIONS bought nothing but ran validate_session's
             # idle-timeout slide (a write-commit) on every single read
             # request, silently widening the effective idle-timeout
             # window. A safe request still gets its session resolved
@@ -181,7 +181,22 @@ class App:
                         if result.is_ok:
                             request.state.session_info = result.danger_ok
                             expected_secret = result.danger_ok.csrf_secret
+                            # Per L1: don't commit the idle-timeout slide
+                            # yet -- a CSRF-failed request must not count
+                            # as legitimate session activity. Only commit
+                            # once verify_csrf below has actually passed;
+                            # if it raises, the transaction is rolled back
+                            # on context exit and the slide never persists.
+                            try:
+                                verify_csrf(request, expected_secret)
+                            except HTTPException as exc:
+                                await csrf_db.rollback()
+                                return JSONResponse(
+                                    status_code=exc.status_code,
+                                    content={"detail": exc.detail},
+                                )
                             await csrf_db.commit()
+                            return await call_next(request)
                         elif request.method not in _SAFE_METHODS:
                             # A session cookie is present but unresolvable
                             # (expired/unknown) on a mutating request --
