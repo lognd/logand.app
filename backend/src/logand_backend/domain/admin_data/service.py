@@ -423,6 +423,13 @@ async def revert_change(
         result = await insert_row(db, log.target_table, values, admin_id)
     elif log.action == "data.insert":
         result = await delete_row(db, log.target_table, log.target_id, admin_id)
+    elif log.action == "data.update.noop":
+        # Per L2 in FINDINGS.md: a no-op edit was never a real change, so
+        # reverting it is trivially a no-op too -- return success without
+        # touching the row or writing another audit entry, rather than the
+        # misleading ChangeNotRevertible (which reads to an admin as "this
+        # failed" when nothing needed to happen in the first place).
+        return Ok(UUID(log.target_id))
     else:
         return Err(DataError.ChangeNotRevertible)
 
