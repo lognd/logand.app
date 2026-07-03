@@ -41,6 +41,21 @@ class ApiClient(
     private val httpClient: OkHttpClient = OkHttpClient.Builder()
         .cookieJar(cookieJar)
         .build(),
+    // Fired on EVERY 401 response from EVERY call this client makes, not
+    // just login()/me() -- an idle-timeout session expiry mid-session
+    // (see backend auth/sessions.py's _CUSTOMER_IDLE_TIMEOUT/
+    // _ADMIN_IDLE_TIMEOUT) previously surfaced as a generic
+    // ApiResult.HttpError on whatever call happened to hit it, with
+    // nothing anywhere transitioning the app's own session state back to
+    // logged-out -- every subsequent action kept failing with the same
+    // confusing error while the UI still believed it was authenticated.
+    // A single callback here, invoked before the 401 is also returned
+    // as a normal ApiResult.HttpError (so existing per-call error
+    // handling/messaging is unaffected), is the one place a caller (the
+    // app's session-owning layer) can hook "clear local session state and
+    // route back to login" without every single ApiClient method having
+    // to know about that policy individually.
+    private val onUnauthorized: (() -> Unit)? = null,
 ) {
     private val baseUrl = baseUrl.trimEnd('/')
     private val json = Json { ignoreUnknownKeys = true }
@@ -53,10 +68,20 @@ class ApiClient(
             path = "/api/auth/login",
             body = json.encodeToString(LoginRequest.serializer(), LoginRequest(email, password))
                 .toRequestBody(JSON_MEDIA_TYPE),
-        ).decodeUnit()
+            // login()'s own 401 means "wrong credentials," not "an
+            // existing session expired" -- firing onUnauthorized here
+            // would couple a bad-password attempt to global session
+            // teardown (see L2). Every other call's 401 still fires it.
+        ).decodeUnit(notifyOn401 = false)
 
     suspend fun logout(): ApiResult<Unit> {
-        val result = request(method = "POST", path = "/api/auth/logout").decodeUnit()
+        // Same rationale as login(): logout()'s own 401 means the
+        // session was already expired/invalid by the time this call
+        // reached the server, not a NEW unauthorized event to react to
+        // -- logout() below unconditionally clears the cookie jar
+        // itself. Without this, an already-expired session's logout
+        // would double-fire onUnauthorized teardown (L3).
+        val result = request(method = "POST", path = "/api/auth/logout").decodeUnit(notifyOn401 = false)
         // Clear local cookies regardless of the server call's outcome --
         // even if the network drops mid-logout, the app should not go on
         // acting as if it's still authenticated.
@@ -215,8 +240,12 @@ class ApiClient(
         val networkError: IOException? = null,
     )
 
-    private fun <T> RawResponse.decode(serializer: KSerializer<T>): ApiResult<T> {
+    private fun <T> RawResponse.decode(
+        serializer: KSerializer<T>,
+        notifyOn401: Boolean = true,
+    ): ApiResult<T> {
         networkError?.let { return ApiResult.NetworkError(it) }
+        if (statusCode == 401 && notifyOn401) onUnauthorized?.invoke()
         if (statusCode !in 200..299) return ApiResult.HttpError(statusCode, errorDetail(bodyText))
         return try {
             ApiResult.Success(json.decodeFromString(serializer, bodyText))
@@ -225,8 +254,9 @@ class ApiClient(
         }
     }
 
-    private fun RawResponse.decodeUnit(): ApiResult<Unit> {
+    private fun RawResponse.decodeUnit(notifyOn401: Boolean = true): ApiResult<Unit> {
         networkError?.let { return ApiResult.NetworkError(it) }
+        if (statusCode == 401 && notifyOn401) onUnauthorized?.invoke()
         if (statusCode !in 200..299) return ApiResult.HttpError(statusCode, errorDetail(bodyText))
         return ApiResult.Success(Unit)
     }
