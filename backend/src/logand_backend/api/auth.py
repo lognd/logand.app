@@ -121,6 +121,15 @@ async def logout(
     result = await logout_domain(db, session.id)
     if result.is_err:
         raise to_http_exception(result.danger_err)
-    response.delete_cookie(SESSION_COOKIE_NAME, path="/")
-    response.delete_cookie(CSRF_COOKIE_NAME, path="/")
+    # secure/samesite/httponly must match _set_session_cookies' attributes
+    # (see FINDINGS.md L3) -- __Host- prefixed cookies in particular
+    # REQUIRE Secure on every Set-Cookie, including the expiry one
+    # delete_cookie emits; without it browsers ignore the deletion
+    # entirely and the stale cookie lingers.
+    response.delete_cookie(
+        SESSION_COOKIE_NAME, path="/", httponly=True, secure=True, samesite="strict"
+    )
+    response.delete_cookie(
+        CSRF_COOKIE_NAME, path="/", httponly=False, secure=True, samesite="strict"
+    )
     return {"status": "ok"}
