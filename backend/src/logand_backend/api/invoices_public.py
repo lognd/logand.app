@@ -365,6 +365,15 @@ async def capture_invoice_paypal_payment(
     # the invoice.
     await settle_invoice_if_paid(db, invoice)
 
+    # Release the invoice row's FOR UPDATE lock before the email round-
+    # trip -- mirrors the Stripe webhook payment path (api/webhooks.py),
+    # which commits before notify_payment_received for the same reason:
+    # a slow mail send must never hold this lock and block a concurrent
+    # capture retry / manual payment / void on the same invoice (M2).
+    # expire_on_commit=False (db/base.py) means invoice.* is still safely
+    # readable below without an illegal async lazy-load.
+    await db.commit()
+
     await notify_payment_received(db, cfg, invoice, capture.captured_amount)
 
     return {"status": "captured"}
