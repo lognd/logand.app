@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from decimal import Decimal
 from uuid import UUID, uuid4
 
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from typani.result import Err, Ok, Result
@@ -122,8 +122,9 @@ async def remove_material_line(
     return Ok(None)
 
 
-@dataclass(frozen=True)
-class BomMaterialLineCost:
+class BomMaterialLineCost(BaseModel):
+    model_config = {"frozen": True}
+
     item_id: UUID
     item_name: str
     quantity: int
@@ -131,14 +132,15 @@ class BomMaterialLineCost:
     line_cost: Decimal
 
 
-@dataclass(frozen=True)
-class BomCostBreakdown:
+class BomCostBreakdown(BaseModel):
     """The real material/time/overhead breakdown -- "it would be nice to
     give a price breakdown of material and time and overhead," directly.
     Every figure here is already scaled by `build_quantity` (a BOM
     describes the cost of ONE unit; a real build/invoice is usually for
     more than one).
     """
+
+    model_config = {"frozen": True}
 
     material_lines: list[BomMaterialLineCost]
     material_cost: Decimal
@@ -225,6 +227,15 @@ async def consume_bom(
     means a rejected consume() genuinely changed nothing, not "changed
     everything except the one line that failed."
     """
+    if build_quantity <= 0:
+        # A zero/negative build_quantity would make `need` <= 0 below, so
+        # `item.quantity < need` is always false (the stock check always
+        # "passes") and the later `-need` adjustment becomes a positive
+        # delta -- i.e. a "consumption" that actually ADDS stock. Reject
+        # outright rather than relying on every caller to already enforce
+        # this at the API layer.
+        return Err(BomError.InvalidBuildQuantity)
+
     bom = await db.get(BillOfMaterials, bom_id)
     if bom is None:
         return Err(BomError.NotFound)

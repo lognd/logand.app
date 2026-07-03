@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
+
+from pydantic import BaseModel
 
 # Exponential-backoff retention for the daily-rotated log files written by
 # logging/handler.py's TimedRotatingFileHandler (suffix "app.log.YYYY-MM-DD").
@@ -30,8 +31,9 @@ DEFAULT_KEEP_MONTHLY = 12
 DEFAULT_HARD_CAP_BYTES = 500 * 1024 * 1024
 
 
-@dataclass(frozen=True)
-class RotatedLogFile:
+class RotatedLogFile(BaseModel):
+    model_config = {"frozen": True}
+
     path: Path
     log_date: date
     size_bytes: int
@@ -44,7 +46,11 @@ def _parse_rotated_files(log_dir: Path, base_name: str) -> list[RotatedLogFile]:
         if not match:
             continue
         log_date = datetime.strptime(match.group(1), "%Y-%m-%d").date()
-        files.append(RotatedLogFile(path, log_date, path.stat().st_size))
+        files.append(
+            RotatedLogFile(
+                path=path, log_date=log_date, size_bytes=path.stat().st_size
+            )
+        )
     return files
 
 

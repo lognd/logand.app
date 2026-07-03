@@ -3,11 +3,11 @@ from __future__ import annotations
 import os
 import subprocess
 import tempfile
-from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 
 import jinja2
+from pydantic import BaseModel
 
 from logand_backend.logging import get_logger
 
@@ -70,8 +70,9 @@ def latex_escape(value: object) -> str:
     return "".join(_LATEX_SPECIAL_CHARS.get(ch, ch) for ch in str(value))
 
 
-@dataclass(frozen=True)
-class InvoiceLineItemData:
+class InvoiceLineItemData(BaseModel):
+    model_config = {"frozen": True}
+
     description: str
     quantity: str
     unit_price: str
@@ -82,8 +83,9 @@ class InvoiceLineItemData:
     unit: str
 
 
-@dataclass(frozen=True)
-class InvoicePdfData:
+class InvoicePdfData(BaseModel):
+    model_config = {"frozen": True}
+
     invoice_number: str
     invoice_date: str
     due_date: str
