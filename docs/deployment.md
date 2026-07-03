@@ -199,6 +199,18 @@ you're deliberately deferring (PayPal, SMTP, off-box backups are all
 fine to defer -- see [secrets.md](secrets.md)'s Go-live checklist for
 what's actually required vs. optional).
 
+## Testing against the real production site
+
+`scripts/prodtest/` is a separate, black-box test harness that exercises
+the real running production site over real HTTPS (plus SSH to the VPS
+for a couple of out-of-band checks) -- distinct from `backend/tests/`
+and `frontend/tests/`, which run against disposable test instances. It
+guarantees zero artifacts left behind (every mutation it makes is
+reverted, verified, and its own cleanup mechanism has unit test coverage
+in CI) and is never run automatically -- see
+[scripts/prodtest/README.md](../scripts/prodtest/README.md) for how to
+run it and why it's deliberately excluded from every CI workflow.
+
 ## Redeploying / restarting after config changes
 
 Most `backend/.env` changes just need `docker compose up -d backend`
