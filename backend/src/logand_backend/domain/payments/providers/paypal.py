@@ -145,9 +145,49 @@ async def create_order(
         return Ok(PayPalOrder(order_id=body["id"], approval_url=approval_url))
 
 
-async def capture_order(
-    cfg: AppConfig, order_id: str
+def _capture_from_order_body(body: dict) -> PayPalCapture:
+    purchase_unit = body["purchase_units"][0]
+    capture = purchase_unit["payments"]["captures"][0]
+    return PayPalCapture(
+        order_id=body["id"],
+        status=body["status"],
+        captured_amount=Decimal(capture["amount"]["value"]),
+        captured_currency=capture["amount"]["currency_code"],
+        reference_id=purchase_unit.get("reference_id"),
+        capture_id=capture["id"],
+    )
+
+
+async def _get_order(
+    client: httpx.AsyncClient, cfg: AppConfig, token: str, order_id: str
 ) -> Result[PayPalCapture, PaymentProviderError]:
+    try:
+        resp = await client.get(
+            f"{_api_base(cfg)}/v2/checkout/orders/{order_id}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        resp.raise_for_status()
+    except httpx.HTTPError:
+        return Err(PaymentProviderError.RequestFailed)
+    return Ok(_capture_from_order_body(resp.json()))
+
+
+async def capture_order(
+    cfg: AppConfig, order_id: str, idempotency_key: str | None = None
+) -> Result[PayPalCapture, PaymentProviderError]:
+    """idempotency_key, when given, is sent as PayPal-Request-Id -- a retry
+    (e.g. the client re-firing capture after a lost response, or a crash
+    between PayPal's capture succeeding and this app's own Payment row
+    being committed) with the SAME key returns PayPal's original capture
+    response instead of issuing a second real charge attempt.
+
+    As a secondary safeguard (for a retry that used a DIFFERENT or no
+    idempotency key, or a request PayPal itself never associated with the
+    key), an ORDER_ALREADY_CAPTURED error from PayPal is treated as
+    success: the order is re-fetched and its existing capture is returned,
+    so the caller can still record the Payment rather than surfacing a
+    502 for money that was, in fact, already captured.
+    """
     if not is_configured(cfg):
         return Err(PaymentProviderError.NotConfigured)
 
@@ -157,28 +197,34 @@ async def capture_order(
             return Err(token_result.danger_err)
         token = token_result.danger_ok
 
+        headers = {"Authorization": f"Bearer {token}"}
+        if idempotency_key is not None:
+            headers["PayPal-Request-Id"] = idempotency_key
+
         try:
             resp = await client.post(
                 f"{_api_base(cfg)}/v2/checkout/orders/{order_id}/capture",
-                headers={"Authorization": f"Bearer {token}"},
+                headers=headers,
             )
             resp.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            already_captured = False
+            if exc.response.status_code == 422:
+                try:
+                    err_body = exc.response.json()
+                except ValueError:
+                    err_body = {}
+                already_captured = any(
+                    detail.get("issue") == "ORDER_ALREADY_CAPTURED"
+                    for detail in err_body.get("details", [])
+                )
+            if not already_captured:
+                return Err(PaymentProviderError.RequestFailed)
+            return await _get_order(client, cfg, token, order_id)
         except httpx.HTTPError:
             return Err(PaymentProviderError.RequestFailed)
 
-        body = resp.json()
-        purchase_unit = body["purchase_units"][0]
-        capture = purchase_unit["payments"]["captures"][0]
-        return Ok(
-            PayPalCapture(
-                order_id=body["id"],
-                status=body["status"],
-                captured_amount=Decimal(capture["amount"]["value"]),
-                captured_currency=capture["amount"]["currency_code"],
-                reference_id=purchase_unit.get("reference_id"),
-                capture_id=capture["id"],
-            )
-        )
+        return Ok(_capture_from_order_body(resp.json()))
 
 
 async def refund_capture(

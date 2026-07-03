@@ -259,7 +259,12 @@ async def capture_invoice_paypal_payment(
         )
 
     cfg = AppConfig.from_external(argparse.Namespace())
-    result = await paypal.capture_order(cfg, body.order_id)
+    # Stable per invoice+order pair: a client retry (Pay.tsx re-firing
+    # capture after a lost response) sends the same order_id for the same
+    # invoice, so this key is identical across retries and PayPal returns
+    # the original capture response instead of attempting a second charge.
+    idempotency_key = f"capture:{invoice.id}:{body.order_id}"
+    result = await paypal.capture_order(cfg, body.order_id, idempotency_key)
     if result.is_err:
         raise to_http_exception(result.danger_err)
     capture = result.danger_ok
