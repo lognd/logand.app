@@ -3,6 +3,7 @@ from __future__ import annotations
 import threading
 import time
 from collections.abc import Iterator
+from decimal import Decimal
 
 import pytest
 import uvicorn
@@ -153,7 +154,7 @@ async def test_full_paypal_create_and_capture_marks_invoice_paid(
     assert invoice.status == "paid"
 
 
-async def test_capture_rejects_amount_mismatch_against_invoice_total(
+async def test_capture_records_payment_even_on_amount_mismatch_against_invoice_total(
     db_client: AsyncClient,
     make_user,
     login_as,
@@ -161,18 +162,24 @@ async def test_capture_rejects_amount_mismatch_against_invoice_total(
     monkeypatch: pytest.MonkeyPatch,
     db_session,
 ) -> None:
-    """Regression test for FINDINGS.md M2: the capture route never
-    asserted captured_amount == invoice.amount_total, relying only on the
-    running paid-so-far sum. Simulates the invoice's total changing
-    between order creation and capture (a race, or a future partial-
-    capture flow) by mutating amount_total directly after the order is
-    created -- the fake server still echoes back the ORIGINAL amount the
-    order was created with, so the mismatch is real from the route's
-    point of view.
+    """Regression test for FINDINGS.md H1: capture_order performs the real
+    PayPal capture (money moves) BEFORE the app compares captured_amount
+    against amount due recomputed at capture time. The old behavior
+    rejected the whole request with 409 and recorded nothing on a
+    mismatch, permanently stranding real captured funds with no Payment
+    row and no way to reconcile (a retry just re-hits the same
+    idempotency key and gets the same COMPLETED capture again). Simulates
+    the invoice's total changing between order creation and capture (a
+    race, or a future partial-capture flow) by mutating amount_total
+    directly after the order is created -- the fake server still echoes
+    back the ORIGINAL amount the order was created with, so the mismatch
+    is real from the route's point of view. The fix: always persist the
+    Payment for whatever PayPal actually captured, never silently drop a
+    completed capture.
     """
     from sqlalchemy import select
 
-    from logand_backend.db.models.invoices import Invoice
+    from logand_backend.db.models.invoices import Invoice, Payment
 
     _configure_paypal(monkeypatch, fake_paypal_server)
     invoice_id, _customer = await _sent_invoice_as_customer(
@@ -197,10 +204,22 @@ async def test_capture_rejects_amount_mismatch_against_invoice_total(
         json={"order_id": order_id},
         headers=headers,
     )
-    assert capture_resp.status_code == 409, capture_resp.text
+    assert capture_resp.status_code == 200, capture_resp.text
 
     await db_session.refresh(invoice)
+    # The captured $50 no longer fully covers the (now $51) total, so the
+    # invoice legitimately stays unpaid -- but the money PayPal actually
+    # captured must be on the books.
     assert invoice.status == "sent"
+    payment = (
+        await db_session.execute(
+            select(Payment).where(
+                Payment.invoice_id == invoice_id, Payment.paypal_order_id == order_id
+            )
+        )
+    ).scalar_one()
+    assert payment.status == "succeeded"
+    assert payment.amount == Decimal("50.00")
 
 
 async def test_capture_rejects_an_order_created_for_a_different_invoice(

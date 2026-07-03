@@ -319,21 +319,18 @@ async def capture_invoice_paypal_payment(
         raise HTTPException(
             status_code=409, detail="PayPal capture currency does not match invoice"
         )
-    # Defense-in-depth: create_order sets `value` to the outstanding
-    # remainder (amount_total minus payments already recorded) rather than
-    # always the full amount_total -- see H1 in FINDINGS.md, this used to
-    # always bill the full total and overcharge a customer who'd already
-    # made a partial payment. Recompute that same remainder here (still
-    # excluding this capture, which hasn't been recorded yet) and reject a
-    # mismatch outright rather than trusting PayPal's number, or an amount
-    # that changed underneath the order (e.g. a manual payment recorded
-    # concurrently) silently getting summed in as if it were expected.
+    # create_order sets `value` to the outstanding remainder (amount_total
+    # minus payments already recorded) at order-creation time. By the time
+    # capture happens, that remainder can have changed (e.g. a manual
+    # payment recorded concurrently), so expected_amount here is only used
+    # to flag an overpayment for follow-up -- see H1 in FINDINGS.md: money
+    # has ALREADY moved at PayPal once capture_order returns COMPLETED
+    # (checked above), so a mismatch here must never cause the Payment to
+    # be discarded. Discarding it would strand real captured funds with no
+    # record and no way to reconcile (a retry just re-hits the same
+    # idempotency key and gets the same COMPLETED capture again).
     expected_amount = await get_amount_due(db, invoice)
-    if expected_amount <= 0 or capture.captured_amount != expected_amount:
-        raise HTTPException(
-            status_code=409,
-            detail="PayPal captured amount does not match amount due",
-        )
+    overpaid = expected_amount <= 0 or capture.captured_amount != expected_amount
 
     db.add(
         Payment(
@@ -346,6 +343,18 @@ async def capture_invoice_paypal_payment(
         )
     )
     await db.flush()
+
+    if overpaid:
+        _log.warning(
+            "paypal capture amount does not match amount due; recorded anyway",
+            extra={
+                "invoice_id": str(invoice.id),
+                "order_id": capture.order_id,
+                "capture_id": capture.capture_id,
+                "captured_amount": str(capture.captured_amount),
+                "expected_amount": str(expected_amount),
+            },
+        )
 
     # Same "sum every succeeded payment, mark paid once it covers the
     # total" logic as domain/invoices/service.py's record_manual_payment
