@@ -5,6 +5,7 @@ import hmac
 import json
 import threading
 import time
+import uuid
 from collections.abc import Iterator
 
 import pytest
@@ -103,7 +104,11 @@ async def test_admin_refund_of_manual_payment_full(
 
     resp = await db_client.post(
         f"/api/admin/invoices/{invoice_id}/payments/{payment_id}/refund",
-        json={"payment_id": payment_id, "reason": "duplicate charge"},
+        json={
+            "payment_id": payment_id,
+            "reason": "duplicate charge",
+            "client_request_id": str(uuid.uuid4()),
+        },
         headers=headers,
     )
     assert resp.status_code == 200, resp.text
@@ -129,7 +134,11 @@ async def test_admin_refund_partial_amount(
 
     resp = await db_client.post(
         f"/api/admin/invoices/{invoice_id}/payments/{payment_id}/refund",
-        json={"payment_id": payment_id, "amount": "20.00"},
+        json={
+            "payment_id": payment_id,
+            "amount": "20.00",
+            "client_request_id": str(uuid.uuid4()),
+        },
         headers=headers,
     )
     assert resp.status_code == 200, resp.text
@@ -153,7 +162,10 @@ async def test_admin_refund_body_payment_id_mismatch_is_rejected(
 
     resp = await db_client.post(
         f"/api/admin/invoices/{invoice_id}/payments/{payment_id}/refund",
-        json={"payment_id": "00000000-0000-0000-0000-000000000000"},
+        json={
+            "payment_id": "00000000-0000-0000-0000-000000000000",
+            "client_request_id": str(uuid.uuid4()),
+        },
         headers=headers,
     )
     assert resp.status_code == 422
@@ -169,7 +181,11 @@ async def test_admin_refund_exceeding_balance_is_rejected(
 
     resp = await db_client.post(
         f"/api/admin/invoices/{invoice_id}/payments/{payment_id}/refund",
-        json={"payment_id": payment_id, "amount": "9999.00"},
+        json={
+            "payment_id": payment_id,
+            "amount": "9999.00",
+            "client_request_id": str(uuid.uuid4()),
+        },
         headers=headers,
     )
     assert resp.status_code == 422
@@ -238,7 +254,7 @@ async def test_admin_refund_of_stripe_payment_calls_real_fake_refund_endpoint(
 
     refund_resp = await db_client.post(
         f"/api/admin/invoices/{invoice_id}/payments/{payment_id}/refund",
-        json={"payment_id": payment_id},
+        json={"payment_id": payment_id, "client_request_id": str(uuid.uuid4())},
         headers=headers,
     )
     assert refund_resp.status_code == 200, refund_resp.text
@@ -313,7 +329,7 @@ async def test_admin_refund_of_paypal_payment_calls_real_fake_refund_endpoint(
 
     refund_resp = await db_client.post(
         f"/api/admin/invoices/{invoice_id}/payments/{payment_id}/refund",
-        json={"payment_id": payment_id},
+        json={"payment_id": payment_id, "client_request_id": str(uuid.uuid4())},
         headers=admin_headers,
     )
     assert refund_resp.status_code == 200, refund_resp.text
