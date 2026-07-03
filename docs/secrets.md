@@ -57,9 +57,11 @@ just that something is set.
       "Turning on PayPal later" section. Falls back to Zelle/in-person/manual recording without it.
 - [ ] `ZELLE_HANDLE` -- shows a real Zelle option on the customer Pay page. See
       [that section](#zelle_handle).
-- [ ] `SMTP_HOST` and friends, `MAILING_ADDRESS` -- invoice-sent/payment-received
-      email notifications. See [that section](#smtp_host--smtp_port--smtp_username--smtp_password--smtp_use_tls--smtp_from_address).
-      Silent no-op without it -- nothing else depends on email being deliverable.
+- [ ] `SMTP_HOST` and friends, OR `GMAIL_SERVICE_ACCOUNT_JSON`/`GMAIL_SENDER_EMAIL`
+      (Google Workspace -- see that section, `SMTP_HOST` alone does NOT work for
+      Workspace), plus `MAILING_ADDRESS` -- invoice-sent/payment-received email
+      notifications. See [that section](#smtp_host--smtp_port--smtp_username--smtp_password--smtp_use_tls--smtp_from_address).
+      Silent no-op without either -- nothing else depends on email being deliverable.
 - [ ] `STORAGE_BACKEND=r2` + `R2_*` -- switch file storage from the VPS's
       own disk to Cloudflare R2 once volume justifies it. See
       [design/13-storage-abstraction.md](design/13-storage-abstraction.md)
@@ -202,32 +204,101 @@ generic "contact us" text. Leave unset if you don't want to offer Zelle.
 
 ### `SMTP_HOST` / `SMTP_PORT` / `SMTP_USERNAME` / `SMTP_PASSWORD` / `SMTP_USE_TLS` / `SMTP_FROM_ADDRESS`
 
-Fully optional -- like PayPal above, unset means
-`domain/notifications/mailer.py::is_configured` is False and every
-notification (invoice sent, payment received) is a silent no-op.
-Nothing in the invoice/payment flow depends on email actually being
-deliverable.
+Fully optional -- like PayPal above, unset (and `GMAIL_*` below also
+unset) means `domain/notifications/mailer.py::is_configured` is False
+and every notification (invoice sent, payment received) is a silent
+no-op. Nothing in the invoice/payment flow depends on email actually
+being deliverable.
 
-To turn email on with **Google Workspace**: enable 2-Step Verification
-on the sending account, generate an
-[App Password](https://myaccount.google.com/apppasswords) (a regular
-account password will not work with SMTP), then set:
+**Do not use `smtp.gmail.com` here if the sending address is a Google
+Workspace account** (a custom domain like `yourdomain.com` almost
+certainly is). Google fully retired password-based SMTP auth for
+Workspace -- including App Passwords -- in March 2025; it now fails
+with `535 5.7.8 Username and Password not accepted` regardless of how
+correct the password is, because the entire auth mechanism was removed,
+not because anything is misconfigured. If that's your situation, skip
+straight to the **Gmail OAuth2** section below instead.
+
+`SMTP_HOST`/`SMTP_PASSWORD` here still works normally for: a personal
+(non-Workspace) `@gmail.com` address (App Passwords still work there,
+Google has not announced removing them for consumer accounts), or any
+other SMTP provider -- Postmark, SES, Fastmail, a self-hosted MTA, etc.
+Sign up, get real SMTP credentials, and set:
 
 ```
-SMTP_HOST=smtp.gmail.com
+SMTP_HOST=smtp.yourprovider.com
 SMTP_PORT=587
 SMTP_USERNAME=billing@yourdomain.com
-SMTP_PASSWORD=<the 16-character app password>
+SMTP_PASSWORD=<the provider's real password or API key>
 SMTP_USE_TLS=true
 SMTP_FROM_ADDRESS=billing@yourdomain.com
 ```
 
-Any other SMTP provider (Postmark, SES, Fastmail, a self-hosted MTA,
-etc.) works the same way -- just point `SMTP_HOST`/`SMTP_PORT` at it
-and use its own credentials.
-
-Rotating: regenerate the app password/API key at the provider, update
+Rotating: regenerate the password/API key at the provider, update
 `backend/.env`/GitHub Actions, restart `backend`.
+
+### `GMAIL_SERVICE_ACCOUNT_JSON` / `GMAIL_SENDER_EMAIL` (Gmail OAuth2, for Google Workspace)
+
+The only way left to send mail through a Google Workspace mailbox (see
+the note on `SMTP_HOST` above) -- OAuth2 via a service account with
+**domain-wide delegation**, impersonating the real mailbox. Also fully
+optional and mutually exclusive with `SMTP_HOST` in practice (a
+deployment sets one transport or the other); if both happen to be set,
+`domain/notifications/mailer.py` uses Gmail OAuth2.
+
+**One-time setup, in the Google Cloud Console (not the Workspace Admin
+console yet):**
+
+1. Create (or reuse) a Google Cloud project associated with your
+   Workspace organization.
+2. Enable the **Gmail API** for that project (APIs & Services > Library
+   > search "Gmail API" > Enable).
+3. Create a **service account** (IAM & Admin > Service Accounts >
+   Create Service Account). No roles need to be granted on the project
+   itself -- domain-wide delegation (next step) is what actually grants
+   it anything.
+4. Open the new service account > Keys > Add Key > Create new key >
+   JSON. This downloads a `.json` key file -- **this file is a real,
+   sensitive credential**, treat it exactly like any other secret in
+   this doc (never commit it, never paste its contents anywhere but
+   `backend/.env`). Note the service account's **Client ID** (a long
+   numeric string, shown on the service account's own details page) --
+   the next step needs it.
+
+**Then, in the Workspace Admin console** (`admin.google.com`, requires
+super admin access):
+
+5. Security > Access and data control > API controls > **Domain-wide
+   delegation** > Add new.
+6. Client ID: the numeric Client ID from step 4.
+7. OAuth Scopes: `https://www.googleapis.com/auth/gmail.send` (send-only
+   -- do not grant a broader Gmail scope than this app actually needs).
+8. Authorize.
+
+**Then, in `backend/.env`:**
+
+```
+GMAIL_SERVICE_ACCOUNT_JSON=<the entire downloaded .json key file's content, as one line>
+GMAIL_SENDER_EMAIL=billing@yourdomain.com
+```
+
+`GMAIL_SENDER_EMAIL` is the real Workspace mailbox the service account
+impersonates (the JWT's `sub` claim) -- it's also what shows up in the
+`From` header, since Gmail's API can only send AS the impersonated
+mailbox itself (no separate "send as" alias support here). It does not
+need to match `SMTP_FROM_ADDRESS` since that field is unused in this
+mode.
+
+Verify it actually works: `make healthcheck` /
+`python -m logand_backend.scripts.health_check`, same as every other
+credential in this doc -- or just send a real invoice and check the
+customer actually receives it.
+
+Rotating: Cloud Console > the service account > Keys > delete the old
+key, create a new one, update `GMAIL_SERVICE_ACCOUNT_JSON`, restart
+`backend`. The Client ID doesn't change when you rotate a key, so the
+domain-wide delegation authorization in Workspace Admin does not need
+to be redone.
 
 ### `MAILING_ADDRESS`
 
@@ -237,7 +308,7 @@ footer (`domain/notifications/mailer.py` puts this in the footer of
 every notification it sends). Deliberately empty by default so a
 placeholder-looking address never ships to production by accident --
 set this to your real business mailing address before setting
-`SMTP_HOST`.
+`SMTP_HOST` or `GMAIL_SENDER_EMAIL`.
 
 ### `SESSION_SECRET` also signs unsubscribe links
 
