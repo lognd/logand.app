@@ -78,7 +78,7 @@ async def validate_session(
     token_hash = _hash_token(raw_token)
 
     result = await db.execute(
-        select(Session, User.role)
+        select(Session, User.role, User.disabled_at)
         .join(User, User.id == Session.user_id)
         .where(Session.token_hash == token_hash)
     )
@@ -86,10 +86,20 @@ async def validate_session(
     if row is None:
         return Err(AuthError.SessionNotFound)
 
-    session_row, role = row
+    session_row, role, disabled_at = row
     now = datetime.now(timezone.utc)
     if session_row.expires_at <= now:
         return Err(AuthError.SessionExpired)
+    # Defense in depth: domain/users/service.py's deactivate_customer
+    # already revokes every session row outright the moment an account is
+    # disabled, so this should never actually find a live session for a
+    # disabled user in practice -- but a disabled account's session
+    # surviving here (a bug in that revoke call, a direct DB edit via
+    # admin_data, a future code path that sets disabled_at without going
+    # through deactivate_customer) must still be rejected here too, not
+    # silently honored just because the row itself hasn't expired yet.
+    if disabled_at is not None:
+        return Err(AuthError.SessionNotFound)
 
     # Slide the idle-timeout window forward, still capped by the absolute
     # max lifetime measured from created_at (per docs/design/02).
@@ -145,6 +155,13 @@ async def _get_session_from_cookie(
     # through api/errors.py's to_http_exception -- that mapping is for
     # Result[..] returned by domain calls inside a route body, not for
     # auth dependencies that run before the route body executes.
+    # app.py's CSRF middleware already ran validate_session for this same
+    # token, once, ahead of every non-exempt route (see M1) -- reuse that
+    # result instead of running the same session-by-token-hash query
+    # again here.
+    cached = getattr(request.state, "session_info", None)
+    if cached is not None:
+        return cached
     if session_token is None:
         raise HTTPException(status_code=401, detail=AuthError.SessionNotFound.value)
     result = await validate_session(db, session_token)

@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from typani.result import Err, Ok, Result
 
 from logand_backend.auth.passwords import hash_password
+from logand_backend.auth.sessions import revoke_all_sessions_for_user
 from logand_backend.db.models.audit import AdminAuditLog
 from logand_backend.db.models.users import User
 from logand_backend.errors import UserError
@@ -43,10 +44,18 @@ async def deactivate_customer(
     db: AsyncSession, user_id: UUID, admin_id: UUID
 ) -> Result[UUID, UserError]:
     """Sets disabled_at -- checked at login (domain/auth/service.py), so
-    this genuinely blocks authentication, not just hides the account from
-    a list somewhere. Writes a full before/after snapshot to
-    AdminAuditLog first -- that snapshot IS the rollback record (see
-    reactivate_customer, which is the actual "undo").
+    this genuinely blocks new authentication, not just hides the account
+    from a list somewhere. Also revokes every LIVE session for this user
+    right now -- without this, an already-logged-in customer would keep
+    full access for up to their idle timeout (30 min) or the 7-day
+    absolute cap, since disabling only blocks the login form, not
+    existing sessions. "Deactivated" must mean "logged out now," not
+    "can't log back in later."
+
+    Writes a full before/after snapshot to AdminAuditLog first -- that
+    snapshot IS the rollback record (see reactivate_customer, which is
+    the actual "undo"; note reactivating does NOT restore the revoked
+    sessions -- the customer simply logs in again).
     """
     result = await get_customer(db, user_id)
     if result.is_err:
@@ -56,6 +65,7 @@ async def deactivate_customer(
 
     user.disabled_at = datetime.now(timezone.utc)
     await db.flush()
+    await revoke_all_sessions_for_user(db, user_id)
 
     log_id = uuid4()
     db.add(
@@ -108,6 +118,11 @@ async def admin_reset_password(
     with no working email. The audit entry records THAT a reset
     happened and who did it, never the password itself (not the raw
     value, not the new hash) -- see AdminAuditLog's own doc comment.
+
+    Also revokes every existing session for this user -- a reset is
+    frequently a response to a compromised account, so any session an
+    attacker (or the locked-out user's old, possibly-leaked password)
+    already established must not survive the reset.
     """
     if len(new_password) < _MIN_PASSWORD_LENGTH:
         return Err(UserError.PasswordTooShort)
@@ -118,6 +133,7 @@ async def admin_reset_password(
 
     user.password_hash = hash_password(new_password)
     await db.flush()
+    await revoke_all_sessions_for_user(db, user_id)
 
     log_id = uuid4()
     db.add(

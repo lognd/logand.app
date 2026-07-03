@@ -137,14 +137,61 @@ class App:
         # the *router*, not custom ASGI middleware added this way) -- left
         # unhandled it would surface as a 500, not the intended 403. Catch
         # and convert explicitly.
-        from logand_backend.auth.csrf import verify_csrf
+        from logand_backend.auth.csrf import _SAFE_METHODS, verify_csrf
+        from logand_backend.auth.sessions import SESSION_COOKIE_NAME, validate_session
 
         path = request.url.path
         if path not in _CSRF_EXEMPT_PATHS and not path.startswith(
             _CSRF_EXEMPT_PREFIXES
         ):
+            # Bind the double-submit check to the CURRENT session's own
+            # csrf_secret, not just cookie==header -- see verify_csrf's
+            # own doc comment for why plain double-submit alone is a
+            # weaker guarantee than it looks. This runs the SAME
+            # validate_session used by _get_session_from_cookie (rather
+            # than a separate read-only peek) and stashes the resolved
+            # SessionInfo on request.state -- _get_session_from_cookie
+            # below reuses it instead of re-querying, so each request
+            # does exactly one session-by-token-hash lookup, not two
+            # (see M1).
+            expected_secret: str | None = None
+            session_token = request.cookies.get(SESSION_COOKIE_NAME)
+            # Only resolve (and thereby slide/commit) the session for a
+            # method verify_csrf will actually check below -- verify_csrf
+            # itself no-ops for _SAFE_METHODS, so doing this for every
+            # GET/HEAD/OPTIONS bought nothing but ran validate_session's
+            # idle-timeout slide (a write-commit) on every single read
+            # request, silently widening the effective idle-timeout
+            # window. A safe request still gets its session resolved
+            # exactly once, by the route's own auth dependency downstream
+            # (_get_session_from_cookie's own validate_session call),
+            # same as before this middleware existed.
+            if session_token and request.method not in _SAFE_METHODS:
+                import logand_backend.db.base as db_base
+
+                if db_base._sessionmaker is not None:
+                    async with db_base._sessionmaker() as csrf_db:
+                        result = await validate_session(csrf_db, session_token)
+                        if result.is_ok:
+                            request.state.session_info = result.danger_ok
+                            expected_secret = result.danger_ok.csrf_secret
+                            await csrf_db.commit()
+                        elif request.method not in _SAFE_METHODS:
+                            # A session cookie is present but unresolvable
+                            # (expired/unknown) on a mutating request --
+                            # per L1, treat this distinctly from "no
+                            # cookie at all" rather than silently
+                            # downgrading to a plain double-submit check.
+                            # A GET with a stale cookie still falls
+                            # through below: the route's own auth
+                            # dependency (if any) is what should reject
+                            # it, not the CSRF layer.
+                            return JSONResponse(
+                                status_code=401,
+                                content={"detail": result.danger_err.value},
+                            )
             try:
-                verify_csrf(request)
+                verify_csrf(request, expected_secret)
             except HTTPException as exc:
                 return JSONResponse(
                     status_code=exc.status_code, content={"detail": exc.detail}

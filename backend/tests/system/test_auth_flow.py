@@ -75,6 +75,31 @@ async def test_state_changing_request_with_mismatched_csrf_header_is_rejected(
     assert resp.status_code == 403
 
 
+async def test_state_changing_request_with_stale_csrf_cookie_is_rejected(
+    db_client: AsyncClient, make_user, login_as
+) -> None:
+    """Regression test for L1: app.py's middleware now binds the double-
+    submit check to the CURRENT session's own stored csrf_secret, not
+    just cookie==header -- a matching cookie/header PAIR that is neither
+    of them the real session's csrf_secret (e.g. a stale value left over
+    from a previous login) must still be rejected, even though a pure
+    double-submit check alone would have accepted it.
+    """
+    user = await make_user(role="admin", password="pw")
+    await login_as(db_client, user.email, "pw")
+
+    forged_pair = {"X-CSRF-Token": "stale-value-not-this-sessions-real-secret"}
+    db_client.cookies.set("csrf_token", forged_pair["X-CSRF-Token"])
+
+    resp = await db_client.post("/api/auth/logout", headers=forged_pair)
+    assert resp.status_code == 403
+
+    # The real session is still alive -- rejected the forged request, did
+    # not accidentally revoke anything.
+    me = await db_client.get("/api/me")
+    assert me.status_code == 200
+
+
 async def test_login_rate_limited_after_repeated_attempts(
     db_client: AsyncClient, make_user
 ) -> None:

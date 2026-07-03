@@ -30,9 +30,17 @@ async def login(
     "this account exists but was deactivated" must be indistinguishable
     from the outside, or the error itself becomes a way to enumerate
     which accounts an admin has disabled.
+
+    Looks up case-insensitively (`func.lower(User.email) ==
+    email.strip().lower()`) -- register()/ensure_admin_seeded() both
+    store emails lowercased and stripped, so a lookup that didn't
+    normalize the same way here would let "User@X.com" register
+    successfully and then fail to log back in with that exact same
+    string.
     """
+    normalized_email = email.strip().lower()
     user = (
-        await db.execute(select(User).where(User.email == email))
+        await db.execute(select(User).where(func.lower(User.email) == normalized_email))
     ).scalar_one_or_none()
     if user is None:
         _log.warning("login failed: no such account", extra={"email": email})
