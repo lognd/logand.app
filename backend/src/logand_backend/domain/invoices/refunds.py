@@ -505,6 +505,11 @@ async def apply_refund_settlement(
             await db.flush()
 
     if invoice is not None:
+        # Release the invoice/refund row locks before the notification
+        # email send -- same early-commit-before-external-I/O pattern
+        # used elsewhere in this function (its own M1 doc comment) and
+        # for the analogous dispute fan-out (FINDINGS.md M1).
+        await db.commit()
         await notify_refund_settled(db, cfg, invoice, refund.amount)
 
 

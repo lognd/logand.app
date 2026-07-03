@@ -138,6 +138,9 @@ async def _handle_payment_intent_event(
                     "stripe_payment_intent_id": intent_id,
                 },
             )
+            # Release the invoice row lock before the email send (M1
+            # pattern; see _handle_dispute_event and refunds.py).
+            await db.commit()
             await notify_payment_received(db, cfg, invoice, existing.amount)
         return
 
@@ -183,6 +186,9 @@ async def _handle_payment_intent_event(
                 "stripe_payment_intent_id": intent_id,
             },
         )
+        # Release the invoice row lock before the email send (M1 pattern;
+        # see _handle_dispute_event and refunds.py).
+        await db.commit()
         await notify_payment_received(
             db, cfg, invoice, from_minor_units(intent["amount"], invoice.currency)
         )
@@ -235,6 +241,15 @@ async def _handle_dispute_event(db: AsyncSession, event: dict, cfg: AppConfig) -
     await db.flush()
 
     invoice = await db.get(Invoice, payment.invoice_id)
+
+    # Release the Payment row lock (and this request's DB connection's
+    # hold on it) BEFORE the admin notification fan-out -- see
+    # domain/invoices/refunds.py's identical early-commit-before-external-
+    # I/O pattern (its own M1 doc comment) and FINDINGS.md M1. Without
+    # this, the lock (and a redelivered event's with_for_update above)
+    # would be held across N sequential Gmail round-trips, one per admin.
+    await db.commit()
+
     # Notify only on a real status transition -- Stripe webhook delivery
     # is at-least-once, so a redelivered charge.dispute.closed (same
     # mapped_status as what we already recorded) must not re-send the
