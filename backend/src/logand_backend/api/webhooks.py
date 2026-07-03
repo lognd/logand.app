@@ -128,16 +128,44 @@ async def _handle_payment_intent_event(
         )
     ).scalar_one_or_none()
     if existing is not None:
-        existing.status = "succeeded" if succeeded else "failed"
-        await db.flush()
-        if succeeded and await settle_invoice_if_paid(db, invoice):
+        if not succeeded and existing.status == "succeeded":
+            # M1: a late/out-of-order payment_intent.payment_failed for an
+            # intent that already has a succeeded Payment must never
+            # downgrade it -- Stripe does not guarantee delivery order, so
+            # a failed-then-succeeded retry on the same intent can deliver
+            # "succeeded" first. Overwriting status here would leave the
+            # invoice "paid" with its only Payment row "failed", which
+            # also silently drops the money from get_invoice_stats'
+            # total_collected/by_payment_method/net_collected (see
+            # FINDINGS.md M1). Treat this as a no-op.
             _log.info(
-                "invoice marked paid via stripe (retried intent)",
+                "stripe webhook: ignoring late payment_failed for an "
+                "already-succeeded intent",
                 extra={
                     "invoice_id": str(invoice.id),
                     "stripe_payment_intent_id": intent_id,
                 },
             )
+            return
+        existing.status = "succeeded" if succeeded else "failed"
+        await db.flush()
+        settled_now = succeeded and await settle_invoice_if_paid(db, invoice)
+        # L1: notify whenever this delivery observes a succeeded payment
+        # on a now-paid invoice, not only when THIS call is what flipped
+        # it to paid -- otherwise a crash between a prior delivery's
+        # commit and its email send means the customer is never told,
+        # since settle_invoice_if_paid is idempotent and returns False on
+        # a retry that finds the invoice already paid. Accepting that a
+        # genuine duplicate delivery may re-send the email.
+        if succeeded and invoice.status == "paid":
+            if settled_now:
+                _log.info(
+                    "invoice marked paid via stripe (retried intent)",
+                    extra={
+                        "invoice_id": str(invoice.id),
+                        "stripe_payment_intent_id": intent_id,
+                    },
+                )
             # Release the invoice row lock before the email send (M1
             # pattern; see _handle_dispute_event and refunds.py).
             await db.commit()
