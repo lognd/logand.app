@@ -100,7 +100,15 @@ async def list_rows(
     if table is None:
         return Err(DataError.TableNotFound)
     limit = max(1, min(limit, 200))
-    rows = (await db.execute(select(table).limit(limit).offset(max(0, offset)))).all()
+    # ORDER BY id -- without one, Postgres makes no row-order guarantee at
+    # all, so paging through a table with LIMIT/OFFSET alone can skip or
+    # repeat rows as concurrent writes land between pages (see FINDINGS.md
+    # L4). Primary key is stable and every admin_data table has one.
+    rows = (
+        await db.execute(
+            select(table).order_by(table.c.id).limit(limit).offset(max(0, offset))
+        )
+    ).all()
     return Ok([_serialize_row(table, row) for row in rows])
 
 
@@ -311,6 +319,25 @@ async def revert_change(
     - data.update  -> update_row back to before_state
     - data.delete  -> insert_row using before_state (un-delete)
     - data.insert  -> delete_row (un-insert)
+
+    before_state/after_state snapshots always carry EVERY column,
+    including the never-editable ones (id, password_hash -- see
+    _serialize_row) -- password_hash in particular is always the literal
+    string "<redacted>", never a real hash. Both replay branches below
+    filter _NEVER_EDITABLE_COLUMNS out of what they hand to update_row/
+    insert_row: those two functions reject any attempt to WRITE one of
+    those columns (by design -- see their own docstrings), so passing
+    "id"/"password_hash" straight through here would make every revert
+    of a row that has a password_hash column (i.e. every users-table
+    revert) fail outright, even when nothing about password_hash itself
+    ever changed. The one real, permanent limitation this can't paper
+    over: un-deleting a users row can never restore its actual
+    password_hash (only "<redacted>" was ever recorded) -- that revert
+    still fails, now via a real NOT NULL constraint violation
+    (DataError.ConstraintViolation) instead of a misleading "column not
+    editable," since password_hash has no default and can't be left out
+    of a real INSERT. A locked-out account restored this way needs
+    admin_reset_password to actually become loginable again.
     """
     log = await db.get(AdminAuditLog, log_id)
     if log is None:
@@ -321,14 +348,28 @@ async def revert_change(
     if log.action == "data.update":
         if log.before_state is None:
             return Err(DataError.ChangeNotRevertible)
-        changes = {k: v for k, v in log.before_state.items() if k not in ("id",)}
+        changes = {
+            k: v
+            for k, v in log.before_state.items()
+            if k not in _NEVER_EDITABLE_COLUMNS
+        }
         result = await update_row(
             db, log.target_table, log.target_id, changes, admin_id
         )
     elif log.action == "data.delete":
         if log.before_state is None:
             return Err(DataError.ChangeNotRevertible)
-        result = await insert_row(db, log.target_table, log.before_state, admin_id)
+        values = {
+            k: v
+            for k, v in log.before_state.items()
+            if k not in _NEVER_EDITABLE_COLUMNS
+        }
+        # "id" IS allowed on insert (see insert_row's own doc comment --
+        # an un-delete must reinsert with the SAME id, not a fresh one),
+        # unlike password_hash, which stays excluded either way.
+        if "id" in log.before_state:
+            values["id"] = log.before_state["id"]
+        result = await insert_row(db, log.target_table, values, admin_id)
     elif log.action == "data.insert":
         result = await delete_row(db, log.target_table, log.target_id, admin_id)
     else:
