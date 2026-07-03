@@ -180,6 +180,7 @@ async def test_pay_invoice_reuses_still_live_intent(
             id=_FAKE_INTENT_ID,
             status="requires_payment_method",
             client_secret=_FAKE_CLIENT_SECRET,
+            amount=9900,
         ),
     ):
         resp = await db_client.post(f"/api/invoices/{invoice_id}/pay", headers=headers)
@@ -187,6 +188,51 @@ async def test_pay_invoice_reuses_still_live_intent(
     assert resp.status_code == 200, resp.text
     assert resp.json() == {"client_secret": _FAKE_CLIENT_SECRET}
     mock_stripe_payment_intent_create.assert_not_called()
+
+
+async def test_pay_invoice_cancels_and_recreates_intent_on_amount_mismatch(
+    db_client: AsyncClient,
+    make_user,
+    login_as,
+    db_session: AsyncSession,
+    mock_stripe_payment_intent_create,
+) -> None:
+    """A still-live existing intent whose amount no longer matches the
+    invoice (e.g. an admin edited amount_total after the pay page created
+    it) must NOT be reused -- reusing it would let the customer confirm a
+    payment for the stale amount. It should be canceled and a fresh intent
+    created for the current total instead (see FINDINGS.md L1).
+    """
+    invoice_id, customer = await _create_and_send_invoice(
+        db_client, make_user, login_as
+    )
+    invoice = (
+        await db_session.execute(select(Invoice).where(Invoice.id == invoice_id))
+    ).scalar_one()
+    invoice.stripe_payment_intent_id = _FAKE_INTENT_ID
+    await db_session.commit()
+
+    await login_as(db_client, customer.email, "pw")
+    headers = _csrf_headers(db_client)
+
+    with (
+        patch(
+            "stripe.PaymentIntent.retrieve",
+            return_value=SimpleNamespace(
+                id=_FAKE_INTENT_ID,
+                status="requires_payment_method",
+                client_secret=_FAKE_CLIENT_SECRET,
+                amount=1234,  # stale -- invoice total is 9900
+            ),
+        ),
+        patch("stripe.PaymentIntent.cancel") as mock_cancel,
+    ):
+        resp = await db_client.post(f"/api/invoices/{invoice_id}/pay", headers=headers)
+
+    assert resp.status_code == 200, resp.text
+    mock_cancel.assert_called_once_with(_FAKE_INTENT_ID)
+    mock_stripe_payment_intent_create.assert_called_once()
+    assert resp.json() == {"client_secret": _FAKE_CLIENT_SECRET}
 
 
 async def test_pay_invoice_rejects_draft_invoice(

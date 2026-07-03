@@ -393,8 +393,20 @@ async def pay_invoice(
                 detail="this invoice has already been paid; refresh the page",
             )
         if existing_intent.status != "canceled":
-            assert existing_intent.client_secret is not None
-            return {"client_secret": existing_intent.client_secret}
+            expected_minor_units = to_minor_units(
+                invoice.amount_total, invoice.currency
+            )
+            if existing_intent.amount == expected_minor_units:
+                assert existing_intent.client_secret is not None
+                return {"client_secret": existing_intent.client_secret}
+            # The invoice's amount changed since this intent was created
+            # (e.g. an admin edit after the customer opened the pay page)
+            # -- reusing it would let the customer confirm a payment for
+            # the OLD amount while the invoice now expects the new total,
+            # so settle_invoice_if_paid would never mark it paid. Cancel
+            # the stale intent and fall through to create a fresh one for
+            # the current amount.
+            await asyncio.to_thread(stripe.PaymentIntent.cancel, existing_intent.id)
 
     intent = await asyncio.to_thread(
         stripe.PaymentIntent.create,
