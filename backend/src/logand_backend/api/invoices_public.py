@@ -21,6 +21,7 @@ from logand_backend.db.models.invoices import Invoice, Payment
 from logand_backend.domain.invoices.pdf.renderer import PdfRenderError
 from logand_backend.domain.invoices.service import (
     attach_payment_proof,
+    flag_invoice_needs_review,
     generate_invoice_pdf,
     get_amount_due,
     has_pending_payment,
@@ -249,6 +250,39 @@ async def pay_invoice_via_paypal(
         )
 
     cfg = AppConfig.from_external(argparse.Namespace())
+
+    # M2 in FINDINGS.md (bounded fix, part (b)): a live Stripe intent
+    # confirms entirely client-side/out-of-band -- if one already exists
+    # for this invoice, refuse to also start a PayPal order, or a customer
+    # who then confirms the card AND completes the PayPal payment could
+    # double-collect once the PayPal side captures (fully closing this
+    # would require actively cancelling the live Stripe intent here, which
+    # would cancel a payment attempt the customer may currently be mid-way
+    # through confirming -- out of scope for this bounded fix).
+    if invoice.stripe_payment_intent_id:
+        stripe.api_key = cfg.payment_processor_secret
+        if cfg.stripe_api_base:
+            stripe.api_base = cfg.stripe_api_base
+        existing_intent = await asyncio.to_thread(
+            stripe.PaymentIntent.retrieve, invoice.stripe_payment_intent_id
+        )
+        if existing_intent.status == "succeeded":
+            # Mirrors pay_invoice's own check: the webhook hasn't caught up
+            # yet, but the money has already moved on Stripe's side --
+            # never let PayPal collect on top of that.
+            raise HTTPException(
+                status_code=409,
+                detail="this invoice has already been paid; refresh the page",
+            )
+        if existing_intent.status != "canceled":
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "a card payment is already in progress for this invoice; "
+                    "finish or cancel it before trying PayPal"
+                ),
+            )
+
     result = await paypal.create_order(
         cfg, str(invoice.id), amount_due, invoice.currency
     )
@@ -299,6 +333,31 @@ async def capture_invoice_paypal_payment(
         return {"status": "captured"}
     if existing_payment is not None and existing_payment.status == "pending":
         return {"status": "pending"}
+    # L1 in FINDINGS.md: reconcile_pending_paypal_captures can mark a
+    # previously-pending capture "failed" (PayPal reported DECLINED/
+    # VOIDED after the fact). A re-fire of capture for that same order_id
+    # must be refused outright here rather than falling through to a
+    # second paypal.capture_order call + a second INSERT -- if PayPal now
+    # returned COMPLETED, that INSERT would collide with this existing
+    # "failed" row on uq_payments_paypal_order_id and raise an unhandled
+    # IntegrityError (500).
+    if existing_payment is not None and existing_payment.status == "failed":
+        raise HTTPException(
+            status_code=409,
+            detail="this payment attempt already failed; please try again",
+        )
+    # M1 in FINDINGS.md: this route is the ONLY place a pending Payment
+    # row for PayPal gets created, so it must guard against a second,
+    # DIFFERENT order's capture proceeding while an earlier one from this
+    # invoice is still pending review -- the exact-order short-circuit
+    # above only dedups a retry of the SAME order_id. Checked after that
+    # short-circuit so a legitimate retry of the still-pending order
+    # itself still returns {"status": "pending"} instead of 409ing.
+    if existing_payment is None and await has_pending_payment(db, invoice.id):
+        raise HTTPException(
+            status_code=409,
+            detail="a payment is still being reviewed for this invoice; please wait",
+        )
     if invoice.status not in ("sent", "overdue"):
         raise HTTPException(
             status_code=409, detail="invoice is not payable in its current state"
@@ -412,6 +471,12 @@ async def capture_invoice_paypal_payment(
                 "captured_amount": str(capture.captured_amount),
                 "expected_amount": str(expected_amount),
             },
+        )
+        await flag_invoice_needs_review(
+            db,
+            invoice,
+            "paypal capture amount does not match amount due "
+            f"(captured={capture.captured_amount}, expected={expected_amount})",
         )
 
     # Same "sum every succeeded payment, mark paid once it covers the

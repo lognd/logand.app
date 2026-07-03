@@ -17,6 +17,7 @@ from logand_backend.db.models.invoices import Invoice, Payment
 from logand_backend.domain.invoices import service as invoices_service
 from logand_backend.domain.invoices.service import reconcile_pending_paypal_captures
 from logand_backend.testing.fake_paypal import app as fake_paypal_app
+from logand_backend.testing.fake_stripe import app as fake_stripe_app
 
 
 def _csrf_headers(db_client: AsyncClient) -> dict[str, str]:
@@ -92,6 +93,30 @@ def fake_paypal_server() -> Iterator[str]:
     while not server.started and time.monotonic() < deadline:
         time.sleep(0.02)
     assert server.started, "fake_paypal server did not start in time"
+    port = server.servers[0].sockets[0].getsockname()[1]
+
+    yield f"http://127.0.0.1:{port}"
+
+    server.should_exit = True
+    thread.join(timeout=5)
+
+
+@pytest.fixture(scope="module")
+def fake_stripe_server() -> Iterator[str]:
+    """Same convention as fake_paypal_server above / test_stripe_fake_server.py's
+    fake_stripe_server -- a real uvicorn server on a real port, since
+    stripe-python makes real HTTP requests that need something actually
+    listening on a socket."""
+    config = uvicorn.Config(
+        fake_stripe_app, host="127.0.0.1", port=0, log_level="warning"
+    )
+    server = uvicorn.Server(config)
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    deadline = time.monotonic() + 5
+    while not server.started and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert server.started, "fake_stripe server did not start in time"
     port = server.servers[0].sockets[0].getsockname()[1]
 
     yield f"http://127.0.0.1:{port}"
@@ -451,6 +476,70 @@ async def test_capture_returning_pending_records_payment_but_does_not_settle_inv
     assert payment.amount == Decimal("25.00")
 
 
+async def test_capture_of_a_second_order_is_blocked_while_first_is_pending(
+    db_client: AsyncClient,
+    make_user,
+    login_as,
+    fake_paypal_server: str,
+    monkeypatch: pytest.MonkeyPatch,
+    db_session,
+) -> None:
+    """Regression test for M1 in FINDINGS.md: two PayPal orders can both
+    be created before either is captured (neither has a Payment row yet,
+    so has_pending_payment is False for both). Once order A's capture
+    comes back PENDING and is recorded, capturing a DIFFERENT order B
+    against the same invoice must be refused with 409 rather than
+    allowed to also record/settle -- that would double-collect once both
+    resolve to COMPLETED."""
+    _configure_paypal(monkeypatch, fake_paypal_server)
+    invoice_id, _customer = await _sent_invoice_as_customer(
+        db_client, make_user, login_as, unit_price="25.00"
+    )
+    headers = _csrf_headers(db_client)
+
+    order_a = (
+        await db_client.post(f"/api/invoices/{invoice_id}/pay/paypal", headers=headers)
+    ).json()["order_id"]
+    order_b = (
+        await db_client.post(f"/api/invoices/{invoice_id}/pay/paypal", headers=headers)
+    ).json()["order_id"]
+
+    async with AsyncClient(base_url=fake_paypal_server) as paypal_client:
+        await paypal_client.post(
+            f"/test/orders/{order_a}/force-status", json={"status": "PENDING"}
+        )
+        await paypal_client.post(
+            f"/test/orders/{order_b}/force-status", json={"status": "COMPLETED"}
+        )
+
+    capture_a = await db_client.post(
+        f"/api/invoices/{invoice_id}/pay/paypal/capture",
+        json={"order_id": order_a},
+        headers=headers,
+    )
+    assert capture_a.status_code == 200, capture_a.text
+    assert capture_a.json() == {"status": "pending"}
+
+    capture_b = await db_client.post(
+        f"/api/invoices/{invoice_id}/pay/paypal/capture",
+        json={"order_id": order_b},
+        headers=headers,
+    )
+    assert capture_b.status_code == 409, capture_b.text
+
+    payments = (
+        (
+            await db_session.execute(
+                select(Payment).where(Payment.invoice_id == invoice_id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(payments) == 1
+    assert payments[0].paypal_order_id == order_a
+
+
 async def test_retry_capture_of_a_pending_order_short_circuits_without_duplicate(
     db_client: AsyncClient,
     make_user,
@@ -633,6 +722,83 @@ async def test_reconcile_marks_a_pending_capture_failed_when_declined(
     assert invoice.status == "sent"
 
 
+async def test_recapture_of_an_order_reconciled_to_failed_is_refused_not_500(
+    db_client: AsyncClient,
+    make_user,
+    login_as,
+    fake_paypal_server: str,
+    monkeypatch: pytest.MonkeyPatch,
+    db_session,
+) -> None:
+    """Regression test for L1 in FINDINGS.md: once
+    reconcile_pending_paypal_captures has marked a Payment "failed" for
+    an order_id, a client re-firing capture for that SAME order_id must
+    be refused with 409, not fall through to a second paypal.capture_order
+    call whose successful insert would collide with the existing failed
+    row on uq_payments_paypal_order_id and raise an unhandled 500."""
+    _configure_paypal(monkeypatch, fake_paypal_server)
+    invoice_id, _customer = await _sent_invoice_as_customer(
+        db_client, make_user, login_as, unit_price="25.00"
+    )
+    headers = _csrf_headers(db_client)
+
+    order_resp = await db_client.post(
+        f"/api/invoices/{invoice_id}/pay/paypal", headers=headers
+    )
+    order_id = order_resp.json()["order_id"]
+
+    async with AsyncClient(base_url=fake_paypal_server) as paypal_client:
+        await paypal_client.post(
+            f"/test/orders/{order_id}/force-status", json={"status": "PENDING"}
+        )
+
+    first_capture = await db_client.post(
+        f"/api/invoices/{invoice_id}/pay/paypal/capture",
+        json={"order_id": order_id},
+        headers=headers,
+    )
+    assert first_capture.json() == {"status": "pending"}
+
+    async with AsyncClient(base_url=fake_paypal_server) as paypal_client:
+        await paypal_client.post(
+            f"/test/orders/{order_id}/force-status", json={"status": "DECLINED"}
+        )
+
+    cfg = AppConfig.from_external(argparse.Namespace())
+    settled = await reconcile_pending_paypal_captures(db_session, cfg)
+    assert settled == 1
+
+    # Now flip PayPal's own state back to COMPLETED -- if the route fell
+    # through to a second capture_order call, this is what would trigger
+    # the uq_payments_paypal_order_id collision the finding describes.
+    async with AsyncClient(base_url=fake_paypal_server) as paypal_client:
+        await paypal_client.post(
+            f"/test/orders/{order_id}/force-status", json={"status": "COMPLETED"}
+        )
+
+    second_capture = await db_client.post(
+        f"/api/invoices/{invoice_id}/pay/paypal/capture",
+        json={"order_id": order_id},
+        headers=headers,
+    )
+    assert second_capture.status_code == 409, second_capture.text
+
+    payments = (
+        (
+            await db_session.execute(
+                select(Payment).where(
+                    Payment.invoice_id == invoice_id,
+                    Payment.paypal_order_id == order_id,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(payments) == 1
+    assert payments[0].status == "failed"
+
+
 async def test_reconcile_still_pending_is_a_no_op(
     db_client: AsyncClient,
     make_user,
@@ -679,3 +845,32 @@ async def test_reconcile_still_pending_is_a_no_op(
         )
     ).scalar_one()
     assert payment.status == "pending"
+
+
+async def test_paypal_order_refused_while_a_live_stripe_intent_exists(
+    db_client: AsyncClient,
+    make_user,
+    login_as,
+    fake_paypal_server: str,
+    fake_stripe_server: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression test for M2 in FINDINGS.md's bounded fix (b): starting a
+    Stripe PaymentIntent (e.g. the customer opened the card form) must
+    block a PayPal order from also being created for the same invoice --
+    otherwise the customer could complete both, double-collecting once
+    the PayPal side captures."""
+    _configure_paypal(monkeypatch, fake_paypal_server)
+    monkeypatch.setenv("STRIPE_API_BASE", fake_stripe_server)
+    invoice_id, _customer = await _sent_invoice_as_customer(
+        db_client, make_user, login_as, unit_price="25.00"
+    )
+    headers = _csrf_headers(db_client)
+
+    pay_resp = await db_client.post(f"/api/invoices/{invoice_id}/pay", headers=headers)
+    assert pay_resp.status_code == 200, pay_resp.text
+
+    paypal_resp = await db_client.post(
+        f"/api/invoices/{invoice_id}/pay/paypal", headers=headers
+    )
+    assert paypal_resp.status_code == 409, paypal_resp.text
