@@ -210,18 +210,41 @@ def _build_signed_jwt(
     return (signing_input + b"." + _b64url(signature)).decode("ascii")
 
 
+# Process-local cache for the Gmail access token, keyed by (client_email,
+# sender_email, token_url) so a config change (e.g. between test doubles)
+# can't reuse a stale token minted for a different identity. Populated by
+# _get_gmail_access_token below. See that function's doc comment for why
+# this exists: notify_dispute_updated (notify.py) fans a single dispute
+# event out to EVERY admin, so without a cache one notification burst
+# means N sequential token exchanges instead of 1 (FINDINGS.md L1).
+_gmail_token_cache: dict[tuple[str, str, str], tuple[str, float]] = {}
+# Refresh this many seconds before actual expiry, so a token handed out
+# near the end of its life doesn't die mid-request.
+_GMAIL_TOKEN_REFRESH_SKEW = 60.0
+
+
 async def _get_gmail_access_token(cfg: AppConfig, client: httpx.AsyncClient) -> str:
-    """Exchanges a fresh JWT Bearer assertion for a short-lived access
-    token on every send -- no caching. This is a per-notification, best-
-    effort background operation (see notify.py's own doc comment), not a
-    hot loop; a cache would save one HTTP round-trip per email at the
-    cost of a second code path (token expiry/refresh handling) for
-    something that sends at most a few messages an hour.
+    """Exchanges a JWT Bearer assertion for a short-lived access token,
+    reusing a cached token for its remaining lifetime instead of hitting
+    Google on every send. This IS a hot-ish path in one case: a dispute
+    event notifies every admin (notify.py's notify_dispute_updated), so a
+    single Stripe webhook can trigger many sends back to back -- caching
+    collapses that burst to one token exchange instead of N (FINDINGS.md
+    L1). The cache is process-local and unsynchronized; a rare concurrent
+    miss just costs one extra exchange, not a correctness problem.
     """
     assert cfg.gmail_service_account_json is not None
     assert cfg.gmail_sender_email is not None
     info = json.loads(cfg.gmail_service_account_json)
     token_url = f"{cfg.gmail_token_api_base or _GOOGLE_TOKEN_API_BASE}/token"
+    cache_key = (info["client_email"], cfg.gmail_sender_email, token_url)
+
+    cached = _gmail_token_cache.get(cache_key)
+    if cached is not None:
+        token, expires_at = cached
+        if time.monotonic() < expires_at:
+            return token
+
     assertion = _build_signed_jwt(
         info,
         sender_email=cfg.gmail_sender_email,
@@ -236,7 +259,14 @@ async def _get_gmail_access_token(cfg: AppConfig, client: httpx.AsyncClient) -> 
         },
     )
     resp.raise_for_status()
-    return resp.json()["access_token"]
+    body = resp.json()
+    token = body["access_token"]
+    expires_in = float(body.get("expires_in", 3600))
+    _gmail_token_cache[cache_key] = (
+        token,
+        time.monotonic() + max(expires_in - _GMAIL_TOKEN_REFRESH_SKEW, 0.0),
+    )
+    return token
 
 
 async def _send_via_gmail_api(cfg: AppConfig, msg: EmailMessage) -> None:
