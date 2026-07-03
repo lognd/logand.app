@@ -43,6 +43,17 @@ class RefundError(ErrorSet):
     PaymentNotRefundable = "payment is not in a state that can be refunded"
     AmountExceedsBalance = "refund amount exceeds the payment's remaining balance"
     InvalidAmount = "refund amount must be greater than zero"
+    ProviderReferenceMissing = (
+        "payment method requires a provider reference to refund and none is on file"
+    )
+    RecordingFailed = (
+        "refund may have executed with the provider but could not be recorded; "
+        "investigate before retrying"
+    )
+    PriorAttemptFailed = (
+        "a prior refund attempt with this request id failed and no money was "
+        "refunded; retry with a new request id"
+    )
 
 
 class BudgetError(ErrorSet):
