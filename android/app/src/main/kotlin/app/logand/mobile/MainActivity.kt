@@ -44,7 +44,11 @@ class MainActivity : ComponentActivity() {
             val apiClientProvider = { container.apiClient.value }
             return when (modelClass) {
                 LoginViewModel::class.java ->
-                    LoginViewModel(apiClientProvider, container.logoutEvents) as T
+                    LoginViewModel(
+                        apiClientProvider,
+                        container.logoutEvents,
+                        resetLogoutEvents = container::resetLogoutEvents,
+                    ) as T
                 MileageViewModel::class.java -> MileageViewModel(apiClientProvider) as T
                 ReceiptsViewModel::class.java -> ReceiptsViewModel(apiClientProvider) as T
                 else -> throw IllegalArgumentException("Unknown ViewModel class: $modelClass")

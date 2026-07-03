@@ -3,6 +3,7 @@ package app.logand.mobile.data
 import android.content.Context
 import app.logand.core.ApiClient
 import app.logand.core.logging.FileLogger
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -51,6 +52,18 @@ class AppContainer(context: Context) {
     // event to a late subscriber closes that window.
     private val _logoutEvents = MutableSharedFlow<Unit>(replay = 1, extraBufferCapacity = 1)
     val logoutEvents: SharedFlow<Unit> = _logoutEvents
+
+    // Call on every successful login (see LoginViewModel). replay = 1
+    // means a stale logout event from BEFORE this login (e.g. a warm-start
+    // 401 that raced startup) would otherwise sit in the cache forever and
+    // ambush any LATER collector that subscribes after this login -- it'd
+    // receive that stale replayed Unit and force SessionState back to
+    // LoggedOut despite a freshly valid session. Clearing the cache here
+    // means only a 401 that happens AFTER this point can ever be replayed.
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun resetLogoutEvents() {
+        _logoutEvents.resetReplayCache()
+    }
 
     private val _apiClient = MutableStateFlow(buildClient(ServerSettingsRepository.DEFAULT_BASE_URL))
     val apiClient: StateFlow<ApiClient> = _apiClient

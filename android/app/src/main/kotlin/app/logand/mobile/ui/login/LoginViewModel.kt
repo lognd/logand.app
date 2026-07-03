@@ -32,6 +32,12 @@ class LoginViewModel(
     // dedup, and this signal must reach us on every 401 regardless of
     // what we currently think the session is.
     logoutEvents: SharedFlow<Unit>? = null,
+    // Called on every successful login -- see AppContainer.resetLogoutEvents'
+    // doc comment. Clears the logoutEvents replay cache so a stale 401
+    // that happened BEFORE this login (e.g. a warm-start race) can't
+    // ambush a later collector into forcing this freshly-logged-in
+    // session back to LoggedOut.
+    private val resetLogoutEvents: () -> Unit = {},
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(LoginUiState())
     val uiState: StateFlow<LoginUiState> = _uiState.asStateFlow()
@@ -86,6 +92,7 @@ class LoginViewModel(
     private suspend fun refreshSessionAfterLogin(client: ApiClient) {
         when (val meResult = client.me()) {
             is ApiResult.Success -> {
+                resetLogoutEvents()
                 _session.value = if (meResult.data.role == "admin") {
                     SessionState.LoggedIn(meResult.data)
                 } else {
