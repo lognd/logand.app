@@ -429,7 +429,12 @@ async def revert_change(
         # touching the row or writing another audit entry, rather than the
         # misleading ChangeNotRevertible (which reads to an admin as "this
         # failed" when nothing needed to happen in the first place).
-        return Ok(UUID(log.target_id))
+        # Per L1 in FINDINGS.md: return the id of the entry being reverted
+        # (log_id), NOT log.target_id -- target_id is the edited business
+        # row's id, not an AdminAuditLog id, and every other branch here
+        # returns a real AdminAuditLog id that the caller can look up via
+        # GET /api/admin/data/changes/{change_id}.
+        return Ok(log_id)
     else:
         return Err(DataError.ChangeNotRevertible)
 
