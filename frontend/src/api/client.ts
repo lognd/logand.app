@@ -22,6 +22,23 @@ export class UnauthenticatedError extends Error {
   }
 }
 
+// Thrown for any non-ok response that carries the backend's structured
+// error body (see backend api/errors.py's to_http_exception). `code` is
+// the stable, machine-readable discriminator ("RefundError.
+// PriorAttemptFailed") -- callers that need to branch on WHICH error
+// variant occurred should match on `code`, never on `message` prose.
+// Matching on prose silently breaks on any copy-edit/reword of the
+// backend's message (FINDINGS.md L2); `code` is a deliberate contract
+// between backend and frontend that a reword can't accidentally break.
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    public readonly code: string | undefined,
+  ) {
+    super(message);
+  }
+}
+
 function readCsrfCookie(): string | null {
   const match = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
   return match ? decodeURIComponent(match[1]) : null;
@@ -83,20 +100,32 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
       `request failed: ${init.method ?? "GET"} ${path}`,
       `status=${res.status} request_id=${requestId}`,
     );
-    // Surface the backend's `detail` message (see api/errors.py's
+    // Surface the backend's `detail`/`code` (see api/errors.py's
     // to_http_exception) when present, so callers can tell one 409 apart
     // from another (e.g. RefundForm distinguishing PriorAttemptFailed from
-    // other refund conflicts) instead of getting only a generic status
-    // line for every non-ok response.
+    // other refund conflicts) via the stable `code`, not by matching
+    // prose, instead of getting only a generic status line for every
+    // non-ok response.
     let detail: string | undefined;
+    let code: string | undefined;
     try {
-      const body = (await res.clone().json()) as { detail?: unknown };
-      if (typeof body?.detail === "string") detail = body.detail;
+      const body = (await res.clone().json()) as {
+        detail?: unknown;
+      };
+      const rawDetail = body?.detail;
+      if (typeof rawDetail === "string") {
+        detail = rawDetail;
+      } else if (rawDetail && typeof rawDetail === "object") {
+        const nested = rawDetail as { detail?: unknown; code?: unknown };
+        if (typeof nested.detail === "string") detail = nested.detail;
+        if (typeof nested.code === "string") code = nested.code;
+      }
     } catch {
       // Non-JSON or empty body -- fall back to the generic message below.
     }
-    throw new Error(
+    throw new ApiError(
       detail ?? `request failed: ${res.status} ${res.statusText}`,
+      code,
     );
   }
 

@@ -108,4 +108,16 @@ _verify_complete_mapping()
 
 
 def to_http_exception(err: ErrorSet) -> HTTPException:
-    return HTTPException(status_code=_STATUS_MAP[err], detail=err.value)
+    """`code` is a stable, machine-readable discriminator
+    ("RefundError.PriorAttemptFailed") alongside the human-readable
+    `detail` prose. Without it, a caller that needs to branch on which
+    error variant occurred (e.g. the frontend's RefundForm distinguishing
+    "prior attempt failed, mint a new request id" from other 409s) has
+    only the prose string to match against, which silently breaks on any
+    copy-edit/reword (FINDINGS.md L2). Every caller should prefer `code`;
+    `detail` remains for display.
+    """
+    return HTTPException(
+        status_code=_STATUS_MAP[err],
+        detail={"detail": err.value, "code": f"{type(err).__name__}.{err.name}"},
+    )

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ApiError } from "../../../api/client";
 import { getBomCostBreakdown, listBoms } from "../../../api/bom";
 import { listCustomers } from "../../../api/customers";
 import {
@@ -145,13 +146,16 @@ function RefundForm({
     },
     onError: (err) => {
       // Backend returns RefundError.PriorAttemptFailed (409) when a prior
-      // refund under this same client_request_id FAILED, and its message
-      // says to retry under a NEW id (see errors.py). Without minting a
+      // refund under this same client_request_id FAILED -- the caller
+      // must retry under a NEW id (see errors.py). Without minting a
       // fresh one here, re-clicking Confirm resubmits the identical id and
-      // gets the same 409 forever (L1 in FINDINGS.md). Every OTHER error
-      // (network/5xx, validation) keeps the id stable so a genuine
-      // lost-response retry still dedupes server-side.
-      if (err instanceof Error && err.message.includes("retry with a new request id")) {
+      // gets the same 409 forever (L1 in FINDINGS.md). Matched on the
+      // stable `code` from ApiError, not the message prose -- a copy-edit
+      // of the backend's message text used to silently break this check
+      // (FINDINGS.md L2). Every OTHER error (network/5xx, validation)
+      // keeps the id stable so a genuine lost-response retry still
+      // dedupes server-side.
+      if (err instanceof ApiError && err.code === "RefundError.PriorAttemptFailed") {
         setClientRequestId(crypto.randomUUID());
       }
     },
