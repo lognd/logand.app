@@ -145,15 +145,28 @@ async def create_order(
         return Ok(PayPalOrder(order_id=body["id"], approval_url=approval_url))
 
 
-def _capture_from_order_body(body: dict) -> PayPalCapture:
-    purchase_unit = body["purchase_units"][0]
-    capture = purchase_unit["payments"]["captures"][0]
+def _capture_from_order_body(body: dict) -> PayPalCapture | None:
+    """Returns None (rather than raising) when the order body has no
+    purchase_units/payments/captures entry to read -- e.g. a VOIDED or
+    otherwise never-captured order. Callers that poll a previously-PENDING
+    order (get_order_status) must treat this as "no verdict available" and
+    surface it as a Result error rather than letting a KeyError/IndexError
+    escape and abort a whole reconciliation batch (see
+    reconcile_pending_paypal_captures).
+    """
+    purchase_units = body.get("purchase_units") or []
+    if not purchase_units:
+        return None
+    captures = (purchase_units[0].get("payments") or {}).get("captures") or []
+    if not captures:
+        return None
+    capture = captures[0]
     return PayPalCapture(
         order_id=body["id"],
         status=capture["status"],
         captured_amount=Decimal(capture["amount"]["value"]),
         captured_currency=capture["amount"]["currency_code"],
-        reference_id=purchase_unit.get("reference_id"),
+        reference_id=purchase_units[0].get("reference_id"),
         capture_id=capture["id"],
     )
 
@@ -169,7 +182,10 @@ async def _get_order(
         resp.raise_for_status()
     except httpx.HTTPError:
         return Err(PaymentProviderError.RequestFailed)
-    return Ok(_capture_from_order_body(resp.json()))
+    capture = _capture_from_order_body(resp.json())
+    if capture is None:
+        return Err(PaymentProviderError.RequestFailed)
+    return Ok(capture)
 
 
 async def capture_order(
@@ -224,7 +240,10 @@ async def capture_order(
         except httpx.HTTPError:
             return Err(PaymentProviderError.RequestFailed)
 
-        return Ok(_capture_from_order_body(resp.json()))
+        capture = _capture_from_order_body(resp.json())
+        if capture is None:
+            return Err(PaymentProviderError.RequestFailed)
+        return Ok(capture)
 
 
 async def get_order_status(
