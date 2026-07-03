@@ -197,7 +197,12 @@ async def get_invoice_stats(db: AsyncSession) -> InvoiceStats:
     dispute_rows = (
         await db.execute(
             select(Payment.dispute_status, func.count())
-            .where(Payment.dispute_status.is_not(None))
+            .select_from(Payment)
+            .join(Invoice, Invoice.id == Payment.invoice_id)
+            .where(
+                Payment.dispute_status.is_not(None),
+                Invoice.deleted_at.is_(None),
+            )
             .group_by(Payment.dispute_status)
         )
     ).all()

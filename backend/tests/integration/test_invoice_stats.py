@@ -173,3 +173,57 @@ async def test_invoice_stats_counts_open_disputes(db_session, make_user) -> None
 
     assert stats.open_disputes == 1
     assert stats.disputes.needs_response == 1
+
+
+async def test_invoice_stats_excludes_disputes_of_soft_deleted_invoices(
+    db_session, make_user
+) -> None:
+    """A dispute on a soft-deleted invoice must not feed open_disputes --
+    the admin can no longer see or act on the invoice, so counting it
+    leaves a phantom "action required" tile that never clears (see
+    FINDINGS.md L1)."""
+    from datetime import datetime, timezone
+    from uuid import uuid4
+
+    from sqlalchemy import select
+
+    from logand_backend.db.models.invoices import Invoice, Payment
+
+    customer = await make_user(role="customer")
+    invoice_id = (
+        await create_invoice(
+            db_session,
+            customer.id,
+            [
+                LineItemInput(
+                    description="a", quantity=Decimal(1), unit_price=Decimal("42.00")
+                )
+            ],
+        )
+    ).danger_ok
+    await send_invoice(db_session, invoice_id)
+    db_session.add(
+        Payment(
+            id=uuid4(),
+            invoice_id=invoice_id,
+            method="stripe",
+            stripe_payment_intent_id="pi_y",
+            amount=Decimal("42.00"),
+            status="succeeded",
+            transaction_id="ch_y",
+            dispute_status="needs_response",
+            stripe_dispute_id="dp_y",
+        )
+    )
+    await db_session.flush()
+
+    invoice = (
+        await db_session.execute(select(Invoice).where(Invoice.id == invoice_id))
+    ).scalar_one()
+    invoice.deleted_at = datetime.now(timezone.utc)
+    await db_session.flush()
+
+    stats = await get_invoice_stats(db_session)
+
+    assert stats.open_disputes == 0
+    assert stats.disputes.needs_response == 0
