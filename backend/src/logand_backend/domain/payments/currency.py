@@ -10,8 +10,22 @@ from decimal import ROUND_HALF_UP, Decimal
 # future PayPal-side zero-decimal support doesn't need a second list.
 _ZERO_DECIMAL_CURRENCIES = frozenset(
     {
-        "bif", "clp", "djf", "gnf", "jpy", "kmf", "krw", "mga", "pyg",
-        "rwf", "ugx", "vnd", "vuv", "xaf", "xof", "xpf",
+        "bif",
+        "clp",
+        "djf",
+        "gnf",
+        "jpy",
+        "kmf",
+        "krw",
+        "mga",
+        "pyg",
+        "rwf",
+        "ugx",
+        "vnd",
+        "vuv",
+        "xaf",
+        "xof",
+        "xpf",
     }
 )
 # Currencies with THREE decimal places -- rare, but present in both
