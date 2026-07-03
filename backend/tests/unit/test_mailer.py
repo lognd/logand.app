@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import base64
+import hashlib
+import hmac
 import json
+import time
 import uuid
 
 import pytest
@@ -174,6 +177,62 @@ def test_build_signed_jwt_signature_actually_verifies() -> None:
     # by a real RS256 verifier -- no exception means it's a genuinely
     # valid signature over the exact signing input.
     public_key.verify(signature, signing_input, padding.PKCS1v15(), hashes.SHA256())
+
+
+# -- sign_unsubscribe_token / verify_unsubscribe_token ----------------------
+
+
+def test_unsubscribe_token_round_trips_immediately() -> None:
+    cfg = _cfg(session_secret="test-secret")
+    user_id = uuid.uuid4()
+    token = mailer.sign_unsubscribe_token(user_id, cfg)
+    assert mailer.verify_unsubscribe_token(token, cfg) == user_id
+
+
+def test_unsubscribe_token_rejects_expired_token() -> None:
+    """FINDINGS.md M2: a signature-valid token issued more than
+    _UNSUBSCRIBE_TOKEN_MAX_AGE_DAYS days ago must be rejected. Hand-build
+    the token with the real HMAC so the signature is valid but the day is
+    stale, rather than monkeypatching time.time (which would also perturb
+    the "current day" side of the comparison).
+    """
+    cfg = _cfg(session_secret="test-secret")
+    user_id = uuid.uuid4()
+    stale_day = int(time.time() // 86400) - mailer._UNSUBSCRIBE_TOKEN_MAX_AGE_DAYS - 1
+    payload = f"{user_id}.{stale_day}"
+    sig = hmac.new(
+        cfg.session_secret.encode("utf-8"), payload.encode("ascii"), hashlib.sha256
+    ).hexdigest()
+    stale_token = f"{payload}.{sig}"
+    assert mailer.verify_unsubscribe_token(stale_token, cfg) is None
+
+
+def test_unsubscribe_token_accepts_token_at_the_age_boundary() -> None:
+    """Exactly _UNSUBSCRIBE_TOKEN_MAX_AGE_DAYS days old is still valid --
+    the check is strictly-greater-than, so the boundary itself must not
+    regress to a rejection."""
+    cfg = _cfg(session_secret="test-secret")
+    user_id = uuid.uuid4()
+    boundary_day = int(time.time() // 86400) - mailer._UNSUBSCRIBE_TOKEN_MAX_AGE_DAYS
+    payload = f"{user_id}.{boundary_day}"
+    sig = hmac.new(
+        cfg.session_secret.encode("utf-8"), payload.encode("ascii"), hashlib.sha256
+    ).hexdigest()
+    boundary_token = f"{payload}.{sig}"
+    assert mailer.verify_unsubscribe_token(boundary_token, cfg) == user_id
+
+
+def test_unsubscribe_token_rejects_tampered_day() -> None:
+    """A token whose issued_epoch_day was rewritten to look fresh must
+    fail signature verification -- the day is part of the signed payload,
+    not a free-standing field."""
+    cfg = _cfg(session_secret="test-secret")
+    user_id = uuid.uuid4()
+    token = mailer.sign_unsubscribe_token(user_id, cfg)
+    user_id_str, issued_day_str, sig = token.rsplit(".", 2)
+    tampered_day = int(issued_day_str) + 1
+    tampered_token = f"{user_id_str}.{tampered_day}.{sig}"
+    assert mailer.verify_unsubscribe_token(tampered_token, cfg) is None
 
 
 def test_build_signed_jwt_rejects_tampered_payload() -> None:
