@@ -6,6 +6,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
@@ -39,7 +40,7 @@ class LoginViewModelTest {
         server = MockWebServer()
         server.start()
         val client = ApiClient(baseUrl = server.url("/").toString())
-        viewModel = LoginViewModel { client }
+        viewModel = LoginViewModel(apiClient = { client })
     }
 
     @AfterEach
@@ -65,6 +66,32 @@ class LoginViewModelTest {
 
         assertEquals("Email and password are required.", viewModel.uiState.value.errorMessage)
         assertEquals(0, server.requestCount)
+    }
+
+    @Test
+    fun `login lowercases and trims the email before sending it`() = runBlocking {
+        // Regression test for AND1: the backend's own login lookup
+        // normalizes stored/looked-up emails to lowercase+stripped (see
+        // backend domain/auth/service.py's login()) -- this client must
+        // send the same normalized form, not rely on the server doing it
+        // (a defense-in-depth match, not a workaround for a still-broken
+        // backend).
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"status":"ok"}"""))
+        server.enqueue(
+            MockResponse().setResponseCode(200)
+                .setBody("""{"user_id":"1","role":"admin"}""")
+        )
+        viewModel.onEmailChange("  Admin@Logand.App  ")
+        viewModel.onPasswordChange("hunter2")
+
+        viewModel.login()
+        awaitState { !it.isLoading }
+
+        val loginRequest = server.takeRequest()
+        assertEquals(
+            """{"email":"admin@logand.app","password":"hunter2"}""",
+            loginRequest.body.readUtf8(),
+        )
     }
 
     @Test
@@ -135,4 +162,51 @@ class LoginViewModelTest {
 
         assertIs<SessionState.LoggedOut>(viewModel.session.value)
     }
+
+    @Test
+    fun `a LoggedOut flip on the container's session flow reaches the UI-observed session`() =
+        runBlocking {
+            // Regression test for AND2 (see FINDINGS.md H2 / AppContainerTest's
+            // own regression test): AppContainer.sessionState was flipped by
+            // every ApiClient's onUnauthorized callback, but AppNavHost reads
+            // LoginViewModel.session, a separate flow onUnauthorized never
+            // touched -- so a mid-session 401 never reached the UI. This
+            // verifies the fix at the boundary the original bug actually broke:
+            // the UI-observed session, not just the container's own copy.
+            // Seeded to a non-LoggedOut value first -- MutableStateFlow
+            // suppresses re-emission when a new value structurally equals
+            // the current one, and SessionState.LoggedOut is a `data
+            // object` singleton, so starting here already-LoggedOut would
+            // make the LoggedOut assignment below a silent no-op that
+            // never reaches the collector.
+            val containerSessionState =
+                MutableStateFlow<SessionState>(
+                    SessionState.LoggedIn(app.logand.core.model.Me(user_id = "0", role = "admin"))
+                )
+            val client = ApiClient(baseUrl = server.url("/").toString())
+            val vm = LoginViewModel({ client }, containerSessionState)
+
+            server.enqueue(MockResponse().setResponseCode(200).setBody("""{"status":"ok"}"""))
+            server.enqueue(
+                MockResponse().setResponseCode(200)
+                    .setBody("""{"user_id":"1","role":"admin"}""")
+            )
+            vm.onEmailChange("admin@logand.app")
+            vm.onPasswordChange("hunter2")
+            vm.login()
+            withTimeout(2_000) {
+                while (vm.uiState.value.isLoading) delay(5)
+            }
+            assertIs<SessionState.LoggedIn>(vm.session.value)
+
+            // Simulate AppContainer's onUnauthorized firing from an unrelated
+            // API call elsewhere in the app (idle timeout, revoked session).
+            containerSessionState.value = SessionState.LoggedOut
+
+            withTimeout(2_000) {
+                while (vm.session.value !is SessionState.LoggedOut) delay(5)
+            }
+            assertIs<SessionState.LoggedOut>(vm.session.value)
+            Unit
+        }
 }
