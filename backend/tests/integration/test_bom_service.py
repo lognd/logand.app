@@ -308,6 +308,38 @@ async def test_consume_bom_is_all_or_nothing_when_one_line_lacks_stock(
     assert scarce_after.quantity == 5
 
 
+async def test_consume_bom_rejects_negative_build_quantity(db_session) -> None:
+    """Regression test for L4: a negative build_quantity makes `need`
+    negative, so `item.quantity < need` is always false (the stock check
+    always "passes") and the later `-need` adjustment becomes a POSITIVE
+    delta -- i.e. a "consumption" that actually adds stock. Must be
+    rejected outright before ever reaching that math.
+    """
+    location = await _make_location(db_session)
+    item = await _make_item(db_session, location)  # quantity=100
+    bom_id = (await create_bom(db_session, "x")).danger_ok
+    await add_material_line(db_session, bom_id, item.id, quantity_per_unit=1)
+
+    result = await consume_bom(db_session, bom_id, build_quantity=-5, adjusted_by=None)
+
+    assert result.is_err
+    assert result.danger_err == BomError.InvalidBuildQuantity
+    item_after = await db_session.get(InventoryItem, item.id)
+    assert item_after.quantity == 100
+
+
+async def test_consume_bom_rejects_zero_build_quantity(db_session) -> None:
+    location = await _make_location(db_session)
+    item = await _make_item(db_session, location)
+    bom_id = (await create_bom(db_session, "x")).danger_ok
+    await add_material_line(db_session, bom_id, item.id, quantity_per_unit=1)
+
+    result = await consume_bom(db_session, bom_id, build_quantity=0, adjusted_by=None)
+
+    assert result.is_err
+    assert result.danger_err == BomError.InvalidBuildQuantity
+
+
 async def test_consume_bom_not_found(db_session) -> None:
     result = await consume_bom(db_session, uuid4(), build_quantity=1, adjusted_by=None)
     assert result.is_err
