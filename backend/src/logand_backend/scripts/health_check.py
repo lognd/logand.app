@@ -140,7 +140,7 @@ async def check_paypal(cfg: AppConfig) -> bool:
     return True
 
 
-def check_smtp(cfg: AppConfig) -> bool:
+async def check_smtp(cfg: AppConfig) -> bool:
     if not mailer.is_configured(cfg):
         log.warn(
             "smtp: not configured -- invoice-sent/payment-received email "
@@ -156,6 +156,21 @@ def check_smtp(cfg: AppConfig) -> bool:
             "email's footer. Set MAILING_ADDRESS before sending real email."
         )
         ok = False
+
+    # Two mutually-exclusive transports (see mailer.py's own doc comment)
+    # -- Gmail OAuth2 takes precedence when both happen to be configured,
+    # same as mailer.send_email itself, so this checks whichever one
+    # send_email would actually use, not both.
+    if mailer._gmail_oauth_configured(cfg):  # noqa: SLF001
+        try:
+            async with httpx.AsyncClient() as client:
+                await mailer._get_gmail_access_token(cfg, client)  # noqa: SLF001
+            log.ok(f"smtp: gmail oauth2 credentials valid ({cfg.gmail_sender_email})")
+        except Exception as exc:
+            log.fail(f"smtp: gmail oauth2 credentials rejected -- {exc}")
+            ok = False
+        return ok
+
     import socket
 
     try:
@@ -278,7 +293,7 @@ async def run(cfg: AppConfig, *, skip_http: bool) -> int:
     results.append(await check_paypal(cfg))
 
     log.section("Notifications")
-    results.append(check_smtp(cfg))
+    results.append(await check_smtp(cfg))
 
     log.section("File storage")
     results.append(await check_storage(cfg))

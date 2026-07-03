@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 from logand_backend.app.config import AppConfig
-from logand_backend.scripts.health_check import _redact_url, check_dev_defaults
+from logand_backend.scripts.health_check import (
+    _redact_url,
+    check_dev_defaults,
+    check_smtp,
+)
 
 
 def test_redact_url_strips_credentials_but_keeps_host_and_db() -> None:
@@ -33,3 +37,12 @@ def test_check_dev_defaults_fails_when_session_secret_is_still_default() -> None
 
 def test_check_dev_defaults_fails_on_a_completely_default_config() -> None:
     assert check_dev_defaults(AppConfig()) is False
+
+
+async def test_check_smtp_warns_but_passes_when_neither_transport_configured() -> None:
+    """Neither SMTP_HOST nor GMAIL_* set -- a real, expected "not turned
+    on yet" state (see mailer.is_configured's own doc comment), not a
+    failure. Pure unit-level: no network at all, since is_configured()
+    short-circuits before either branch's real check.
+    """
+    assert await check_smtp(AppConfig()) is True

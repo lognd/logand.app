@@ -39,12 +39,17 @@ class StripeLiveCredentialsProbe(Probe):
 class SmtpReachabilityProbe(Probe):
     name = "notifications.smtp_reachable"
     description = (
-        "SSH + health_check.py confirms SMTP_HOST:SMTP_PORT is configured "
-        "and reachable (a raw TCP connect, per check_smtp()) and "
-        "MAILING_ADDRESS is set (CAN-SPAM requires it once email is on). "
-        "Does NOT authenticate or send a real message -- see "
-        "notification_flow.py's InvoiceNotificationEmailProbe for the real "
-        "end-to-end send-path check. Zero mutation."
+        "SSH + health_check.py confirms a mail transport is configured and "
+        "working -- either SMTP_HOST:SMTP_PORT reachable (a raw TCP "
+        "connect, per check_smtp()'s SMTP branch) or, for a Google "
+        "Workspace deployment, Gmail OAuth2 credentials actually valid (a "
+        "real, read-only JWT-Bearer token exchange against Google's real "
+        "oauth2 endpoint -- see check_smtp()'s Gmail branch and mailer.py's "
+        "own doc comment on why Workspace can't use plain SMTP auth at all "
+        "anymore, as of March 2025). Also confirms MAILING_ADDRESS is set "
+        "(CAN-SPAM requires it once email is on). Does NOT send a real "
+        "message -- see notification_flow.py's InvoiceNotificationEmailProbe "
+        "for the real end-to-end send-path check. Zero mutation either way."
     )
 
     def check_capability(self, env: ProdEnv) -> bool | str:
@@ -53,18 +58,20 @@ class SmtpReachabilityProbe(Probe):
     def execute(self, env: ProdEnv, cleanup: Cleanup) -> None:
         output = run_health_check(env)
         assert "smtp: not configured" not in output, (
-            "SMTP_HOST is unset on the deployed backend -- expected it to "
-            "be configured. Full report:\n" + output
+            "Neither SMTP_HOST nor GMAIL_SERVICE_ACCOUNT_JSON/"
+            "GMAIL_SENDER_EMAIL is set on the deployed backend -- expected "
+            "a mail transport to be configured. Full report:\n" + output
         )
         assert "MAILING_ADDRESS is empty" not in output, (
             "MAILING_ADDRESS is unset -- CAN-SPAM requires a real postal "
             "address in every commercial email's footer. Full report:\n" + output
         )
-        reachable_lines = [
-            line
+        smtp_reachable = any(
+            "smtp:" in line and "reachable" in line and "unreachable" not in line
             for line in output.splitlines()
-            if "smtp:" in line and "reachable" in line and "unreachable" not in line
-        ]
-        assert reachable_lines, (
-            "expected a 'smtp: <host>:<port> reachable' line -- got:\n" + output
+        )
+        gmail_oauth_valid = "smtp: gmail oauth2 credentials valid" in output
+        assert smtp_reachable or gmail_oauth_valid, (
+            "expected either a 'smtp: <host>:<port> reachable' line or a "
+            "'smtp: gmail oauth2 credentials valid' line -- got:\n" + output
         )
