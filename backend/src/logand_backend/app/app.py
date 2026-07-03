@@ -141,9 +141,15 @@ class App:
         from logand_backend.auth.sessions import SESSION_COOKIE_NAME, validate_session
 
         path = request.url.path
-        if path not in _CSRF_EXEMPT_PATHS and not path.startswith(
-            _CSRF_EXEMPT_PREFIXES
-        ):
+        # Boundary-matched (not bare startswith) so a prefix like
+        # "/api/webhooks" exempts "/api/webhooks/..." only, never a
+        # lookalike path such as "/api/webhooks-foo" that happens to
+        # share the same string prefix -- see L2 in FINDINGS.md.
+        is_exempt_prefix = any(
+            path == prefix or path.startswith(prefix + "/")
+            for prefix in _CSRF_EXEMPT_PREFIXES
+        )
+        if path not in _CSRF_EXEMPT_PATHS and not is_exempt_prefix:
             # Bind the double-submit check to the CURRENT session's own
             # csrf_secret, not just cookie==header -- see verify_csrf's
             # own doc comment for why plain double-submit alone is a
