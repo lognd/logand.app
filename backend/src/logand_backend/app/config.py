@@ -82,6 +82,31 @@ class AppConfig(BaseModel):
     smtp_password: str | None = None
     smtp_use_tls: bool = True
     smtp_from_address: str = "noreply@logand.app"
+    # Alternate transport to plain SMTP -- Google fully retired password/
+    # app-password SMTP auth for Workspace accounts (March 2025), so a
+    # Workspace mailbox (e.g. a custom domain like this one) MUST use
+    # OAuth2 to send mail at all. Both fields required together; when set,
+    # mailer.py sends through the Gmail REST API (a service-account JWT
+    # Bearer flow, domain-wide delegation impersonating gmail_sender_email)
+    # instead of SMTP_* -- see secrets.md's Gmail OAuth2 section for the
+    # Workspace Admin console setup this depends on. Mutually exclusive
+    # with SMTP_* in practice (a deployment sets one or the other), Gmail
+    # OAuth2 taking precedence if both happen to be set -- see mailer.py's
+    # is_configured() and _gmail_oauth_configured().
+    gmail_service_account_json: str | None = None
+    # The Workspace mailbox to impersonate (JWT "sub" claim) and send
+    # from -- domain-wide delegation must be authorized for this exact
+    # account's client ID in the Workspace Admin console, scoped to
+    # https://www.googleapis.com/auth/gmail.send.
+    gmail_sender_email: str | None = None
+    # None means "the real Google endpoints" -- only overridden in
+    # test/CI, pointing at testing/fake_gmail.py's local HTTP double, same
+    # convention as stripe_api_base/paypal_api_base above. Two separate
+    # bases (not one) because the token exchange and the Gmail send call
+    # are genuinely different real Google hosts (oauth2.googleapis.com vs
+    # gmail.googleapis.com).
+    gmail_token_api_base: str | None = None
+    gmail_api_base: str | None = None
     # CAN-SPAM requires a valid physical postal address in every commercial
     # email's footer -- deliberately empty by default (never a fake-looking
     # placeholder address that could ship to production by accident), set
@@ -147,6 +172,10 @@ class AppConfig(BaseModel):
             "SMTP_PASSWORD": "smtp_password",
             "SMTP_USE_TLS": "smtp_use_tls",
             "SMTP_FROM_ADDRESS": "smtp_from_address",
+            "GMAIL_SERVICE_ACCOUNT_JSON": "gmail_service_account_json",
+            "GMAIL_SENDER_EMAIL": "gmail_sender_email",
+            "GMAIL_TOKEN_API_BASE": "gmail_token_api_base",
+            "GMAIL_API_BASE": "gmail_api_base",
             "MAILING_ADDRESS": "mailing_address",
             "STORAGE_BACKEND": "storage_backend",
             "STORAGE_LOCAL_DIR": "storage_local_dir",

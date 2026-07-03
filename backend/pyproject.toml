@@ -19,6 +19,12 @@ dependencies = [
     "httpx>=0.27",
     "typani",
     "boto3>=1.35",
+    # RS256-signs the JWT Bearer assertion for Gmail's service-account
+    # OAuth2 flow (domain/notifications/mailer.py) -- already present
+    # transitively (via httpx's TLS stack), but relied on directly now,
+    # so it's a real dependency, not an accident of what else happens to
+    # pull it in.
+    "cryptography>=43",
 ]
 
 [project.scripts]
