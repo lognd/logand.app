@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from logand_backend.app.config import AppConfig
 from logand_backend.domain.payments.providers import paypal
+from logand_backend.errors import PaymentProviderError
 
 
 def test_is_configured_false_when_neither_credential_set() -> None:
@@ -63,3 +64,54 @@ def test_capture_from_order_body_uses_capture_status_not_order_status() -> None:
     capture = paypal._capture_from_order_body(body)
 
     assert capture.status == "PENDING"
+
+
+def test_capture_from_order_body_returns_none_when_captures_array_is_empty() -> None:
+    # Regression test for FINDINGS.md M1: a VOIDED/cancelled order can
+    # come back with a purchase_units[0].payments.captures that is present
+    # but empty -- _capture_from_order_body must return None (letting
+    # _get_order turn that into Err(RequestFailed)) rather than raising an
+    # IndexError that would escape get_order_status entirely and abort
+    # the whole reconcile_pending_paypal_captures batch.
+    body = {
+        "id": "FAKE-ORDER-1",
+        "status": "VOIDED",
+        "purchase_units": [
+            {
+                "reference_id": "ref-1",
+                "payments": {"captures": []},
+            }
+        ],
+    }
+
+    assert paypal._capture_from_order_body(body) is None
+
+
+def test_capture_from_order_body_returns_none_when_payments_key_missing() -> None:
+    # Same regression as above, but for an order that never even got a
+    # "payments" key at all (e.g. never captured) -- must not KeyError.
+    body = {
+        "id": "FAKE-ORDER-1",
+        "status": "CREATED",
+        "purchase_units": [{"reference_id": "ref-1"}],
+    }
+
+    assert paypal._capture_from_order_body(body) is None
+
+
+def test_capture_from_order_body_returns_none_when_purchase_units_missing() -> None:
+    body = {"id": "FAKE-ORDER-1", "status": "VOIDED", "purchase_units": []}
+
+    assert paypal._capture_from_order_body(body) is None
+
+
+async def test_get_order_status_not_configured_when_credentials_missing() -> None:
+    # Mirrors get_refund_status's own NotConfigured guard -- neither
+    # function should ever attempt a network call without real
+    # credentials set.
+    cfg = AppConfig(paypal_client_id=None, paypal_client_secret=None)
+
+    result = await paypal.get_order_status(cfg, "FAKE-ORDER-1")
+
+    assert result.is_err
+    assert result.danger_err == PaymentProviderError.NotConfigured

@@ -56,17 +56,32 @@ async def capture_order(order_id: str) -> dict:
     # amount comes from whatever /orders was created with, tracked in
     # _orders above, so a system test can confirm the invoice actually
     # gets marked paid for the right amount rather than a fixed fake one.
-    order = _orders.get(
+    order = _orders.setdefault(
         order_id,
         {
             "reference_id": "unknown",
             "amount": {"currency_code": "USD", "value": "0.00"},
         },
     )
-    capture_id = f"FAKE-CAPTURE-{uuid.uuid4().hex[:12].upper()}"
+    # Once minted, remember this order's capture_id/status so a repeat
+    # capture call (an idempotent retry) and the GET /orders poll below
+    # always echo the SAME capture, matching real PayPal -- rather than
+    # minting a fresh capture_id every call.
+    capture_id = order.get("capture_id") or (
+        f"FAKE-CAPTURE-{uuid.uuid4().hex[:12].upper()}"
+    )
+    # A test can pre-arm the order (via POST /test/orders/{id}/force-status,
+    # below) to make THIS capture come back PENDING rather than the
+    # default COMPLETED, exercising capture_invoice_paypal_payment's "held
+    # for review" branch; the same endpoint can later move an already-
+    # captured order to a terminal status to exercise
+    # reconcile_pending_paypal_captures's poll.
+    status = order.get("force_status", "COMPLETED")
+    order["capture_id"] = capture_id
+    order["capture_status"] = status
     return {
         "id": order_id,
-        "status": "COMPLETED",
+        "status": "COMPLETED" if status == "COMPLETED" else "PENDING",
         "purchase_units": [
             {
                 # Real PayPal echoes reference_id back on the capture
@@ -79,7 +94,7 @@ async def capture_order(order_id: str) -> dict:
                     "captures": [
                         {
                             "id": capture_id,
-                            "status": "COMPLETED",
+                            "status": status,
                             "amount": order["amount"],
                         }
                     ]
@@ -87,6 +102,61 @@ async def capture_order(order_id: str) -> dict:
             }
         ],
     }
+
+
+@app.get("/v2/checkout/orders/{order_id}")
+async def get_order(order_id: str) -> dict:
+    # Backs get_order_status (domain/payments/providers/paypal.py), used
+    # by reconcile_pending_paypal_captures to poll a PENDING capture until
+    # PayPal resolves it. An order never captured, or one this fake server
+    # never saw at all, has no captures entry -- same shape as a real
+    # VOIDED order -- so _capture_from_order_body's defensive handling
+    # (FINDINGS.md M1) can be exercised against a real HTTP response.
+    order = _orders.get(order_id)
+    if order is None or "capture_id" not in order:
+        return {"id": order_id, "status": "CREATED", "purchase_units": [{}]}
+    return {
+        "id": order_id,
+        "status": order["capture_status"],
+        "purchase_units": [
+            {
+                "reference_id": order["reference_id"],
+                "payments": {
+                    "captures": [
+                        {
+                            "id": order["capture_id"],
+                            "status": order["capture_status"],
+                            "amount": order["amount"],
+                        }
+                    ]
+                },
+            }
+        ],
+    }
+
+
+@app.post("/test/orders/{order_id}/force-status")
+async def force_order_status(order_id: str, request: Request) -> dict:
+    """Test-only control endpoint (not part of PayPal's real API) letting
+    system tests dictate what the NEXT capture (or a subsequent GET
+    /orders poll) reports for this order -- e.g. "PENDING" to simulate a
+    capture held for review, then "COMPLETED"/"DECLINED" to simulate the
+    reconciler's later poll resolving it."""
+    body = await request.json()
+    order = _orders.setdefault(
+        order_id,
+        {
+            "reference_id": "unknown",
+            "amount": {"currency_code": "USD", "value": "0.00"},
+        },
+    )
+    order["force_status"] = body["status"]
+    # Also update an already-captured order's polled status, so a test can
+    # arm PENDING at capture time and later move it to COMPLETED/DECLINED
+    # for the reconciler's GET /orders poll without re-capturing.
+    if "capture_id" in order:
+        order["capture_status"] = body["status"]
+    return {"ok": True}
 
 
 @app.post("/v2/payments/captures/{capture_id}/refund")

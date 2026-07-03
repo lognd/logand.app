@@ -1,14 +1,21 @@
 from __future__ import annotations
 
+import argparse
 import threading
 import time
 from collections.abc import Iterator
 from decimal import Decimal
+from unittest.mock import AsyncMock
 
 import pytest
 import uvicorn
 from httpx import AsyncClient
+from sqlalchemy import select
 
+from logand_backend.app.config import AppConfig
+from logand_backend.db.models.invoices import Invoice, Payment
+from logand_backend.domain.invoices import service as invoices_service
+from logand_backend.domain.invoices.service import reconcile_pending_paypal_captures
 from logand_backend.testing.fake_paypal import app as fake_paypal_app
 
 
@@ -382,3 +389,293 @@ async def test_capture_returns_502_when_paypal_request_fails(
         headers=_csrf_headers(db_client),
     )
     assert resp.status_code == 502
+
+
+# -- PENDING captures (FINDINGS.md M2 regression coverage) -----------------
+
+
+async def test_capture_returning_pending_records_payment_but_does_not_settle_invoice(
+    db_client: AsyncClient,
+    make_user,
+    login_as,
+    fake_paypal_server: str,
+    monkeypatch: pytest.MonkeyPatch,
+    db_session,
+) -> None:
+    """A capture PayPal holds for review comes back with capture-level
+    status PENDING, not COMPLETED. The route must record a "pending"
+    Payment (so the money isn't invisible) but must NOT mark the invoice
+    paid or tell the customer "Payment received" -- see L1/M1 in
+    FINDINGS.md. reconcile_pending_paypal_captures is the only thing that
+    later resolves it."""
+    _configure_paypal(monkeypatch, fake_paypal_server)
+    invoice_id, _customer = await _sent_invoice_as_customer(
+        db_client, make_user, login_as, unit_price="25.00"
+    )
+    headers = _csrf_headers(db_client)
+
+    order_resp = await db_client.post(
+        f"/api/invoices/{invoice_id}/pay/paypal", headers=headers
+    )
+    order_id = order_resp.json()["order_id"]
+
+    # The force-status control endpoint lives on the fake PayPal server,
+    # not this app -- hit it directly rather than through db_client (which
+    # is wired to this app's own ASGI app).
+    async with AsyncClient(base_url=fake_paypal_server) as paypal_client:
+        await paypal_client.post(
+            f"/test/orders/{order_id}/force-status", json={"status": "PENDING"}
+        )
+
+    capture_resp = await db_client.post(
+        f"/api/invoices/{invoice_id}/pay/paypal/capture",
+        json={"order_id": order_id},
+        headers=headers,
+    )
+    assert capture_resp.status_code == 200, capture_resp.text
+    assert capture_resp.json() == {"status": "pending"}
+
+    invoice = (
+        await db_session.execute(select(Invoice).where(Invoice.id == invoice_id))
+    ).scalar_one()
+    assert invoice.status == "sent"
+
+    payment = (
+        await db_session.execute(
+            select(Payment).where(
+                Payment.invoice_id == invoice_id, Payment.paypal_order_id == order_id
+            )
+        )
+    ).scalar_one()
+    assert payment.status == "pending"
+    assert payment.amount == Decimal("25.00")
+
+
+async def test_retry_capture_of_a_pending_order_short_circuits_without_duplicate(
+    db_client: AsyncClient,
+    make_user,
+    login_as,
+    fake_paypal_server: str,
+    monkeypatch: pytest.MonkeyPatch,
+    db_session,
+) -> None:
+    """Regression test for FINDINGS.md's "checked and found correct" note:
+    a client retry (e.g. Pay.tsx re-firing capture) against an order that
+    already recorded a pending Payment must short-circuit to
+    {"status": "pending"} rather than attempting a second INSERT and
+    tripping uq_payments_paypal_order_id."""
+    _configure_paypal(monkeypatch, fake_paypal_server)
+    invoice_id, _customer = await _sent_invoice_as_customer(
+        db_client, make_user, login_as, unit_price="25.00"
+    )
+    headers = _csrf_headers(db_client)
+
+    order_resp = await db_client.post(
+        f"/api/invoices/{invoice_id}/pay/paypal", headers=headers
+    )
+    order_id = order_resp.json()["order_id"]
+
+    async with AsyncClient(base_url=fake_paypal_server) as paypal_client:
+        await paypal_client.post(
+            f"/test/orders/{order_id}/force-status", json={"status": "PENDING"}
+        )
+
+    first = await db_client.post(
+        f"/api/invoices/{invoice_id}/pay/paypal/capture",
+        json={"order_id": order_id},
+        headers=headers,
+    )
+    assert first.status_code == 200
+    assert first.json() == {"status": "pending"}
+
+    second = await db_client.post(
+        f"/api/invoices/{invoice_id}/pay/paypal/capture",
+        json={"order_id": order_id},
+        headers=headers,
+    )
+    assert second.status_code == 200
+    assert second.json() == {"status": "pending"}
+
+    payments = (
+        (
+            await db_session.execute(
+                select(Payment).where(
+                    Payment.invoice_id == invoice_id,
+                    Payment.paypal_order_id == order_id,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(payments) == 1
+
+
+async def test_reconcile_settles_a_pending_capture_that_later_completes(
+    db_client: AsyncClient,
+    make_user,
+    login_as,
+    fake_paypal_server: str,
+    monkeypatch: pytest.MonkeyPatch,
+    db_session,
+) -> None:
+    """reconcile_pending_paypal_captures polling PayPal and finding a
+    previously-PENDING capture now COMPLETED must flip the Payment to
+    succeeded, settle the invoice, and notify the customer exactly once."""
+    _configure_paypal(monkeypatch, fake_paypal_server)
+    invoice_id, _customer = await _sent_invoice_as_customer(
+        db_client, make_user, login_as, unit_price="25.00"
+    )
+    headers = _csrf_headers(db_client)
+
+    order_resp = await db_client.post(
+        f"/api/invoices/{invoice_id}/pay/paypal", headers=headers
+    )
+    order_id = order_resp.json()["order_id"]
+
+    async with AsyncClient(base_url=fake_paypal_server) as paypal_client:
+        await paypal_client.post(
+            f"/test/orders/{order_id}/force-status", json={"status": "PENDING"}
+        )
+
+    capture_resp = await db_client.post(
+        f"/api/invoices/{invoice_id}/pay/paypal/capture",
+        json={"order_id": order_id},
+        headers=headers,
+    )
+    assert capture_resp.json() == {"status": "pending"}
+
+    # PayPal later resolves the hold in the customer's favor.
+    async with AsyncClient(base_url=fake_paypal_server) as paypal_client:
+        await paypal_client.post(
+            f"/test/orders/{order_id}/force-status", json={"status": "COMPLETED"}
+        )
+
+    notify_mock = AsyncMock()
+    monkeypatch.setattr(invoices_service, "notify_payment_received", notify_mock)
+    cfg = AppConfig.from_external(argparse.Namespace())
+
+    settled = await reconcile_pending_paypal_captures(db_session, cfg)
+    assert settled == 1
+
+    payment = (
+        await db_session.execute(
+            select(Payment).where(
+                Payment.invoice_id == invoice_id, Payment.paypal_order_id == order_id
+            )
+        )
+    ).scalar_one()
+    assert payment.status == "succeeded"
+
+    invoice = (
+        await db_session.execute(select(Invoice).where(Invoice.id == invoice_id))
+    ).scalar_one()
+    assert invoice.status == "paid"
+
+    notify_mock.assert_awaited_once()
+
+
+async def test_reconcile_marks_a_pending_capture_failed_when_declined(
+    db_client: AsyncClient,
+    make_user,
+    login_as,
+    fake_paypal_server: str,
+    monkeypatch: pytest.MonkeyPatch,
+    db_session,
+) -> None:
+    """A capture PayPal ultimately declines (never actually delivers the
+    money) must mark the Payment "failed", leaving the invoice payable
+    again -- not silently stuck "pending" forever."""
+    _configure_paypal(monkeypatch, fake_paypal_server)
+    invoice_id, _customer = await _sent_invoice_as_customer(
+        db_client, make_user, login_as, unit_price="25.00"
+    )
+    headers = _csrf_headers(db_client)
+
+    order_resp = await db_client.post(
+        f"/api/invoices/{invoice_id}/pay/paypal", headers=headers
+    )
+    order_id = order_resp.json()["order_id"]
+
+    async with AsyncClient(base_url=fake_paypal_server) as paypal_client:
+        await paypal_client.post(
+            f"/test/orders/{order_id}/force-status", json={"status": "PENDING"}
+        )
+
+    capture_resp = await db_client.post(
+        f"/api/invoices/{invoice_id}/pay/paypal/capture",
+        json={"order_id": order_id},
+        headers=headers,
+    )
+    assert capture_resp.json() == {"status": "pending"}
+
+    async with AsyncClient(base_url=fake_paypal_server) as paypal_client:
+        await paypal_client.post(
+            f"/test/orders/{order_id}/force-status", json={"status": "DECLINED"}
+        )
+
+    cfg = AppConfig.from_external(argparse.Namespace())
+    settled = await reconcile_pending_paypal_captures(db_session, cfg)
+    assert settled == 1
+
+    payment = (
+        await db_session.execute(
+            select(Payment).where(
+                Payment.invoice_id == invoice_id, Payment.paypal_order_id == order_id
+            )
+        )
+    ).scalar_one()
+    assert payment.status == "failed"
+
+    invoice = (
+        await db_session.execute(select(Invoice).where(Invoice.id == invoice_id))
+    ).scalar_one()
+    assert invoice.status == "sent"
+
+
+async def test_reconcile_still_pending_is_a_no_op(
+    db_client: AsyncClient,
+    make_user,
+    login_as,
+    fake_paypal_server: str,
+    monkeypatch: pytest.MonkeyPatch,
+    db_session,
+) -> None:
+    """PayPal hasn't resolved the hold yet -- reconcile must leave the
+    Payment "pending" and report zero settled, so it's polled again next
+    run rather than being treated as done."""
+    _configure_paypal(monkeypatch, fake_paypal_server)
+    invoice_id, _customer = await _sent_invoice_as_customer(
+        db_client, make_user, login_as, unit_price="25.00"
+    )
+    headers = _csrf_headers(db_client)
+
+    order_resp = await db_client.post(
+        f"/api/invoices/{invoice_id}/pay/paypal", headers=headers
+    )
+    order_id = order_resp.json()["order_id"]
+
+    async with AsyncClient(base_url=fake_paypal_server) as paypal_client:
+        await paypal_client.post(
+            f"/test/orders/{order_id}/force-status", json={"status": "PENDING"}
+        )
+
+    capture_resp = await db_client.post(
+        f"/api/invoices/{invoice_id}/pay/paypal/capture",
+        json={"order_id": order_id},
+        headers=headers,
+    )
+    assert capture_resp.json() == {"status": "pending"}
+
+    cfg = AppConfig.from_external(argparse.Namespace())
+    settled = await reconcile_pending_paypal_captures(db_session, cfg)
+    assert settled == 0
+
+    payment = (
+        await db_session.execute(
+            select(Payment).where(
+                Payment.invoice_id == invoice_id, Payment.paypal_order_id == order_id
+            )
+        )
+    ).scalar_one()
+    assert payment.status == "pending"
