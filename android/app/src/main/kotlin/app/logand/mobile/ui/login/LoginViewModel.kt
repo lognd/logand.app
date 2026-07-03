@@ -17,12 +17,36 @@ data class LoginUiState(
     val errorMessage: String? = null,
 )
 
-class LoginViewModel(private val apiClient: () -> ApiClient) : ViewModel() {
+class LoginViewModel(
+    private val apiClient: () -> ApiClient,
+    // AppContainer's app-wide "did ANY call just come back 401" signal --
+    // see AppContainer.sessionState's doc comment. Collected below so a
+    // mid-session expiry/revocation (idle timeout, "kill all sessions")
+    // flips THIS ViewModel's `session` -- the one AppNavHost actually
+    // reads to pick LoggedOut/LoggedIn/WrongRole -- instead of only
+    // flipping AppContainer's own copy while the UI keeps rendering
+    // MainTabs as if nothing happened.
+    containerSessionState: StateFlow<SessionState>? = null,
+) : ViewModel() {
     private val _uiState = MutableStateFlow(LoginUiState())
     val uiState: StateFlow<LoginUiState> = _uiState.asStateFlow()
 
     private val _session = MutableStateFlow<SessionState>(SessionState.LoggedOut)
     val session: StateFlow<SessionState> = _session.asStateFlow()
+
+    init {
+        if (containerSessionState != null) {
+            viewModelScope.launch {
+                containerSessionState.collect { containerState ->
+                    if (containerState is SessionState.LoggedOut &&
+                        _session.value !is SessionState.LoggedOut
+                    ) {
+                        _session.value = SessionState.LoggedOut
+                    }
+                }
+            }
+        }
+    }
 
     fun onEmailChange(value: String) {
         _uiState.value = _uiState.value.copy(email = value, errorMessage = null)
@@ -41,7 +65,16 @@ class LoginViewModel(private val apiClient: () -> ApiClient) : ViewModel() {
         _uiState.value = state.copy(isLoading = true, errorMessage = null)
         viewModelScope.launch {
             val client = apiClient()
-            when (val loginResult = client.login(state.email.trim(), state.password)) {
+            // Lowercased, not just trimmed -- the backend's own login
+            // lookup normalizes stored/looked-up emails the same way
+            // (register()/ensure_admin_seeded() both store
+            // email.strip().lower()); sending mixed case here relied on
+            // that normalization existing server-side too, which wasn't
+            // always true. Matching it here means this client never
+            // depends on that backend behavior being correct to log a
+            // real user in.
+            val normalizedEmail = state.email.trim().lowercase()
+            when (val loginResult = client.login(normalizedEmail, state.password)) {
                 is ApiResult.Success -> refreshSessionAfterLogin(client)
                 is ApiResult.HttpError -> fail(loginResult.message)
                 is ApiResult.NetworkError -> fail("Could not reach the server. Check your connection.")
