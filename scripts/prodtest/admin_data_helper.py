@@ -39,3 +39,33 @@ def row_exists(client: ProdHttpClient, table: str, row_id: str) -> bool:
         f"admin_data row lookup failed for {table}/{row_id}: "
         f"{resp.status_code} {resp.text}"
     )
+
+
+def opt_out_of_emails(client: ProdHttpClient, user_id: str) -> None:
+    """Sets emails_opted_out=True on a throwaway prodtest customer, via
+    the same real, audited PATCH route the admin data browser uses.
+
+    Every probe that registers a real customer and then drives it
+    through a route that sends a real notification (invoice send,
+    manual payment, PayPal capture -- anything calling into
+    domain/notifications/notify.py) MUST call this right after
+    registration, before triggering any of those routes. Gmail OAuth2
+    (unlike the SMTP transport it replaced, which silently failed
+    end-to-end in this environment) actually delivers mail now -- a
+    throwaway customer's placeholder @example.invalid address is a
+    real, guaranteed-undeliverable domain, and Google bounces a real
+    "Address not found" mailer-daemon notice back to the sending
+    mailbox for every send attempted at it. Opting the customer out
+    makes notify_invoice_sent/notify_payment_received/etc. no-op before
+    ever reaching mailer.send_email (see notify.py's own
+    `customer.emails_opted_out` check in each notify_* function).
+    """
+    resp = client.patch(
+        f"/api/admin/data/tables/users/rows/{user_id}",
+        json={"changes": {"emails_opted_out": True}},
+    )
+    if resp.status_code != 200:
+        raise RuntimeError(
+            f"admin_data opt-out failed for users/{user_id}: "
+            f"{resp.status_code} {resp.text}"
+        )

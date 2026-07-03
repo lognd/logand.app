@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import uuid
 
-from scripts.prodtest.admin_data_helper import hard_delete_row, row_exists
+from scripts.prodtest.admin_data_helper import (
+    hard_delete_row,
+    opt_out_of_emails,
+    row_exists,
+)
 from scripts.prodtest.admin_session import get_shared_admin_client
 from scripts.prodtest.env import ProdEnv
 from scripts.prodtest.http_client import ProdHttpClient
@@ -45,6 +49,13 @@ class InvoiceLifecycleProbe(Probe):
         cleanup.defer(
             f"hard-delete prodtest invoice customer {test_email}", _delete_customer
         )
+        # test_email's domain (@example.invalid, RFC 2606) is deliberately
+        # non-routable -- /send and /payments/manual below both trigger a
+        # real notification send. Opt this throwaway customer out first,
+        # or Gmail OAuth2 (unlike the SMTP transport this replaced) really
+        # delivers to Google and gets a real mailer-daemon bounce back to
+        # the sending mailbox. See opt_out_of_emails' own doc comment.
+        opt_out_of_emails(admin_client, customer_id)
 
         create = admin_client.post(
             "/api/admin/invoices",
