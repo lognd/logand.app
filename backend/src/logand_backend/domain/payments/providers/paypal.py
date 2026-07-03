@@ -150,7 +150,7 @@ def _capture_from_order_body(body: dict) -> PayPalCapture:
     capture = purchase_unit["payments"]["captures"][0]
     return PayPalCapture(
         order_id=body["id"],
-        status=body["status"],
+        status=capture["status"],
         captured_amount=Decimal(capture["amount"]["value"]),
         captured_currency=capture["amount"]["currency_code"],
         reference_id=purchase_unit.get("reference_id"),
