@@ -25,7 +25,12 @@ from logand_backend.domain.invoices.pdf.renderer import (
     build_invoice_pdf_data,
     render_invoice_pdf,
 )
+from logand_backend.domain.notifications.notify import notify_payment_received
+from logand_backend.domain.payments.providers import paypal
 from logand_backend.errors import InvoiceError
+from logand_backend.logging import get_logger
+
+_log = get_logger(__name__)
 
 # Every method an admin can record BY HAND -- "stripe" is deliberately
 # excluded (that one only ever gets created automatically, from a real
@@ -287,6 +292,107 @@ async def settle_invoice_if_paid(db: AsyncSession, invoice: Invoice) -> bool:
         await db.flush()
         return True
     return False
+
+
+async def reconcile_pending_paypal_captures(db: AsyncSession, cfg: AppConfig) -> int:
+    """Polls PayPal for every Payment row still "pending" (a PayPal
+    capture that came back PENDING at capture time -- e.g. held for
+    review -- see M1 in FINDINGS.md and
+    api/invoices_public.py::capture_invoice_paypal_payment) and settles
+    any that have since resolved. Mirrors
+    domain/invoices/refunds.py::reconcile_pending_paypal_refunds exactly:
+    PayPal delivers no webhook this app subscribes to for capture
+    completion either, so polling is the only way to ever learn the
+    outcome. Run once daily by scripts/scheduler.py, same cadence as the
+    refund reconciler; safe to also run by hand for a manual catch-up.
+
+    Returns the number of payments actually transitioned out of
+    "pending" -- purely for the caller's own logging, not used for
+    control flow.
+    """
+    if not paypal.is_configured(cfg):
+        return 0
+
+    pending_ids = (
+        (
+            await db.execute(
+                select(Payment.id).where(
+                    Payment.method == "paypal",
+                    Payment.status == "pending",
+                    Payment.paypal_order_id.is_not(None),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    settled_count = 0
+    for payment_id in pending_ids:
+        # Re-fetch and lock one row at a time (rather than locking the
+        # whole pending set up front) -- each payment's PayPal round-trip
+        # is independent, and a lock held across a network call for
+        # every row in the batch would serialize this job behind however
+        # slow PayPal's API happens to be that day, for no benefit. Same
+        # reasoning as reconcile_pending_paypal_refunds.
+        payment = (
+            await db.execute(
+                select(Payment).where(Payment.id == payment_id).with_for_update()
+            )
+        ).scalar_one_or_none()
+        if (
+            payment is None
+            or payment.status != "pending"
+            or payment.paypal_order_id is None
+        ):
+            continue
+
+        result = await paypal.get_order_status(cfg, payment.paypal_order_id)
+        if result.is_err:
+            _log.warning(
+                "paypal capture reconciliation: status check failed",
+                extra={"payment_id": str(payment.id)},
+            )
+            await db.commit()
+            continue
+
+        capture = result.danger_ok
+        if capture.status == "PENDING":
+            await db.commit()
+            continue
+        if capture.status != "COMPLETED":
+            # Terminal non-success (DECLINED, VOIDED, ...) -- money never
+            # arrived after all; mark the Payment failed so it stops
+            # being polled and the invoice is left payable again.
+            payment.status = "failed"
+            await db.flush()
+            await db.commit()
+            settled_count += 1
+            continue
+
+        payment.status = "succeeded"
+        await db.flush()
+
+        invoice = (
+            await db.execute(
+                select(Invoice)
+                .where(Invoice.id == payment.invoice_id)
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+        if invoice is not None:
+            await settle_invoice_if_paid(db, invoice)
+            # Release the invoice/payment row locks before the
+            # notification email send -- same early-commit-before-
+            # external-I/O pattern used by the capture route itself and
+            # by reconcile_pending_paypal_refunds's own doc comment.
+            await db.commit()
+            await notify_payment_received(db, cfg, invoice, payment.amount)
+        else:
+            await db.commit()
+        settled_count += 1
+
+    return settled_count
 
 
 async def generate_invoice_pdf(

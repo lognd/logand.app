@@ -227,6 +227,28 @@ async def capture_order(
         return Ok(_capture_from_order_body(resp.json()))
 
 
+async def get_order_status(
+    cfg: AppConfig, order_id: str
+) -> Result[PayPalCapture, PaymentProviderError]:
+    """Polls a single order's current capture status -- used by
+    domain/invoices/service.py::reconcile_pending_paypal_captures to settle
+    a Payment recorded "pending" (capture_order above can return PENDING
+    for some funding sources, e.g. held for review) once PayPal resolves
+    it one way or the other. Mirrors get_refund_status below: PayPal
+    delivers no webhook this app subscribes to for capture completion
+    either, so polling is the only way to ever learn the outcome.
+    """
+    if not is_configured(cfg):
+        return Err(PaymentProviderError.NotConfigured)
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        token_result = await _get_access_token(client, cfg)
+        if token_result.is_err:
+            return Err(token_result.danger_err)
+        token = token_result.danger_ok
+        return await _get_order(client, cfg, token, order_id)
+
+
 async def refund_capture(
     cfg: AppConfig,
     capture_id: str,

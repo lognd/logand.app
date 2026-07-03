@@ -271,17 +271,24 @@ async def capture_invoice_paypal_payment(
     # would 409 a customer who genuinely paid. Check for an existing
     # succeeded Payment for this order_id BEFORE that guard and short-
     # circuit to the same success response instead.
+    # Look up any Payment already recorded for this order_id regardless of
+    # status -- a retry (client re-firing capture after a lost response,
+    # or after a previous call recorded a "pending" capture -- see M1 in
+    # FINDINGS.md) must short-circuit to the SAME response instead of
+    # re-inserting a second row, which would violate
+    # uq_payments_paypal_order_id.
     existing_payment = (
         await db.execute(
             select(Payment).where(
                 Payment.invoice_id == invoice.id,
                 Payment.paypal_order_id == body.order_id,
-                Payment.status == "succeeded",
             )
         )
     ).scalar_one_or_none()
-    if existing_payment is not None:
+    if existing_payment is not None and existing_payment.status == "succeeded":
         return {"status": "captured"}
+    if existing_payment is not None and existing_payment.status == "pending":
+        return {"status": "pending"}
     if invoice.status not in ("sent", "overdue"):
         raise HTTPException(
             status_code=409, detail="invoice is not payable in its current state"
@@ -303,17 +310,21 @@ async def capture_invoice_paypal_payment(
     # different currency than the invoice: reference_id is PayPal's own
     # echo of the reference_id this app set on create_order (the invoice
     # id) -- a mismatch means the order_id in the request body wasn't the
-    # one this invoice's own pay flow created. status must be COMPLETED
-    # (a capture can come back PENDING, e.g. held for review) -- anything
-    # else is not actually money received yet. currency is compared
-    # because paid_so_far below sums raw Decimal amounts across payments
-    # with no currency conversion; a capture in the wrong currency would
-    # silently count as if it were the invoice's own currency.
+    # one this invoice's own pay flow created. status must be COMPLETED or
+    # PENDING -- anything else (DECLINED, VOIDED, ...) is not money
+    # received and never will be, so it's rejected outright. PENDING (a
+    # capture held for review) IS money PayPal has already acted on --
+    # see M1 in FINDINGS.md: discarding it here with no record would
+    # strand real captured funds with no way to reconcile once PayPal
+    # later settles it. currency is compared because paid_so_far below
+    # sums raw Decimal amounts across payments with no currency
+    # conversion; a capture in the wrong currency would silently count as
+    # if it were the invoice's own currency.
     if capture.reference_id != str(invoice.id):
         raise HTTPException(
             status_code=409, detail="PayPal order does not belong to this invoice"
         )
-    if capture.status != "COMPLETED":
+    if capture.status not in ("COMPLETED", "PENDING"):
         raise HTTPException(
             status_code=409,
             detail=f"PayPal capture not completed (status={capture.status})",
@@ -322,6 +333,40 @@ async def capture_invoice_paypal_payment(
         raise HTTPException(
             status_code=409, detail="PayPal capture currency does not match invoice"
         )
+
+    if capture.status == "PENDING":
+        # Record the money in the ledger now -- do NOT call
+        # settle_invoice_if_paid (a "pending" Payment contributes nothing
+        # to get_paid_so_far, see domain/invoices/service.py) and do NOT
+        # notify the customer of a completed payment yet.
+        # reconcile_pending_paypal_captures (domain/invoices/service.py,
+        # run daily from scripts/scheduler.py, mirrors
+        # reconcile_pending_paypal_refunds) polls PayPal until this
+        # settles one way or the other.
+        db.add(
+            Payment(
+                invoice_id=invoice.id,
+                method="paypal",
+                paypal_order_id=capture.order_id,
+                paypal_capture_id=capture.capture_id,
+                amount=capture.captured_amount,
+                status="pending",
+            )
+        )
+        await db.flush()
+        _log.warning(
+            "paypal capture pending (e.g. held for review); recorded as "
+            "pending, not yet settled -- awaiting reconciliation",
+            extra={
+                "invoice_id": str(invoice.id),
+                "order_id": capture.order_id,
+                "capture_id": capture.capture_id,
+                "captured_amount": str(capture.captured_amount),
+            },
+        )
+        await db.commit()
+        return {"status": "pending"}
+
     # create_order sets `value` to the outstanding remainder (amount_total
     # minus payments already recorded) at order-creation time. By the time
     # capture happens, that remainder can have changed (e.g. a manual

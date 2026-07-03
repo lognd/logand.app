@@ -7,6 +7,7 @@ from datetime import datetime, time, timedelta, timezone
 from logand_backend.app.config import AppConfig
 from logand_backend.db import base as db_base
 from logand_backend.domain.invoices.refunds import reconcile_pending_paypal_refunds
+from logand_backend.domain.invoices.service import reconcile_pending_paypal_captures
 from logand_backend.logging.logger import get_logger, log_dir
 from logand_backend.logging.retention import prune_logs
 from logand_backend.scripts.generate_recurring_invoices import run
@@ -77,6 +78,27 @@ async def main_loop() -> None:
                 await db_base.dispose_engine()
         except Exception:
             log.exception("paypal refund reconciliation run failed")
+
+        # Independent DB session, same pattern as the refund reconciler
+        # just above -- polls any PayPal capture still "pending" for
+        # real settlement (see M1 in FINDINGS.md: PayPal delivers no
+        # webhook this app subscribes to for capture completion either).
+        try:
+            cfg = AppConfig.from_external(argparse.Namespace())
+            db_base.init_engine(cfg.database_url)
+            session = db_base.get_session()
+            try:
+                settled = await reconcile_pending_paypal_captures(session, cfg)
+                if settled:
+                    log.info(
+                        "paypal capture reconciliation: settled %d payment(s)",
+                        settled,
+                    )
+            finally:
+                await session.close()
+                await db_base.dispose_engine()
+        except Exception:
+            log.exception("paypal capture reconciliation run failed")
 
         # Same daily cadence as the recurring-invoice job above -- log
         # rotation/pruning needs to run somewhere on a schedule, and this
