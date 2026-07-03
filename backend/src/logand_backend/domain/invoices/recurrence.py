@@ -61,12 +61,19 @@ async def generate_due_recurring_invoices(db: AsyncSession, as_of: date) -> list
     """
     due = (
         await db.execute(
-            select(Invoice).where(
+            select(Invoice)
+            .where(
                 Invoice.is_recurring.is_(True),
                 Invoice.status.in_(_ACTIVE_RECURRING_STATUSES),
                 Invoice.due_date.is_not(None),
                 Invoice.due_date <= as_of,
             )
+            # skip_locked so overlapping runs (scheduled + manual catch-up,
+            # per this job's docstring) each claim disjoint sets of due
+            # parents instead of both reading the same row before either
+            # flips is_recurring off -- without this, two concurrent runs
+            # can both generate a draft child for the same billing cycle.
+            .with_for_update(skip_locked=True)
         )
     ).scalars()
 
