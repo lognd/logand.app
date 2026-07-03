@@ -277,6 +277,7 @@ async def refund_payment(
 
     return await _record_refund(
         db,
+        cfg=cfg,
         refund_id=refund_id,
         invoice_id=invoice_id,
         payment_id=payment.id,
@@ -292,6 +293,7 @@ async def refund_payment(
 async def _record_refund(
     db: AsyncSession,
     *,
+    cfg: AppConfig,
     refund_id: UUID,
     invoice_id: UUID,
     payment_id: UUID,
@@ -434,6 +436,19 @@ async def _record_refund(
                 await db.flush()
 
     await db.commit()
+
+    # A refund the provider reports "succeeded" synchronously (the common
+    # Stripe case) needs to notify the CUSTOMER here -- apply_refund_
+    # settlement only covers the async path (a "pending" refund settling
+    # later, e.g. via webhook or PayPal reconciliation) and is never
+    # reached when the provider already resolved it inline. Without this,
+    # a synchronously-settled refund silently emails no one while an
+    # identical refund that happens to settle asynchronously does (see
+    # FINDINGS.md L2). apply_refund_settlement only fires on a transition
+    # OUT of "pending", so there is no risk of double-sending here.
+    if status == "succeeded" and invoice is not None:
+        await notify_refund_settled(db, cfg, invoice, amount)
+
     return Ok(refund_id)
 
 
