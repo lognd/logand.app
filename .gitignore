@@ -46,6 +46,10 @@ android/.cxx/
 .frob/
 FROBLEMS.md
 
+# Scratch audit findings -- regenerated per audit-fix pass, not a
+# tracked deliverable.
+FINDINGS.md
+
 # Local storage backend (STORAGE_BACKEND=local, the default) -- real
 # uploaded evidence/receipts/documents, never committed.
 backend/data/
