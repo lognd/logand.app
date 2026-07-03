@@ -24,6 +24,7 @@ from logand_backend.domain.invoices.service import (
     settle_invoice_if_paid,
 )
 from logand_backend.domain.notifications.notify import notify_payment_received
+from logand_backend.domain.payments.currency import to_minor_units
 from logand_backend.domain.payments.providers import paypal
 from logand_backend.domain.storage.factory import get_storage_backend
 from logand_backend.logging import get_logger
@@ -392,7 +393,7 @@ async def pay_invoice(
 
     intent = await asyncio.to_thread(
         stripe.PaymentIntent.create,
-        amount=int(invoice.amount_total * 100),
+        amount=to_minor_units(invoice.amount_total, invoice.currency),
         currency=invoice.currency,
         metadata={"invoice_id": str(invoice.id)},
     )
