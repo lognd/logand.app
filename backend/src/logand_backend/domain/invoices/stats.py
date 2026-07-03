@@ -43,12 +43,15 @@ class InvoiceStats(BaseModel):
     model_config = {"frozen": True}
 
     by_status: dict[str, InvoiceStatusBreakdown]
-    # Sum of every succeeded Payment.amount, all time -- gross money that
-    # has actually moved through this system, before refunds.
+    # Sum of every succeeded/refunded/partially_refunded Payment.amount,
+    # all time -- gross money that has actually moved through this
+    # system, before refunds and disputes. Matches by_payment_method.
     total_collected: Decimal
     # Sum of every succeeded Refund.amount, all time.
     total_refunded: Decimal
-    # total_collected - total_refunded -- what the business actually kept.
+    # total_collected - total_refunded - the still-outstanding (i.e. not
+    # already reflected in total_refunded) portion of lost-dispute
+    # clawbacks -- what the business actually kept.
     net_collected: Decimal
     # Sum of amount_total for every unpaid-but-payable invoice (sent or
     # overdue) -- money owed but not yet in hand.
@@ -100,6 +103,54 @@ async def get_invoice_stats(db: AsyncSession) -> InvoiceStats:
             )
         )
     ).scalar_one()
+    # A dispute Stripe resolved "lost" means the funds were clawed back --
+    # the Payment row stays "succeeded" (that's still an accurate record
+    # of what happened at charge time; see api/webhooks.py's
+    # _handle_dispute_event doc comment for why dispute status is tracked
+    # separately from payment status), but counting it in net_collected
+    # would overstate revenue by money Stripe already took back.
+    #
+    # Only count payments that are actually in the "collected" population
+    # (succeeded/refunded/partially_refunded) -- a lost dispute on a
+    # payment in some other status never contributed to total_collected
+    # in the first place. And only count the portion of each payment's
+    # amount that ISN'T already covered by a succeeded Refund, since that
+    # portion is already subtracted once via total_refunded -- otherwise
+    # a payment that is both refunded and dispute-"lost" would be
+    # subtracted twice.
+    refunded_by_payment = (
+        select(
+            Refund.payment_id.label("payment_id"),
+            func.sum(Refund.amount).label("refunded"),
+        )
+        .where(Refund.status == "succeeded")
+        .group_by(Refund.payment_id)
+        .subquery()
+    )
+    lost_dispute_amount = (
+        await db.execute(
+            select(
+                func.coalesce(
+                    func.sum(
+                        Payment.amount
+                        - func.coalesce(refunded_by_payment.c.refunded, 0)
+                    ),
+                    0,
+                )
+            )
+            .select_from(Payment)
+            .outerjoin(
+                refunded_by_payment,
+                refunded_by_payment.c.payment_id == Payment.id,
+            )
+            .where(
+                Payment.dispute_status == "lost",
+                Payment.status.in_(
+                    ("succeeded", "refunded", "partially_refunded")
+                ),
+            )
+        )
+    ).scalar_one()
 
     outstanding = (
         await db.execute(
@@ -145,11 +196,15 @@ async def get_invoice_stats(db: AsyncSession) -> InvoiceStats:
         dispute_counts.get(status, 0) for status in _OPEN_DISPUTE_STATUSES
     )
 
+    gross_total_collected = Decimal(total_collected)
+    net_collected = (
+        gross_total_collected - Decimal(total_refunded) - Decimal(lost_dispute_amount)
+    )
     return InvoiceStats(
         by_status=by_status,
-        total_collected=Decimal(total_collected),
+        total_collected=gross_total_collected,
         total_refunded=Decimal(total_refunded),
-        net_collected=Decimal(total_collected) - Decimal(total_refunded),
+        net_collected=net_collected,
         outstanding=Decimal(outstanding),
         by_payment_method=by_payment_method,
         open_disputes=open_disputes,
