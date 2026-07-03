@@ -62,6 +62,62 @@ async def test_capture_receipt_with_full_metadata(
     assert receipt["note"] == "lumber"
 
 
+async def test_capture_receipt_rejects_oversized_upload(
+    db_client: AsyncClient, make_user, login_as, monkeypatch
+) -> None:
+    """FINDINGS.md M1: the route-level wiring of read_upload_capped's 413
+    branch had zero test coverage. Monkeypatch the shared cap down to a
+    couple hundred bytes rather than building a real 25MB payload -- the
+    default is bound at function-definition time, so patching the
+    module-level constant alone would not affect an already-compiled
+    default argument; patching read_upload_capped.__defaults__ directly
+    (request default, max_bytes default) is what actually takes effect on
+    the next call. 200 bytes comfortably covers the small multipart
+    envelope overhead (boundary/headers) around a tiny file body, so the
+    file's own content is what pushes it over.
+    """
+    from logand_backend.api._uploads import read_upload_capped
+
+    monkeypatch.setattr(read_upload_capped, "__defaults__", (None, 200))
+
+    admin = await make_user(role="admin", password="pw")
+    await login_as(db_client, admin.email, "pw")
+    headers = _csrf_headers(db_client)
+
+    resp = await db_client.post(
+        "/api/admin/receipts",
+        files={"file": ("receipt.jpg", b"x" * 300, "image/jpeg")},
+        headers=headers,
+    )
+    assert resp.status_code == 413, resp.text
+    assert "size limit" in resp.json()["detail"]
+
+
+async def test_capture_receipt_accepts_upload_at_the_cap_boundary(
+    db_client: AsyncClient, make_user, login_as, monkeypatch
+) -> None:
+    """Counterpart to the oversized-upload test above -- a payload
+    comfortably under the cap must still succeed end-to-end (route wiring
+    + Content-Length precheck + chunked read), so a future regression that
+    trips the cap on every upload (not just oversized ones) would fail
+    this test. The precise off-by-one boundary on the byte count itself is
+    covered at the unit level in tests/unit/test_uploads.py."""
+    from logand_backend.api._uploads import read_upload_capped
+
+    monkeypatch.setattr(read_upload_capped, "__defaults__", (None, 200))
+
+    admin = await make_user(role="admin", password="pw")
+    await login_as(db_client, admin.email, "pw")
+    headers = _csrf_headers(db_client)
+
+    resp = await db_client.post(
+        "/api/admin/receipts",
+        files={"file": ("receipt.jpg", b"8bytes!!", "image/jpeg")},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+
+
 async def test_capture_receipt_rejects_unsupported_content_type(
     db_client: AsyncClient, make_user, login_as
 ) -> None:

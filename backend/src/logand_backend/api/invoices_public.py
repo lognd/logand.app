@@ -5,7 +5,7 @@ import asyncio
 from uuid import UUID, uuid4
 
 import stripe
-from fastapi import APIRouter, Depends, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -142,6 +142,7 @@ _PROOF_CONTENT_TYPES = {"image/png", "image/jpeg", "image/webp", "application/pd
 
 @router.post("/{invoice_id}/payment-proof")
 async def upload_payment_proof(
+    request: Request,
     invoice_id: UUID,
     file: UploadFile,
     customer: SessionInfo = Depends(require_customer),
@@ -158,7 +159,7 @@ async def upload_payment_proof(
         raise HTTPException(
             status_code=415, detail="payment proof must be an image or PDF"
         )
-    contents = await read_upload_capped(file)
+    contents = await read_upload_capped(file, request)
     file_path = f"payment-proofs/{invoice_id}/{uuid4()}-{file.filename}"
     result = await attach_payment_proof(
         db, invoice_id, customer.user_id, contents, file_path, file.content_type

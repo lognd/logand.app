@@ -5,7 +5,7 @@ from datetime import date
 from decimal import Decimal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
 from fastapi.responses import RedirectResponse, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -46,6 +46,7 @@ def _receipt_summary(receipt: Receipt) -> dict:
 
 @router.post("")
 async def create(
+    request: Request,
     file: UploadFile,
     vendor: str | None = None,
     amount: Decimal | None = None,
@@ -64,7 +65,7 @@ async def create(
     """
     if file.content_type not in _ALLOWED_CONTENT_TYPES:
         raise HTTPException(status_code=415, detail="receipt must be a PDF or image")
-    contents = await read_upload_capped(file)
+    contents = await read_upload_capped(file, request)
     if not contents:
         raise HTTPException(status_code=422, detail="uploaded file is empty")
 

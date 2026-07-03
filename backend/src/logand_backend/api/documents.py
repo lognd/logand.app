@@ -4,7 +4,7 @@ import argparse
 from typing import Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile
 from fastapi.responses import RedirectResponse, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -58,6 +58,7 @@ def _document_summary(document: Document) -> dict:
 
 @router.post("")
 async def create(
+    request: Request,
     file: UploadFile,
     title: str,
     category: DocumentCategory,
@@ -74,7 +75,7 @@ async def create(
 ) -> dict[str, str]:
     if file.content_type not in _ALLOWED_CONTENT_TYPES:
         raise HTTPException(status_code=415, detail="unsupported file type")
-    contents = await read_upload_capped(file)
+    contents = await read_upload_capped(file, request)
     if not contents:
         raise HTTPException(status_code=422, detail="uploaded file is empty")
 

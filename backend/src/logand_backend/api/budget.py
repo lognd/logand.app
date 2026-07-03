@@ -7,7 +7,7 @@ from datetime import date
 from decimal import Decimal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -42,6 +42,7 @@ async def create(
 
 @router.post("/{entry_id}/evidence")
 async def upload_evidence(
+    request: Request,
     entry_id: UUID,
     file: UploadFile,
     _admin: SessionInfo = Depends(require_admin),
@@ -49,7 +50,7 @@ async def upload_evidence(
 ) -> dict[str, str]:
     if file.content_type not in {"application/pdf", "image/png", "image/jpeg"}:
         raise HTTPException(status_code=415, detail="evidence must be a PDF or image")
-    contents = await read_upload_capped(file)
+    contents = await read_upload_capped(file, request)
     file_path = f"budget-evidence/{entry_id}/{file.filename}"
     result = await attach_evidence(db, entry_id, contents, file_path=file_path)
     if result.is_err:
