@@ -42,7 +42,10 @@ class AdminAuditLog(Base):
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
     # e.g. "user.deactivate", "user.reactivate", "user.reset_password",
-    # "data.update", "data.insert", "data.delete", "data.revert".
+    # "data.update", "data.update.noop" (see admin_data/service.py's
+    # update_row -- a no-op edit still gets a distinct, tagged entry
+    # rather than an indistinguishable-from-real "data.update"),
+    # "data.insert", "data.delete", "data.revert".
     action: Mapped[str] = mapped_column(Text, nullable=False)
     target_table: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Stringified -- primary keys vary in type across tables (UUID here,
