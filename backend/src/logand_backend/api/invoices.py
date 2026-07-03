@@ -79,6 +79,13 @@ async def send(
         raise to_http_exception(result.danger_err)
     invoice = await db.get(Invoice, invoice_id)
     if invoice is not None:
+        # Release the invoice row lock (taken inside send_invoice) before
+        # the SMTP/Gmail send, same reasoning as invoices_public.py's
+        # capture path: expire_on_commit=False keeps invoice.* readable
+        # after commit, so this doesn't cost us anything but avoids
+        # blocking concurrent payment/webhook processing on this row for
+        # the duration of the notification send.
+        await db.commit()
         cfg = AppConfig.from_external(argparse.Namespace())
         await notify_invoice_sent(db, cfg, invoice)
     return {"status": "sent"}
@@ -216,6 +223,11 @@ async def record_manual_invoice_payment(
         raise to_http_exception(result.danger_err)
     invoice = await db.get(Invoice, invoice_id)
     if invoice is not None:
+        # Release the invoice row lock (taken inside record_manual_payment)
+        # before the notification send -- mirrors invoices_public.py's
+        # capture path so a slow SMTP/Gmail send doesn't block a
+        # concurrent customer self-serve payment or webhook on this row.
+        await db.commit()
         cfg = AppConfig.from_external(argparse.Namespace())
         await notify_payment_received(db, cfg, invoice, payment.amount)
     return {"id": str(result.danger_ok)}
