@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from decimal import Decimal
-from uuid import UUID, uuid4
+from uuid import UUID
 
 import stripe
 from pydantic import BaseModel
@@ -58,13 +58,16 @@ class RefundInput(BaseModel):
     # refund_payment tell "the admin clicked refund a second time because
     # the first click's response never arrived" apart from "the admin
     # deliberately wants a second, distinct refund on this payment" --
-    # both look identical from the server's side otherwise. When given,
-    # it becomes the Refund row's own id (and the provider idempotency
-    # key), so a retry with the same value is recognized before any
-    # second provider call is made. When omitted, this call gets no
-    # retry-safety: a fresh id is minted and a retry is indistinguishable
-    # from a new refund (see H1 in FINDINGS.md history).
-    client_request_id: UUID | None = None
+    # both look identical from the server's side otherwise. It becomes
+    # the Refund row's own id (and the provider idempotency key), so a
+    # retry with the same value is recognized before any second provider
+    # call is made. REQUIRED (not optional): an omitted value used to
+    # mint a fresh id per call, which meant two concurrent calls for the
+    # same payment could both pass the balance check and both reach the
+    # provider with different idempotency keys, issuing two real refunds
+    # for one payment (see M1 in FINDINGS.md history). Every caller must
+    # generate one per logical action.
+    client_request_id: UUID
 
 
 def _configure_stripe(cfg: AppConfig) -> None:
@@ -147,43 +150,40 @@ async def refund_payment(
     provider rejecting a refund that exceeds the charge's unrefunded
     balance (see FINDINGS.md L2).
     """
-    if refund.client_request_id is not None:
-        existing = (
-            await db.execute(
-                select(Refund).where(Refund.id == refund.client_request_id)
-            )
-        ).scalar_one_or_none()
-        if existing is not None:
-            if (
-                existing.payment_id != refund.payment_id
-                or existing.invoice_id != invoice_id
-            ):
-                # The same client_request_id was reused for a DIFFERENT
-                # payment/invoice than the one it was originally recorded
-                # against -- a client bug (id reuse across distinct
-                # actions), not a genuine retry. Returning the mismatched
-                # existing.id here would silently report success for the
-                # wrong refund; refuse instead of guessing.
-                return Err(RefundError.PaymentNotFound)
-            if existing.status == "failed":
-                # The original attempt under this id recorded a FAILED
-                # refund -- no money moved. Returning Ok(existing.id)
-                # here (as a genuine retry normally does) would report
-                # success for a refund that never happened. This is not
-                # a satisfied retry; refuse it distinctly so the caller
-                # can surface that no money was refunded and, if they
-                # want to try again, must do so under a new
-                # client_request_id (M3).
-                return Err(RefundError.PriorAttemptFailed)
-            # Retry of an action already recorded (the provider call, if
-            # any, already happened under this same id) -- return the
-            # prior outcome rather than evaluating/calling anything
-            # again. This is the actual fix for H1: unlike a server-
-            # generated uuid4() per invocation, this id is stable across
-            # retries of the SAME logical action, so it is found here
-            # instead of silently sailing through to a second provider
-            # call.
-            return Ok(existing.id)
+    existing = (
+        await db.execute(select(Refund).where(Refund.id == refund.client_request_id))
+    ).scalar_one_or_none()
+    if existing is not None:
+        if (
+            existing.payment_id != refund.payment_id
+            or existing.invoice_id != invoice_id
+        ):
+            # The same client_request_id was reused for a DIFFERENT
+            # payment/invoice than the one it was originally recorded
+            # against -- a client bug (id reuse across distinct
+            # actions), not a genuine retry. Returning the mismatched
+            # existing.id here would silently report success for the
+            # wrong refund; refuse instead of guessing.
+            return Err(RefundError.PaymentNotFound)
+        if existing.status == "failed":
+            # The original attempt under this id recorded a FAILED
+            # refund -- no money moved. Returning Ok(existing.id)
+            # here (as a genuine retry normally does) would report
+            # success for a refund that never happened. This is not
+            # a satisfied retry; refuse it distinctly so the caller
+            # can surface that no money was refunded and, if they
+            # want to try again, must do so under a new
+            # client_request_id (M3).
+            return Err(RefundError.PriorAttemptFailed)
+        # Retry of an action already recorded (the provider call, if
+        # any, already happened under this same id) -- return the
+        # prior outcome rather than evaluating/calling anything
+        # again. This is the actual fix for H1: unlike a server-
+        # generated uuid4() per invocation, this id is stable across
+        # retries of the SAME logical action, so it is found here
+        # instead of silently sailing through to a second provider
+        # call.
+        return Ok(existing.id)
 
     invoice = await lock_invoice_for_update(db, invoice_id)
     if invoice is None or invoice.deleted_at is not None:
@@ -222,18 +222,16 @@ async def refund_payment(
     is_paypal = payment.method == "paypal" and payment.paypal_capture_id
 
     # The Refund row's id, and the provider idempotency key derived from
-    # it. When the caller supplied client_request_id, this IS that id --
-    # stable across a retry of the same logical action (the lookup above
-    # already short-circuited a retry that arrives after the row exists;
-    # this covers a retry that arrives WHILE the original call is still
-    # in flight, or after the provider call succeeded but before
+    # it. This IS the caller-supplied client_request_id -- stable across
+    # a retry of the same logical action (the lookup above already
+    # short-circuited a retry that arrives after the row exists; this
+    # covers a retry that arrives WHILE the original call is still in
+    # flight, or after the provider call succeeded but before
     # _record_refund committed -- the retry reaches the provider with the
     # same idempotency key and gets back the original refund rather than
-    # creating a second one). Without a client_request_id there is no
-    # cross-request retry safety: a fresh id is minted per call.
-    refund_id = (
-        refund.client_request_id if refund.client_request_id is not None else uuid4()
-    )
+    # creating a second one). client_request_id is required precisely so
+    # this cross-request retry/concurrency safety always applies (M1).
+    refund_id = refund.client_request_id
     idempotency_key = None
     if is_stripe or is_paypal:
         idempotency_key = f"refund:{refund_id}"

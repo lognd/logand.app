@@ -65,7 +65,11 @@ async def test_full_refund_of_manual_payment_is_pure_bookkeeping(
         cfg,
         invoice_id,
         admin.id,
-        RefundInput(payment_id=payment_id, reason="customer cancelled"),
+        RefundInput(
+            payment_id=payment_id,
+            reason="customer cancelled",
+            client_request_id=uuid4(),
+        ),
     )
     assert result.is_ok
 
@@ -106,7 +110,11 @@ async def test_synchronously_settled_refund_notifies_customer(
         cfg,
         invoice_id,
         admin.id,
-        RefundInput(payment_id=payment_id, reason="customer cancelled"),
+        RefundInput(
+            payment_id=payment_id,
+            reason="customer cancelled",
+            client_request_id=uuid4(),
+        ),
     )
     assert result.is_ok
 
@@ -131,7 +139,9 @@ async def test_partial_refund_leaves_payment_and_invoice_partially_refunded(
         cfg,
         invoice_id,
         admin.id,
-        RefundInput(payment_id=payment_id, amount=Decimal("40.00")),
+        RefundInput(
+            payment_id=payment_id, amount=Decimal("40.00"), client_request_id=uuid4()
+        ),
     )
     assert result.is_ok
 
@@ -160,7 +170,9 @@ async def test_two_partial_refunds_compose_to_a_full_refund(
         cfg,
         invoice_id,
         admin.id,
-        RefundInput(payment_id=payment_id, amount=Decimal("40.00")),
+        RefundInput(
+            payment_id=payment_id, amount=Decimal("40.00"), client_request_id=uuid4()
+        ),
     )
     assert first.is_ok
     second = await refund_payment(
@@ -168,7 +180,9 @@ async def test_two_partial_refunds_compose_to_a_full_refund(
         cfg,
         invoice_id,
         admin.id,
-        RefundInput(payment_id=payment_id, amount=Decimal("60.00")),
+        RefundInput(
+            payment_id=payment_id, amount=Decimal("60.00"), client_request_id=uuid4()
+        ),
     )
     assert second.is_ok
 
@@ -193,14 +207,18 @@ async def test_refund_exceeding_remaining_balance_is_rejected(
         cfg,
         invoice_id,
         admin.id,
-        RefundInput(payment_id=payment_id, amount=Decimal("60.00")),
+        RefundInput(
+            payment_id=payment_id, amount=Decimal("60.00"), client_request_id=uuid4()
+        ),
     )
     result = await refund_payment(
         db_session,
         cfg,
         invoice_id,
         admin.id,
-        RefundInput(payment_id=payment_id, amount=Decimal("60.00")),
+        RefundInput(
+            payment_id=payment_id, amount=Decimal("60.00"), client_request_id=uuid4()
+        ),
     )
 
     assert result.is_err
@@ -220,7 +238,7 @@ async def test_refund_of_unknown_payment_is_rejected(db_session, make_user) -> N
         cfg,
         invoice_id,
         admin.id,
-        RefundInput(payment_id=uuid4()),
+        RefundInput(payment_id=uuid4(), client_request_id=uuid4()),
     )
 
     assert result.is_err
@@ -240,7 +258,9 @@ async def test_zero_amount_refund_is_rejected(db_session, make_user) -> None:
         cfg,
         invoice_id,
         admin.id,
-        RefundInput(payment_id=payment_id, amount=Decimal("0.00")),
+        RefundInput(
+            payment_id=payment_id, amount=Decimal("0.00"), client_request_id=uuid4()
+        ),
     )
 
     assert result.is_err

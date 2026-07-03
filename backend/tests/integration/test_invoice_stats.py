@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from decimal import Decimal
+from uuid import uuid4
 
 from logand_backend.app.config import AppConfig
 from logand_backend.domain.invoices.refunds import RefundInput, refund_payment
@@ -49,7 +50,9 @@ async def test_invoice_stats_breaks_down_status_payments_and_refunds(
         cfg,
         paid_id,
         admin.id,
-        RefundInput(payment_id=payment_id, amount=Decimal("30.00")),
+        RefundInput(
+            payment_id=payment_id, amount=Decimal("30.00"), client_request_id=uuid4()
+        ),
     )
 
     # An outstanding sent invoice.
