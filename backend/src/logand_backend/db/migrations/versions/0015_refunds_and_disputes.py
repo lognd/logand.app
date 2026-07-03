@@ -134,6 +134,15 @@ def downgrade() -> None:
     )
     op.drop_constraint("ck_payments_dispute_status", "payments", type_="check")
     op.drop_constraint("ck_payments_status", "payments", type_="check")
+    # Normalize any 'partially_refunded' rows before recreating the CHECK
+    # without that value -- Postgres validates the new constraint against
+    # every existing row, and a live 'partially_refunded' payment would
+    # otherwise abort the downgrade outright (L2). 'refunded' is the
+    # closest pre-0015 status: some money was returned, and pre-0015
+    # there was no partial-refund tracking to preserve anyway.
+    op.execute(
+        "UPDATE payments SET status = 'refunded' WHERE status = 'partially_refunded'"
+    )
     op.create_check_constraint(
         "ck_payments_status",
         "payments",
