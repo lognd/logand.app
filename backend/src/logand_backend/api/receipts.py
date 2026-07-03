@@ -78,6 +78,7 @@ async def create(
         db,
         contents,
         file_path="",
+        content_type=file.content_type,
         vendor=vendor,
         amount=amount,
         category=category,
@@ -138,7 +139,7 @@ async def download_file(
     if url is not None:
         return RedirectResponse(url)
     data = await storage.get(receipt.file_path)
-    return Response(content=data)
+    return Response(content=data, media_type=receipt.content_type)
 
 
 @router.post("/{receipt_id}/reconcile")

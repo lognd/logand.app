@@ -24,6 +24,13 @@ class Receipt(Base):
     # future automated tool adds, not required up front from a phone.
     file_path: Mapped[str] = mapped_column(Text, nullable=False)
     file_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    # Mirrors db/models/documents.py::Document.content_type -- persisted so
+    # api/receipts.py::download_file can set the same media_type on the
+    # byte-streaming fallback path that api/documents.py::download_file
+    # already does (see FINDINGS.md L2). Nullable because pre-migration
+    # rows have no recorded value; download_file falls back to sniffing
+    # only for those.
+    content_type: Mapped[str | None] = mapped_column(Text, nullable=True)
     vendor: Mapped[str | None] = mapped_column(Text, nullable=True)
     amount: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
     category: Mapped[str | None] = mapped_column(Text, nullable=True)
