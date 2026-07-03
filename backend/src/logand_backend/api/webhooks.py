@@ -13,11 +13,29 @@ from logand_backend.app.config import AppConfig
 from logand_backend.db.base import get_db
 from logand_backend.db.models.invoices import Invoice, Payment
 from logand_backend.domain.invoices.service import settle_invoice_if_paid
-from logand_backend.domain.notifications.notify import notify_payment_received
+from logand_backend.domain.notifications.notify import (
+    notify_dispute_updated,
+    notify_payment_received,
+)
 from logand_backend.logging import get_logger
 
 router = APIRouter(prefix="/api/webhooks", tags=["webhooks"])
 _log = get_logger(__name__)
+
+# Stripe's own dispute.status values, collapsed to the four buckets
+# db/models/invoices.py's _DISPUTE_STATUS_CHECK allows -- see that
+# constant's doc comment for why the "needs_response"/"under_review"
+# collapse is fine for what this app currently does differently between
+# them (nothing, yet).
+_DISPUTE_STATUS_MAP = {
+    "warning_needs_response": "needs_response",
+    "needs_response": "needs_response",
+    "warning_under_review": "under_review",
+    "under_review": "under_review",
+    "won": "won",
+    "lost": "lost",
+    "warning_closed": "won",
+}
 
 
 @router.post("/stripe")
@@ -56,6 +74,12 @@ async def stripe_webhook(
     )
     if event["type"] in ("payment_intent.succeeded", "payment_intent.payment_failed"):
         await _handle_payment_intent_event(db, event, cfg)
+    elif event["type"] in (
+        "charge.dispute.created",
+        "charge.dispute.updated",
+        "charge.dispute.closed",
+    ):
+        await _handle_dispute_event(db, event, cfg)
 
     return {"status": "received"}
 
@@ -156,7 +180,7 @@ async def _handle_payment_intent_event(
             },
         )
         await notify_payment_received(
-            db, cfg, invoice, Decimal(str(intent["amount"] / 100))
+            db, cfg, invoice, Decimal(intent["amount"]) / 100
         )
         return
     _log.warning(
@@ -164,3 +188,47 @@ async def _handle_payment_intent_event(
         extra={"invoice_id": str(invoice.id), "stripe_payment_intent_id": intent_id},
     )
     await db.flush()
+
+
+async def _handle_dispute_event(db: AsyncSession, event: dict, cfg: AppConfig) -> None:
+    """A cardholder disputed a charge (chargeback) -- Stripe's dispute
+    object is keyed on `charge`, the same charge id this app already
+    stores as Payment.transaction_id (see intent["latest_charge"] above),
+    not on the PaymentIntent. Purely informational on this app's side:
+    Stripe handles the actual funds-withdrawal/representment flow;
+    dispute_status here just makes that visible to an admin (invoice
+    detail view) and triggers a notification so they know to act (submit
+    evidence) before Stripe's own response deadline.
+    """
+    dispute = event["data"]["object"]
+    dispute_id = dispute["id"]
+    charge_id = dispute["charge"]
+    raw_status = dispute["status"]
+    mapped_status = _DISPUTE_STATUS_MAP.get(raw_status)
+    if mapped_status is None:
+        _log.warning(
+            "stripe dispute webhook: unrecognized dispute status",
+            extra={"stripe_dispute_id": dispute_id, "status": raw_status},
+        )
+        return
+
+    payment = (
+        await db.execute(
+            select(Payment).where(Payment.transaction_id == charge_id).with_for_update()
+        )
+    ).scalar_one_or_none()
+    if payment is None:
+        _log.warning(
+            "stripe dispute webhook: no payment matches this charge",
+            extra={"stripe_dispute_id": dispute_id, "charge": charge_id},
+        )
+        return
+
+    was_new = payment.dispute_status is None
+    payment.dispute_status = mapped_status
+    payment.stripe_dispute_id = dispute_id
+    await db.flush()
+
+    invoice = await db.get(Invoice, payment.invoice_id)
+    if invoice is not None and (was_new or event["type"] == "charge.dispute.closed"):
+        await notify_dispute_updated(db, cfg, invoice, mapped_status)

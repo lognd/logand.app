@@ -61,3 +61,30 @@ def payment_received(
         f"View your invoices: {invoices_url}\n"
     )
     return subject, html, text
+
+
+def dispute_updated(
+    cfg: AppConfig,
+    *,
+    invoice_id: UUID,
+    dispute_status: str,
+) -> tuple[str, str, str]:
+    """Admin-facing (not customer-facing, unlike the other two templates
+    above) -- see notify.notify_dispute_updated's own doc comment."""
+    status_line = {
+        "needs_response": "needs a response before Stripe's deadline",
+        "under_review": "is under review by the cardholder's bank",
+        "won": "was resolved in your favor",
+        "lost": "was lost -- funds have been withdrawn",
+    }.get(dispute_status, dispute_status)
+    subject = f"Stripe dispute update -- invoice {invoice_id}"
+
+    html = (
+        f"<p>A Stripe dispute on invoice {invoice_id} {status_line}.</p>"
+        "<p>Review it in your Stripe Dashboard.</p>"
+    )
+    text = (
+        f"A Stripe dispute on invoice {invoice_id} {status_line}.\n\n"
+        "Review it in your Stripe Dashboard.\n"
+    )
+    return subject, html, text

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from logand_backend.app.config import AppConfig
@@ -78,3 +79,49 @@ async def notify_payment_received(
             "failed to send payment-received notification",
             extra={"invoice_id": str(invoice.id)},
         )
+
+
+async def notify_dispute_updated(
+    db: AsyncSession, cfg: AppConfig, invoice: Invoice, dispute_status: str
+) -> None:
+    """Admin-facing, not customer-facing -- unlike every other notify_*
+    here, this goes to every admin account (opt-out still respected;
+    CAN-SPAM's opt-out right applies to any account, admin or not), not
+    the invoice's customer. A dispute needs a human to act on it (submit
+    evidence before Stripe's deadline, or just know a chargeback landed),
+    and there's no in-app admin notification center to check instead.
+    """
+    if not mailer.is_configured(cfg):
+        return
+
+    subject, html, text = templates.dispute_updated(
+        cfg, invoice_id=invoice.id, dispute_status=dispute_status
+    )
+    admins = (
+        (
+            await db.execute(
+                select(User).where(
+                    User.role == "admin",
+                    User.emails_opted_out.is_(False),
+                    User.disabled_at.is_(None),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for admin in admins:
+        try:
+            await mailer.send_email(
+                cfg,
+                to_email=admin.email,
+                to_user_id=admin.id,
+                subject=subject,
+                content_html=html,
+                content_text=text,
+            )
+        except Exception:
+            _log.error(
+                "failed to send dispute-updated notification",
+                extra={"invoice_id": str(invoice.id), "admin_id": str(admin.id)},
+            )
