@@ -91,6 +91,7 @@ async def generate_due_recurring_invoices(db: AsyncSession, as_of: date) -> list
                 customer_id=invoice.customer_id,
                 status="draft",
                 memo=invoice.memo,
+                currency=invoice.currency,
                 is_recurring=True,
                 recurrence_interval=invoice.recurrence_interval,
                 due_date=next_due,
