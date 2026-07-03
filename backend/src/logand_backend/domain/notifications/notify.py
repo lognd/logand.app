@@ -46,10 +46,11 @@ async def notify_invoice_sent(
             content_html=html,
             content_text=text,
         )
-    except Exception:
+    except Exception as exc:
         _log.error(
             "failed to send invoice-sent notification",
             extra={"invoice_id": str(invoice.id)},
+            exc_info=exc,
         )
 
 
@@ -74,10 +75,11 @@ async def notify_payment_received(
             content_html=html,
             content_text=text,
         )
-    except Exception:
+    except Exception as exc:
         _log.error(
             "failed to send payment-received notification",
             extra={"invoice_id": str(invoice.id)},
+            exc_info=exc,
         )
 
 
@@ -107,10 +109,11 @@ async def notify_refund_settled(
             content_html=html,
             content_text=text,
         )
-    except Exception:
+    except Exception as exc:
         _log.error(
             "failed to send refund-settled notification",
             extra={"invoice_id": str(invoice.id)},
+            exc_info=exc,
         )
 
 
@@ -153,8 +156,9 @@ async def notify_dispute_updated(
                 content_html=html,
                 content_text=text,
             )
-        except Exception:
+        except Exception as exc:
             _log.error(
                 "failed to send dispute-updated notification",
                 extra={"invoice_id": str(invoice.id), "admin_id": str(admin.id)},
+                exc_info=exc,
             )

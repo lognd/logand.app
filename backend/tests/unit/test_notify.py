@@ -76,6 +76,32 @@ async def test_notify_invoice_sent_swallows_send_failure(
     await notify.notify_invoice_sent(db, cfg, _invoice())  # must not raise
 
 
+async def test_notify_invoice_sent_logs_the_actual_exception(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Regression test: a bare `except Exception: _log.error(...)` with no
+    exc_info discarded the real error (e.g. an SMTPAuthenticationError's
+    "Username and Password not accepted") -- the log said only "failed to
+    send," making the actual cause undiagnosable from logs alone. This
+    found a real production SMTP auth failure that couldn't otherwise be
+    root-caused without SSHing in and reproducing it by hand.
+    """
+    cfg = _cfg()
+    user = User(id=uuid.uuid4(), email="c@example.com", role="customer")
+    db = _FakeDb(user)
+    monkeypatch.setattr(
+        notify.mailer,
+        "send_email",
+        AsyncMock(side_effect=OSError("535 authentication failed")),
+    )
+    with caplog.at_level("ERROR", logger="logand_backend.domain.notifications.notify"):
+        await notify.notify_invoice_sent(db, cfg, _invoice())
+
+    assert len(caplog.records) == 1
+    assert caplog.records[0].exc_info is not None
+    assert "535 authentication failed" in str(caplog.records[0].exc_info[1])
+
+
 async def test_notify_payment_received_noop_when_smtp_not_configured() -> None:
     cfg = AppConfig()
     db = _FakeDb(User(id=uuid.uuid4(), email="c@example.com", role="customer"))
