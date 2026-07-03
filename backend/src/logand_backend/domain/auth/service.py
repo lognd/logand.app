@@ -39,8 +39,21 @@ async def login(
     string.
     """
     normalized_email = email.strip().lower()
+    # .limit(1) (not scalar_one_or_none()) -- users.email has a
+    # case-SENSITIVE unique constraint, so legacy pre-normalization data
+    # can still contain two rows differing only by case (e.g. "Bob@x.com"
+    # and "bob@x.com"); scalar_one_or_none() would raise
+    # MultipleResultsFound on that lookup and turn a login into an
+    # uncaught 500 instead of a clean auth outcome. order_by(User.id)
+    # makes which of the two rows wins deterministic rather than
+    # depending on table scan order.
     user = (
-        await db.execute(select(User).where(func.lower(User.email) == normalized_email))
+        await db.execute(
+            select(User)
+            .where(func.lower(User.email) == normalized_email)
+            .order_by(User.id)
+            .limit(1)
+        )
     ).scalar_one_or_none()
     if user is None:
         _log.warning("login failed: no such account", extra={"email": email})
