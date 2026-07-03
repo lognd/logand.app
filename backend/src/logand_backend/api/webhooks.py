@@ -318,8 +318,11 @@ async def _handle_refund_updated_event(
             extra={"stripe_refund_id": stripe_refund_id},
         )
         return
-    if refund.status != "pending":
-        # Already settled (a replayed/duplicate delivery) -- idempotent no-op.
-        return
 
+    # No "already settled -> no-op" early return here (see FINDINGS.md
+    # L1) -- apply_refund_settlement itself now re-sends the
+    # notification on a replayed/duplicate delivery that observes an
+    # already-succeeded refund, so a crash in a prior delivery's
+    # commit->send window is recoverable on redelivery instead of
+    # dropping the email forever.
     await apply_refund_settlement(db, cfg, refund, mapped_status)

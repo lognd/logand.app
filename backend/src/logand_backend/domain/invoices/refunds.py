@@ -183,6 +183,18 @@ async def refund_payment(
         # retries of the SAME logical action, so it is found here
         # instead of silently sailing through to a second provider
         # call.
+        if existing.status == "succeeded":
+            # L1: re-send the settlement notification on every retry
+            # that observes an already-succeeded refund, not just the
+            # call that first flipped it -- otherwise a worker crash in
+            # the original call's commit->send window (see
+            # _record_refund) permanently drops the email, since this
+            # retry path used to return here with no notify at all.
+            # Mirrors _handle_payment_intent_event's L1 fix. Accepting a
+            # possible duplicate email.
+            invoice = await db.get(Invoice, existing.invoice_id)
+            if invoice is not None:
+                await notify_refund_settled(db, cfg, invoice, existing.amount)
         return Ok(existing.id)
 
     invoice = await lock_invoice_for_update(db, invoice_id)
@@ -469,13 +481,26 @@ async def apply_refund_settlement(
     - reconcile_pending_paypal_refunds below (poll -- PayPal delivers no
       webhook this app subscribes to for refund completion).
 
-    Idempotent: a refund already out of "pending" is a no-op, so a
-    duplicate webhook delivery racing a reconciliation poll (or two
-    overlapping reconciliation runs) can never double-apply. Caller is
+    Idempotent for the payment/invoice status side effects: a refund
+    already out of "pending" never re-applies those, so a duplicate
+    webhook delivery racing a reconciliation poll (or two overlapping
+    reconciliation runs) can never double-apply them. Caller is
     responsible for having the Refund row locked (`with_for_update`)
     before calling this, same as both current callers do.
+
+    NOT idempotent for the notification: mirrors
+    _handle_payment_intent_event's L1 fix -- every delivery/poll that
+    observes a "succeeded" refund re-sends notify_refund_settled, even
+    if this call didn't perform the pending->succeeded transition
+    itself, so a worker crash between a prior call's commit and its
+    email send never permanently drops the notification. Accepting a
+    possible duplicate email.
     """
     if refund.status != "pending":
+        if refund.status == "succeeded" and mapped_status == "succeeded":
+            invoice = await db.get(Invoice, refund.invoice_id)
+            if invoice is not None:
+                await notify_refund_settled(db, cfg, invoice, refund.amount)
         return
     refund.status = mapped_status
     await db.flush()
