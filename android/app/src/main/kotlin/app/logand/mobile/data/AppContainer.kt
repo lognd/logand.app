@@ -43,7 +43,13 @@ class AppContainer(context: Context) {
     // is. A screen wanting to react to this (e.g. route back to login)
     // should collect this flow and force its own session state to
     // LoggedOut on every emission.
-    private val _logoutEvents = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    // replay = 1 -- a 401 (and thus a logout event) can land before
+    // LoginViewModel's collector attaches (e.g. a warm-start call racing
+    // ViewModel init); with replay = 0, tryEmit has no subscriber to
+    // deliver to and the event is silently dropped, leaving the app
+    // rendering as authenticated until the next 401. Replaying the last
+    // event to a late subscriber closes that window.
+    private val _logoutEvents = MutableSharedFlow<Unit>(replay = 1, extraBufferCapacity = 1)
     val logoutEvents: SharedFlow<Unit> = _logoutEvents
 
     private val _apiClient = MutableStateFlow(buildClient(ServerSettingsRepository.DEFAULT_BASE_URL))
