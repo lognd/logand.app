@@ -8,7 +8,7 @@ from typing import Literal
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from typani.result import Err, Ok, Result
 
@@ -18,6 +18,7 @@ from logand_backend.db.models.invoices import (
     InvoiceLineItem,
     Payment,
     PaymentProof,
+    Refund,
 )
 from logand_backend.db.models.users import User
 from logand_backend.domain.invoices.pdf.renderer import (
@@ -208,20 +209,52 @@ async def record_manual_payment(
 
 
 async def get_paid_so_far(db: AsyncSession, invoice: Invoice) -> Decimal:
-    """Sums every succeeded `Payment` recorded against `invoice`. Shared by
+    """Sums the net amount still credited from every succeeded or
+    partially-refunded `Payment` recorded against `invoice`. Shared by
     `settle_invoice_if_paid` and by the self-serve pay entry points
     (`api/invoices_public.py::pay_invoice` and `pay_invoice_via_paypal`) so
     both "is this invoice fully paid" and "how much is still owed" are
     derived from the same source of truth.
+
+    A `partially_refunded` payment still contributes its unrefunded
+    remainder (amount minus succeeded refunds against it) -- see M1 in
+    FINDINGS.md, where counting only `succeeded` payments dropped a
+    partially-refunded payment's entire amount instead of just the
+    refunded portion. Fully `refunded` payments correctly contribute
+    nothing and stay excluded.
     """
-    existing_total = (
+    refunded_by_payment = (
+        select(
+            Refund.payment_id.label("payment_id"),
+            func.sum(Refund.amount).label("refunded"),
+        )
+        .where(Refund.status == "succeeded")
+        .group_by(Refund.payment_id)
+        .subquery()
+    )
+    net_paid = (
         await db.execute(
-            select(Payment).where(
-                Payment.invoice_id == invoice.id, Payment.status == "succeeded"
+            select(
+                func.coalesce(
+                    func.sum(
+                        Payment.amount
+                        - func.coalesce(refunded_by_payment.c.refunded, 0)
+                    ),
+                    0,
+                )
+            )
+            .select_from(Payment)
+            .outerjoin(
+                refunded_by_payment,
+                refunded_by_payment.c.payment_id == Payment.id,
+            )
+            .where(
+                Payment.invoice_id == invoice.id,
+                Payment.status.in_(("succeeded", "partially_refunded")),
             )
         )
-    ).scalars()
-    return sum((p.amount for p in existing_total), Decimal(0))
+    ).scalar_one()
+    return Decimal(net_paid)
 
 
 async def get_amount_due(db: AsyncSession, invoice: Invoice) -> Decimal:

@@ -15,6 +15,7 @@ from logand_backend.domain.invoices.service import (
     LineItemInput,
     ManualPaymentInput,
     create_invoice,
+    get_amount_due,
     record_manual_payment,
     send_invoice,
 )
@@ -153,6 +154,60 @@ async def test_partial_refund_leaves_payment_and_invoice_partially_refunded(
     # refund stays "paid", not "refunded" (see refund_payment's own doc
     # comment on why Invoice.status isn't overloaded for this).
     assert invoice.status == "paid"
+
+
+async def test_amount_due_credits_net_of_a_partially_refunded_payment(
+    db_session, make_user
+) -> None:
+    # M1 regression: a partially-refunded payment must still credit its
+    # unrefunded remainder toward amount_due, not drop out entirely.
+    # invoice total 100; manual payment of 60 (invoice stays "sent", not
+    # fully paid); partial refund of 20 off that payment -> net paid 40,
+    # so amount_due must be 60, not 100.
+    admin = await make_user(role="admin")
+    customer = await make_user(role="customer")
+    invoice_id = (
+        await create_invoice(
+            db_session,
+            customer.id,
+            [
+                LineItemInput(
+                    description="widget",
+                    quantity=Decimal(1),
+                    unit_price=Decimal("100.00"),
+                )
+            ],
+            memo=None,
+        )
+    ).danger_ok
+    await send_invoice(db_session, invoice_id)
+    payment_id = (
+        await record_manual_payment(
+            db_session,
+            invoice_id,
+            admin.id,
+            ManualPaymentInput(method="zelle", amount=Decimal("60.00"), note=None),
+        )
+    ).danger_ok
+
+    cfg = AppConfig.from_external(argparse.Namespace())
+    result = await refund_payment(
+        db_session,
+        cfg,
+        invoice_id,
+        admin.id,
+        RefundInput(
+            payment_id=payment_id, amount=Decimal("20.00"), client_request_id=uuid4()
+        ),
+    )
+    assert result.is_ok
+
+    payment = await db_session.get(Payment, payment_id)
+    assert payment.status == "partially_refunded"
+
+    invoice = await db_session.get(Invoice, invoice_id)
+    amount_due = await get_amount_due(db_session, invoice)
+    assert amount_due == Decimal("60.00")
 
 
 async def test_two_partial_refunds_compose_to_a_full_refund(
