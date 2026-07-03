@@ -52,7 +52,7 @@ export interface Refund {
   id: string;
   amount: string;
   reason: string | null;
-  status: "succeeded" | "failed";
+  status: "succeeded" | "pending" | "failed";
   stripe_refund_id: string | null;
   paypal_refund_id: string | null;
   recorded_by: string;
@@ -264,6 +264,11 @@ export interface RefundInput {
   // domain/invoices/refunds.py::RefundInput's own amount=None meaning.
   amount?: string;
   reason?: string;
+  // Stable per refund *action* (generated once when the admin initiates
+  // the refund, not regenerated on retry) -- lets the backend dedupe a
+  // resubmitted request instead of minting a fresh provider idempotency
+  // key each time. See domain/invoices/refunds.py::RefundInput.
+  client_request_id: string;
 }
 
 // Method-aware server-side (Stripe/PayPal API call, or pure bookkeeping

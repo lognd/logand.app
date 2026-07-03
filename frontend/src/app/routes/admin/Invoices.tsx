@@ -118,8 +118,20 @@ function RefundForm({
   const [open, setOpen] = useState(false);
   const [amount, setAmount] = useState("");
   const [reason, setReason] = useState("");
+  // Generated once per refund action (when the form opens) and reused
+  // across any retry of that same action, so a lost-response resubmit
+  // dedupes server-side instead of minting a fresh provider refund.
+  const [clientRequestId, setClientRequestId] = useState(() => crypto.randomUUID());
 
-  const refundedSoFar = payment.refunds.reduce((sum, r) => sum + Number(r.amount), 0);
+  // Mirrors the backend authority's own remaining-balance computation
+  // (domain/invoices/refunds.py::_reserved_so_far / refund_payment):
+  // count succeeded refunds (money actually moved) AND pending refunds
+  // (money already claimed against the balance, not yet settled) --
+  // but never failed refunds, which moved nothing and must not hide a
+  // still-valid Refund button (M1).
+  const refundedSoFar = payment.refunds
+    .filter((r) => r.status === "succeeded" || r.status === "pending")
+    .reduce((sum, r) => sum + Number(r.amount), 0);
   const remaining = Number(payment.amount) - refundedSoFar;
 
   const mutation = useMutation({
@@ -128,12 +140,14 @@ function RefundForm({
         payment_id: payment.id,
         amount: amount || undefined,
         reason: reason || undefined,
+        client_request_id: clientRequestId,
       }),
     onSuccess: () => {
       onRefunded();
       setOpen(false);
       setAmount("");
       setReason("");
+      setClientRequestId(crypto.randomUUID());
     },
   });
 
@@ -143,7 +157,10 @@ function RefundForm({
     return (
       <button
         type="button"
-        onClick={() => setOpen(true)}
+        onClick={() => {
+          setClientRequestId(crypto.randomUUID());
+          setOpen(true);
+        }}
         aria-label={`Refund payment ${payment.id}`}
         className={BUTTON_CLASS}
       >
