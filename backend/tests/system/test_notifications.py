@@ -166,7 +166,7 @@ async def test_opted_out_customer_is_not_emailed(
 # -- unsubscribe endpoint ----------------------------------------------------
 
 
-async def test_unsubscribe_link_opts_the_user_out(
+async def test_unsubscribe_get_does_not_opt_the_user_out(
     db_client: AsyncClient,
     make_user,
     login_as,
@@ -174,6 +174,11 @@ async def test_unsubscribe_link_opts_the_user_out(
     fake_smtp_server: FakeSmtpServer,
     db_session: AsyncSession,
 ) -> None:
+    """Regression coverage for FINDINGS.md L1: a bare GET (what a
+    corporate link-scanner or mail-client link-preview prefetch does)
+    must render a confirm page, not mutate `emails_opted_out` -- only the
+    POST-back below actually applies the opt-out.
+    """
     _configure_smtp(monkeypatch, fake_smtp_server)
     admin = await make_user(role="admin", password="pw")
     customer = await make_user(role="customer", password="pw")
@@ -194,10 +199,12 @@ async def test_unsubscribe_link_opts_the_user_out(
     token = unsubscribe_url.split("token=", 1)[1]
 
     # No session/CSRF headers at all -- this is the whole point, a
-    # logged-out human clicking a link in an email must be able to
-    # unsubscribe without authenticating.
+    # logged-out human clicking a link in an email must be able to reach
+    # this page without authenticating.
     resp = await db_client.get("/api/unsubscribe", params={"token": token})
     assert resp.status_code == 200
+    assert "<form" in resp.text
+    assert "Unsubscribe" in resp.text
 
     # refresh(customer), not a fresh select() -- `customer` is already
     # loaded in db_session's identity map from make_user's own refresh()
@@ -205,6 +212,14 @@ async def test_unsubscribe_link_opts_the_user_out(
     # does NOT overwrite already-loaded attributes by default (it's not a
     # cache-miss the way session.get() might imply) -- refresh() is what
     # actually forces a new read from the DB.
+    await db_session.refresh(customer)
+    assert customer.emails_opted_out is False
+
+    # The confirm page's own form POSTs back to the same route with the
+    # token still in the query string -- that IS what actually applies
+    # the opt-out, exercised directly here.
+    confirm_resp = await db_client.post("/api/unsubscribe", params={"token": token})
+    assert confirm_resp.status_code == 200
     await db_session.refresh(customer)
     assert customer.emails_opted_out is True
 
