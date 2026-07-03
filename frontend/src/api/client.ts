@@ -83,7 +83,21 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
       `request failed: ${init.method ?? "GET"} ${path}`,
       `status=${res.status} request_id=${requestId}`,
     );
-    throw new Error(`request failed: ${res.status} ${res.statusText}`);
+    // Surface the backend's `detail` message (see api/errors.py's
+    // to_http_exception) when present, so callers can tell one 409 apart
+    // from another (e.g. RefundForm distinguishing PriorAttemptFailed from
+    // other refund conflicts) instead of getting only a generic status
+    // line for every non-ok response.
+    let detail: string | undefined;
+    try {
+      const body = (await res.clone().json()) as { detail?: unknown };
+      if (typeof body?.detail === "string") detail = body.detail;
+    } catch {
+      // Non-JSON or empty body -- fall back to the generic message below.
+    }
+    throw new Error(
+      detail ?? `request failed: ${res.status} ${res.statusText}`,
+    );
   }
 
   if (res.status === 204) return undefined as T;

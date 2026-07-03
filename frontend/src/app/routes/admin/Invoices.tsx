@@ -143,6 +143,18 @@ function RefundForm({
       setReason("");
       setClientRequestId(crypto.randomUUID());
     },
+    onError: (err) => {
+      // Backend returns RefundError.PriorAttemptFailed (409) when a prior
+      // refund under this same client_request_id FAILED, and its message
+      // says to retry under a NEW id (see errors.py). Without minting a
+      // fresh one here, re-clicking Confirm resubmits the identical id and
+      // gets the same 409 forever (L1 in FINDINGS.md). Every OTHER error
+      // (network/5xx, validation) keeps the id stable so a genuine
+      // lost-response retry still dedupes server-side.
+      if (err instanceof Error && err.message.includes("retry with a new request id")) {
+        setClientRequestId(crypto.randomUUID());
+      }
+    },
   });
 
   if (!REFUNDABLE_PAYMENT_STATUSES.has(payment.status) || remaining <= 0) return null;
