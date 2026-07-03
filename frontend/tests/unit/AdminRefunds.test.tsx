@@ -85,17 +85,23 @@ describe("AdminInvoices refund UI (integration)", () => {
     await user.click(screen.getByRole("button", { name: "Confirm refund" }));
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith(
-        "/api/admin/invoices/inv-1/payments/pay-1/refund",
-        expect.objectContaining({
-          method: "POST",
-          body: JSON.stringify({
-            payment_id: "pay-1",
-            amount: undefined,
-            reason: "duplicate charge",
-          }),
-        }),
+      const call = fetchMock.mock.calls.find(
+        ([path]) => path === "/api/admin/invoices/inv-1/payments/pay-1/refund",
       );
+      expect(call).toBeDefined();
+      const [, options] = call!;
+      expect(options).toEqual(expect.objectContaining({ method: "POST" }));
+      const body = JSON.parse((options as RequestInit).body as string);
+      // client_request_id is generated with crypto.randomUUID() when the
+      // refund action starts (H1 fix) -- assert shape, not an exact value.
+      expect(body).toEqual({
+        payment_id: "pay-1",
+        amount: undefined,
+        reason: "duplicate charge",
+        client_request_id: expect.stringMatching(
+          /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+        ),
+      });
     });
   });
 
