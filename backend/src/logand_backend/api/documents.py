@@ -8,7 +8,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFil
 from fastapi.responses import RedirectResponse, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from logand_backend.api._uploads import read_upload_capped
+from logand_backend.api._uploads import (
+    download_headers,
+    read_upload_capped,
+    safe_filename,
+)
 from logand_backend.api.errors import to_http_exception
 from logand_backend.app.config import AppConfig
 from logand_backend.auth.sessions import SessionInfo, require_admin
@@ -95,7 +99,7 @@ async def create(
 
     # Same "patch file_path in after the id is known" pattern as
     # api/receipts.py -- see that route's doc comment.
-    file_path = f"documents/{document_id}/{file.filename or 'file'}"
+    file_path = f"documents/{document_id}/{safe_filename(file.filename)}"
     document = await db.get(Document, document_id)
     assert document is not None
     document.file_path = file_path
@@ -139,7 +143,11 @@ async def download_file(
     if url is not None:
         return RedirectResponse(url)
     data = await storage.get(document.file_path)
-    return Response(content=data, media_type=document.content_type)
+    return Response(
+        content=data,
+        media_type=document.content_type,
+        headers=download_headers(document.file_path),
+    )
 
 
 @router.delete("/{document_id}")

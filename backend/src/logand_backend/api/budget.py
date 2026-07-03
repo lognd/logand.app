@@ -12,7 +12,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from logand_backend.api._uploads import read_upload_capped
+from logand_backend.api._uploads import read_upload_capped, safe_filename
 from logand_backend.api.errors import to_http_exception
 from logand_backend.app.config import AppConfig
 from logand_backend.auth.sessions import SessionInfo, require_admin
@@ -51,7 +51,7 @@ async def upload_evidence(
     if file.content_type not in {"application/pdf", "image/png", "image/jpeg"}:
         raise HTTPException(status_code=415, detail="evidence must be a PDF or image")
     contents = await read_upload_capped(file, request)
-    file_path = f"budget-evidence/{entry_id}/{file.filename}"
+    file_path = f"budget-evidence/{entry_id}/{safe_filename(file.filename)}"
     result = await attach_evidence(db, entry_id, contents, file_path=file_path)
     if result.is_err:
         raise to_http_exception(result.danger_err)

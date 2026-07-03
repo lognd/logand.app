@@ -9,7 +9,11 @@ from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
 from fastapi.responses import RedirectResponse, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from logand_backend.api._uploads import read_upload_capped
+from logand_backend.api._uploads import (
+    download_headers,
+    read_upload_capped,
+    safe_filename,
+)
 from logand_backend.api.errors import to_http_exception
 from logand_backend.app.config import AppConfig
 from logand_backend.auth.sessions import SessionInfo, require_admin
@@ -85,7 +89,8 @@ async def create(
         occurred_on=occurred_on,
         note=note,
     )
-    file_path = f"receipts/{receipt_id}/{file.filename or 'receipt'}"
+    receipt_filename = safe_filename(file.filename, default="receipt")
+    file_path = f"receipts/{receipt_id}/{receipt_filename}"
     receipt = await db.get(Receipt, receipt_id)
     assert receipt is not None
     receipt.file_path = file_path
@@ -139,7 +144,11 @@ async def download_file(
     if url is not None:
         return RedirectResponse(url)
     data = await storage.get(receipt.file_path)
-    return Response(content=data, media_type=receipt.content_type)
+    return Response(
+        content=data,
+        media_type=receipt.content_type,
+        headers=download_headers(receipt.file_path),
+    )
 
 
 @router.post("/{receipt_id}/reconcile")

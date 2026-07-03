@@ -1,10 +1,61 @@
 from __future__ import annotations
 
+import re
+from pathlib import PurePosixPath
+
 from fastapi import HTTPException, Request, UploadFile
 
 from logand_backend.logging import get_logger
 
 _log = get_logger(__name__)
+
+_UNSAFE_FILENAME_CHARS = re.compile(r"[^A-Za-z0-9._-]+")
+
+
+def safe_filename(name: str | None, default: str = "file") -> str:
+    """Reduce a client-supplied multipart filename to a single safe path
+    segment before it is interpolated into a storage key.
+
+    `file.filename` is fully attacker-controlled and, left raw, lets a
+    caller path-traverse a storage key into a sibling namespace (e.g.
+    `../<other_id>/x.png`) even though `LocalFilesystemStorage._resolve`
+    blocks escaping `base_dir` entirely -- see FINDINGS.md M1. Taking only
+    `PurePosixPath(name).name` strips any directory components (including
+    `..` segments, since `.name` never returns `..` or `/`), then
+    stripping anything outside `[A-Za-z0-9._-]` removes null bytes,
+    backslashes, and other characters a filesystem or storage backend
+    might interpret specially. Falls back to `default` if nothing safe is
+    left (empty filename, or a filename that was entirely unsafe
+    characters).
+    """
+    candidate = PurePosixPath(name or "").name
+    candidate = _UNSAFE_FILENAME_CHARS.sub("_", candidate).strip("._")
+    return candidate or default
+
+
+def download_headers(file_path: str, default_filename: str = "file") -> dict[str, str]:
+    """Headers for a `Response` that streams stored file bytes back
+    inline instead of redirecting to a storage-provider URL (the local
+    filesystem backend, or an R2 bucket with no public access
+    configured) -- see FINDINGS.md L2.
+
+    `X-Content-Type-Options: nosniff` stops a browser from ignoring the
+    stored content_type and sniffing the body as something else (e.g.
+    HTML) purely from its bytes. `Content-Disposition: attachment` makes
+    the browser download the file rather than render it in the app's own
+    origin/session context. Both matter only if a future change ever
+    lets an unsafe content_type (`text/html`, `image/svg+xml`) reach
+    storage, or a non-admin upload path appears -- today's upload
+    allowlists already exclude those types and every affected route is
+    admin-only, so this is defense in depth, not a fix for an active
+    exploit.
+    """
+    filename = PurePosixPath(file_path).name or default_filename
+    return {
+        "X-Content-Type-Options": "nosniff",
+        "Content-Disposition": f'attachment; filename="{filename}"',
+    }
+
 
 # 25MB: generous enough for a phone photo, a scanned PDF, or a small CAD
 # file, small enough that a handful of concurrent uploads can't OOM or

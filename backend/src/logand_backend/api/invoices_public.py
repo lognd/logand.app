@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from logand_backend.api._uploads import read_upload_capped
+from logand_backend.api._uploads import read_upload_capped, safe_filename
 from logand_backend.api.errors import to_http_exception
 from logand_backend.app.config import AppConfig
 from logand_backend.auth.rate_limit import CUSTOMER_PAY, RateLimiter
@@ -160,7 +160,7 @@ async def upload_payment_proof(
             status_code=415, detail="payment proof must be an image or PDF"
         )
     contents = await read_upload_capped(file, request)
-    file_path = f"payment-proofs/{invoice_id}/{uuid4()}-{file.filename}"
+    file_path = f"payment-proofs/{invoice_id}/{uuid4()}-{safe_filename(file.filename)}"
     result = await attach_payment_proof(
         db, invoice_id, customer.user_id, contents, file_path, file.content_type
     )
