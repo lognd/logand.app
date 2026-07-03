@@ -6,7 +6,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
@@ -164,27 +164,24 @@ class LoginViewModelTest {
     }
 
     @Test
-    fun `a LoggedOut flip on the container's session flow reaches the UI-observed session`() =
+    fun `a logout event from the container reaches the UI-observed session`() =
         runBlocking {
-            // Regression test for AND2 (see FINDINGS.md H2 / AppContainerTest's
-            // own regression test): AppContainer.sessionState was flipped by
-            // every ApiClient's onUnauthorized callback, but AppNavHost reads
-            // LoginViewModel.session, a separate flow onUnauthorized never
-            // touched -- so a mid-session 401 never reached the UI. This
-            // verifies the fix at the boundary the original bug actually broke:
-            // the UI-observed session, not just the container's own copy.
-            // Seeded to a non-LoggedOut value first -- MutableStateFlow
-            // suppresses re-emission when a new value structurally equals
-            // the current one, and SessionState.LoggedOut is a `data
-            // object` singleton, so starting here already-LoggedOut would
-            // make the LoggedOut assignment below a silent no-op that
-            // never reaches the collector.
-            val containerSessionState =
-                MutableStateFlow<SessionState>(
-                    SessionState.LoggedIn(app.logand.core.model.Me(user_id = "0", role = "admin"))
-                )
+            // Regression test for AND2/M1 (see FINDINGS.md / AppContainerTest's
+            // own regression test): AppContainer's logoutEvents is fired by
+            // every ApiClient's onUnauthorized callback, and AppNavHost reads
+            // LoginViewModel.session -- this verifies the fix at the boundary
+            // the original bug actually broke: the UI-observed session, not
+            // just the container's own copy.
+            //
+            // logoutEvents is a SharedFlow of events (not a StateFlow of
+            // SessionState) precisely because a StateFlow the container
+            // never sets to LoggedIn would suppress the LoggedOut
+            // re-emission via equality-dedup -- see AppContainer's doc
+            // comment. So this test emits an event directly, with no need
+            // to seed a "distinct prior value" workaround.
+            val logoutEvents = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
             val client = ApiClient(baseUrl = server.url("/").toString())
-            val vm = LoginViewModel({ client }, containerSessionState)
+            val vm = LoginViewModel({ client }, logoutEvents)
 
             server.enqueue(MockResponse().setResponseCode(200).setBody("""{"status":"ok"}"""))
             server.enqueue(
@@ -201,7 +198,7 @@ class LoginViewModelTest {
 
             // Simulate AppContainer's onUnauthorized firing from an unrelated
             // API call elsewhere in the app (idle timeout, revoked session).
-            containerSessionState.value = SessionState.LoggedOut
+            logoutEvents.tryEmit(Unit)
 
             withTimeout(2_000) {
                 while (vm.session.value !is SessionState.LoggedOut) delay(5)

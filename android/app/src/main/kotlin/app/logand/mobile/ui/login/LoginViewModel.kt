@@ -6,6 +6,7 @@ import app.logand.core.ApiClient
 import app.logand.core.ApiResult
 import app.logand.mobile.data.SessionState
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
@@ -19,14 +20,18 @@ data class LoginUiState(
 
 class LoginViewModel(
     private val apiClient: () -> ApiClient,
-    // AppContainer's app-wide "did ANY call just come back 401" signal --
-    // see AppContainer.sessionState's doc comment. Collected below so a
+    // AppContainer's app-wide "a call just came back 401" event stream --
+    // see AppContainer.logoutEvents' doc comment. Collected below so a
     // mid-session expiry/revocation (idle timeout, "kill all sessions")
     // flips THIS ViewModel's `session` -- the one AppNavHost actually
     // reads to pick LoggedOut/LoggedIn/WrongRole -- instead of only
     // flipping AppContainer's own copy while the UI keeps rendering
-    // MainTabs as if nothing happened.
-    containerSessionState: StateFlow<SessionState>? = null,
+    // MainTabs as if nothing happened. An event flow (not a StateFlow of
+    // SessionState) on purpose: a StateFlow the container never sets to
+    // LoggedIn would suppress the LoggedOut re-emission via equality
+    // dedup, and this signal must reach us on every 401 regardless of
+    // what we currently think the session is.
+    logoutEvents: SharedFlow<Unit>? = null,
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(LoginUiState())
     val uiState: StateFlow<LoginUiState> = _uiState.asStateFlow()
@@ -35,14 +40,10 @@ class LoginViewModel(
     val session: StateFlow<SessionState> = _session.asStateFlow()
 
     init {
-        if (containerSessionState != null) {
+        if (logoutEvents != null) {
             viewModelScope.launch {
-                containerSessionState.collect { containerState ->
-                    if (containerState is SessionState.LoggedOut &&
-                        _session.value !is SessionState.LoggedOut
-                    ) {
-                        _session.value = SessionState.LoggedOut
-                    }
+                logoutEvents.collect {
+                    _session.value = SessionState.LoggedOut
                 }
             }
         }
