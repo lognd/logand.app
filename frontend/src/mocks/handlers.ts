@@ -183,6 +183,63 @@ function toListShape(inv: MockInvoiceDetail): Invoice {
   return { id, status, amount_total, currency, memo, due_date, paid_at };
 }
 
+const INVOICE_STATUSES = ["draft", "sent", "paid", "overdue", "void", "refunded"] as const;
+
+// Mirrors domain/invoices/stats.py::get_invoice_stats -- computed fresh
+// from the in-memory mock dataset on every call, same "derive, don't
+// cache" shape as the real backend.
+function computeInvoiceStats() {
+  const byStatus = Object.fromEntries(
+    INVOICE_STATUSES.map((status) => [status, { count: 0, amount_total: "0.00" }]),
+  ) as Record<(typeof INVOICE_STATUSES)[number], { count: number; amount_total: string }>;
+  for (const status of INVOICE_STATUSES) {
+    const matching = invoices.filter((inv) => inv.status === status);
+    byStatus[status] = {
+      count: matching.length,
+      amount_total: matching.reduce((sum, inv) => sum + Number(inv.amount_total), 0).toFixed(2),
+    };
+  }
+
+  const succeededStatuses = new Set(["succeeded", "refunded", "partially_refunded"]);
+  const allPayments = invoices.flatMap((inv) => inv.payments);
+  const totalCollected = allPayments
+    .filter((p) => succeededStatuses.has(p.status))
+    .reduce((sum, p) => sum + Number(p.amount), 0);
+  const totalRefunded = allPayments
+    .flatMap((p) => p.refunds ?? [])
+    .filter((r) => r.status === "succeeded")
+    .reduce((sum, r) => sum + Number(r.amount), 0);
+  const outstanding = invoices
+    .filter((inv) => inv.status === "sent" || inv.status === "overdue")
+    .reduce((sum, inv) => sum + Number(inv.amount_total), 0);
+
+  const byMethod: Record<string, { count: number; amount: string }> = {};
+  for (const payment of allPayments.filter((p) => succeededStatuses.has(p.status))) {
+    const existing = byMethod[payment.method] ?? { count: 0, amount: "0.00" };
+    byMethod[payment.method] = {
+      count: existing.count + 1,
+      amount: (Number(existing.amount) + Number(payment.amount)).toFixed(2),
+    };
+  }
+
+  const disputeCounts = { needs_response: 0, under_review: 0, won: 0, lost: 0 };
+  for (const payment of allPayments) {
+    const status = payment.dispute_status as keyof typeof disputeCounts | null | undefined;
+    if (status && status in disputeCounts) disputeCounts[status] += 1;
+  }
+
+  return {
+    by_status: byStatus,
+    total_collected: totalCollected.toFixed(2),
+    total_refunded: totalRefunded.toFixed(2),
+    net_collected: (totalCollected - totalRefunded).toFixed(2),
+    outstanding: outstanding.toFixed(2),
+    by_payment_method: byMethod,
+    open_disputes: disputeCounts.needs_response + disputeCounts.under_review,
+    disputes: disputeCounts,
+  };
+}
+
 export const handlers = [
   // -- auth --------------------------------------------------------------
   http.post("/api/auth/login", async ({ request }) => {
@@ -347,6 +404,15 @@ export const handlers = [
     return HttpResponse.json(invoices.map(toListShape));
   }),
 
+  // Registered BEFORE "/api/admin/invoices/:id" -- same route-ordering
+  // reasoning as the real backend's api/invoices.py get_stats doc
+  // comment: ":id" would otherwise swallow "stats" as a literal id.
+  http.get("/api/admin/invoices/stats", () => {
+    const denied = requireRole("admin");
+    if (denied) return denied;
+    return HttpResponse.json(computeInvoiceStats());
+  }),
+
   http.get("/api/admin/invoices/:id", ({ params }) => {
     const denied = requireRole("admin");
     if (denied) return denied;
@@ -449,6 +515,92 @@ export const handlers = [
     }
     return HttpResponse.json({ id: paymentId });
   }),
+
+  // Mirrors domain/invoices/refunds.py::refund_payment's shape closely
+  // enough for the mock UI to be exercised end to end -- always "pure
+  // bookkeeping" here (no fake Stripe/PayPal call), since the mock
+  // dataset has no real provider references to refund against anyway.
+  http.post(
+    "/api/admin/invoices/:id/payments/:paymentId/refund",
+    async ({ params, request }) => {
+      const denied = requireRole("admin");
+      if (denied) return denied;
+      const invoice = invoices.find((i) => i.id === params.id);
+      if (!invoice) return HttpResponse.json({ detail: "not found" }, { status: 404 });
+      const payment = invoice.payments.find((p) => p.id === params.paymentId);
+      if (!payment) {
+        return HttpResponse.json(
+          { detail: "payment was not found on this invoice" },
+          { status: 404 },
+        );
+      }
+      const body = (await request.json()) as {
+        payment_id: string;
+        amount?: string;
+        reason?: string;
+      };
+      if (body.payment_id !== params.paymentId) {
+        return HttpResponse.json(
+          { detail: "payment_id in body must match the URL" },
+          { status: 422 },
+        );
+      }
+      if (payment.status !== "succeeded" && payment.status !== "partially_refunded") {
+        return HttpResponse.json(
+          { detail: "payment is not in a state that can be refunded" },
+          { status: 409 },
+        );
+      }
+      const refundedSoFar = (payment.refunds ?? []).reduce(
+        (sum, r) => sum + Number(r.amount),
+        0,
+      );
+      const remaining = Number(payment.amount) - refundedSoFar;
+      const amount = body.amount !== undefined ? Number(body.amount) : remaining;
+      if (amount <= 0) {
+        return HttpResponse.json(
+          { detail: "refund amount must be greater than zero" },
+          { status: 422 },
+        );
+      }
+      if (amount > remaining) {
+        return HttpResponse.json(
+          { detail: "refund amount exceeds the payment's remaining balance" },
+          { status: 422 },
+        );
+      }
+      const refundId = mockId("refund");
+      payment.refunds = [
+        ...(payment.refunds ?? []),
+        {
+          id: refundId,
+          amount: amount.toFixed(2),
+          reason: body.reason ?? null,
+          status: "succeeded",
+          stripe_refund_id: null,
+          paypal_refund_id: null,
+          recorded_by: MOCK_CUSTOMER_ID,
+          created_at: new Date().toISOString(),
+        },
+      ];
+      payment.status =
+        refundedSoFar + amount >= Number(payment.amount)
+          ? "refunded"
+          : "partially_refunded";
+
+      if (invoice.status === "paid") {
+        const totalRefunded = invoice.payments.reduce(
+          (sum, p) => sum + (p.refunds ?? []).reduce((s, r) => s + Number(r.amount), 0),
+          0,
+        );
+        if (totalRefunded >= Number(invoice.amount_total)) {
+          invoice.status = "refunded";
+        }
+      }
+
+      return HttpResponse.json({ id: refundId });
+    },
+  ),
 
   // Real multipart upload -- mirrors api/invoices_public.py's
   // upload_payment_proof, same as budget evidence's mock handler.

@@ -29,7 +29,12 @@ export interface CreateInvoiceLineItem {
 // backend without anyone having noticed yet.
 export interface Invoice {
   id: string;
-  status: "draft" | "sent" | "paid" | "overdue" | "void";
+  // "refunded" added alongside admin refund support (see
+  // domain/invoices/refunds.py::refund_payment) -- set only once total
+  // refunds across every payment on the invoice cover the full
+  // amount_total; a partial or single-payment refund on a multi-payment
+  // invoice leaves the invoice "paid".
+  status: "draft" | "sent" | "paid" | "overdue" | "void" | "refunded";
   amount_total: string;
   currency: string;
   memo: string | null;
@@ -38,6 +43,54 @@ export interface Invoice {
   // db/models/invoices.py::Invoice.paid_at's own doc comment) -- null
   // for anything not yet paid.
   paid_at: string | null;
+}
+
+// One (partial or full) refund issued against a payment -- matches
+// api/invoices.py's get_invoice route's "refunds" field on each payment,
+// itself a serialized db/models/invoices.py::Refund row.
+export interface Refund {
+  id: string;
+  amount: string;
+  reason: string | null;
+  status: "succeeded" | "failed";
+  stripe_refund_id: string | null;
+  paypal_refund_id: string | null;
+  recorded_by: string;
+  created_at: string;
+}
+
+// One payment row on an invoice, as returned by the admin invoice-detail
+// route (GET /api/admin/invoices/{id}) -- includes dispute_status/refunds,
+// which the plain list view (listAdminInvoices) never returns.
+export interface InvoicePayment {
+  id: string;
+  method: "stripe" | "paypal" | "zelle" | "in_person" | "other";
+  amount: string;
+  status: "pending" | "succeeded" | "failed" | "refunded" | "partially_refunded";
+  transaction_id: string | null;
+  note: string | null;
+  recorded_by: string | null;
+  // Null until a real Stripe charge.dispute.* webhook event lands on
+  // this payment -- see api/webhooks.py's _handle_dispute_event.
+  dispute_status: "needs_response" | "under_review" | "won" | "lost" | null;
+  refunds: Refund[];
+}
+
+export interface InvoiceLineItemDetail {
+  id: string;
+  description: string;
+  quantity: string;
+  unit_price: string;
+  unit: string | null;
+}
+
+export interface InvoiceDetail extends Invoice {
+  line_items: InvoiceLineItemDetail[];
+  payments: InvoicePayment[];
+}
+
+export function getAdminInvoice(id: string): Promise<InvoiceDetail> {
+  return apiGet<InvoiceDetail>(`/api/admin/invoices/${id}`);
 }
 
 // Customer-scoped (/api/invoices, see api/invoices_public.py).
@@ -97,11 +150,17 @@ export function createInvoice(
 export async function openInvoicePdf(path: string): Promise<void> {
   const blob = await apiGetBlob(path);
   const url = URL.createObjectURL(blob);
-  // Deliberately not revoked immediately (the opened tab needs the URL to
-  // stay valid while it renders/streams the PDF) -- a real, if small,
-  // leak per download, but tied to a user-initiated action, not a loop;
-  // the tab itself and its blob URL both go away together on close.
   window.open(url, "_blank", "noopener,noreferrer");
+  // Revoked after a delay, not immediately -- the opened tab needs the
+  // URL to stay valid long enough to actually load/render the PDF
+  // (revoking synchronously right after window.open can race the new
+  // tab's own fetch of the blob: URL and break the download). 60s is
+  // comfortably past any real PDF load time on this connection while
+  // still bounding the leak per download instead of leaving it for the
+  // lifetime of the tab (a customer/admin downloading many invoice PDFs
+  // in one session previously accumulated one live blob URL each,
+  // unbounded, for as long as this tab stayed open).
+  window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
 export function sendInvoice(id: string): Promise<Invoice> {
@@ -156,10 +215,7 @@ export function uploadPaymentProof(
 ): Promise<{ id: string }> {
   const formData = new FormData();
   formData.append("file", file);
-  return apiPost<{ id: string }>(
-    `/api/invoices/${invoiceId}/payment-proof`,
-    formData,
-  );
+  return apiPost<{ id: string }>(`/api/invoices/${invoiceId}/payment-proof`, formData);
 }
 
 export interface PaymentProof {
@@ -200,4 +256,67 @@ export function capturePaypalPayment(
   return apiPost<{ status: string }>(`/api/invoices/${id}/pay/paypal/capture`, {
     order_id: orderId,
   });
+}
+
+export interface RefundInput {
+  payment_id: string;
+  // Omit for "refund the payment's full remaining balance" -- matches
+  // domain/invoices/refunds.py::RefundInput's own amount=None meaning.
+  amount?: string;
+  reason?: string;
+}
+
+// Method-aware server-side (Stripe/PayPal API call, or pure bookkeeping
+// for a manual payment) -- see domain/invoices/refunds.py::refund_payment.
+// payment_id travels both in the URL and the body; the backend 422s if
+// they don't match (api/invoices.py's refund_invoice_payment).
+export function refundPayment(
+  invoiceId: string,
+  paymentId: string,
+  input: RefundInput,
+): Promise<{ id: string }> {
+  return apiPost<{ id: string }>(
+    `/api/admin/invoices/${invoiceId}/payments/${paymentId}/refund`,
+    { ...input, payment_id: paymentId },
+  );
+}
+
+// Matches domain/invoices/stats.py::InvoiceStatusBreakdown.
+export interface InvoiceStatusBreakdown {
+  count: number;
+  amount_total: string;
+}
+
+// Matches domain/invoices/stats.py::PaymentMethodBreakdown.
+export interface PaymentMethodStatsBreakdown {
+  count: number;
+  amount: string;
+}
+
+// Matches domain/invoices/stats.py::DisputeBreakdown.
+export interface DisputeBreakdown {
+  needs_response: number;
+  under_review: number;
+  won: number;
+  lost: number;
+}
+
+// Matches domain/invoices/stats.py::InvoiceStats -- every field is
+// computed fresh from invoices/payments/refunds on each call, no cached
+// counters to drift out of sync (see that module's own doc comment).
+export interface InvoiceStats {
+  by_status: Record<Invoice["status"], InvoiceStatusBreakdown>;
+  total_collected: string;
+  total_refunded: string;
+  net_collected: string;
+  outstanding: string;
+  by_payment_method: Record<string, PaymentMethodStatsBreakdown>;
+  open_disputes: number;
+  disputes: DisputeBreakdown;
+}
+
+export function getInvoiceStats(): Promise<InvoiceStats> {
+  // Registered before GET /{invoice_id} on the backend -- see
+  // api/invoices.py's get_stats doc comment.
+  return apiGet<InvoiceStats>("/api/admin/invoices/stats");
 }

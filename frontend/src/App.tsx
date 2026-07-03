@@ -9,6 +9,7 @@ import { Login } from "./app/routes/public/Login";
 import { Register } from "./app/routes/public/Register";
 import { AdminPortal } from "./app/routes/admin/Portal";
 import { AdminInvoices } from "./app/routes/admin/Invoices";
+import { AdminStats } from "./app/routes/admin/Stats";
 import { AdminBudget } from "./app/routes/admin/Budget";
 import { AdminInventory } from "./app/routes/admin/Inventory";
 import { AdminBom } from "./app/routes/admin/Bom";
@@ -43,6 +44,14 @@ export function App() {
           element={
             <AdminGuard>
               <AdminInvoices />
+            </AdminGuard>
+          }
+        />
+        <Route
+          path="/admin/invoices/stats"
+          element={
+            <AdminGuard>
+              <AdminStats />
             </AdminGuard>
           }
         />

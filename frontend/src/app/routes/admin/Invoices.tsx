@@ -5,13 +5,16 @@ import { listCustomers } from "../../../api/customers";
 import {
   type CreateInvoiceLineItem,
   type Invoice,
+  type InvoicePayment,
   type ManualPaymentMethod,
   createInvoice,
+  getAdminInvoice,
   listAdminInvoices,
   listPaymentProof,
   openInvoicePdf,
   paymentProofFileUrl,
   recordManualPayment,
+  refundPayment,
   sendInvoice,
   voidInvoice,
 } from "../../../api/invoices";
@@ -83,6 +86,199 @@ function PaymentProofViewer({ invoiceId }: { invoiceId: string }) {
               {proof.content_type === "application/pdf" ? "PDF" : "Image"} (
               {new Date(proof.created_at).toLocaleString()})
             </a>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const DISPUTE_STATUS_LABEL: Record<string, string> = {
+  needs_response: "Dispute: needs response",
+  under_review: "Dispute: under review",
+  won: "Dispute: won",
+  lost: "Dispute: lost",
+};
+
+// Every payment status a refund can still target -- a fully "refunded"
+// payment or one that never succeeded (pending/failed) has nothing left
+// to refund. Matches domain/invoices/refunds.py::refund_payment's own
+// PaymentNotRefundable check.
+const REFUNDABLE_PAYMENT_STATUSES = new Set(["succeeded", "partially_refunded"]);
+
+function RefundForm({
+  invoiceId,
+  payment,
+  onRefunded,
+}: {
+  invoiceId: string;
+  payment: InvoicePayment;
+  onRefunded: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [amount, setAmount] = useState("");
+  const [reason, setReason] = useState("");
+
+  const refundedSoFar = payment.refunds.reduce((sum, r) => sum + Number(r.amount), 0);
+  const remaining = Number(payment.amount) - refundedSoFar;
+
+  const mutation = useMutation({
+    mutationFn: () =>
+      refundPayment(invoiceId, payment.id, {
+        payment_id: payment.id,
+        amount: amount || undefined,
+        reason: reason || undefined,
+      }),
+    onSuccess: () => {
+      onRefunded();
+      setOpen(false);
+      setAmount("");
+      setReason("");
+    },
+  });
+
+  if (!REFUNDABLE_PAYMENT_STATUSES.has(payment.status) || remaining <= 0) return null;
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        aria-label={`Refund payment ${payment.id}`}
+        className={BUTTON_CLASS}
+      >
+        Refund
+      </button>
+    );
+  }
+
+  return (
+    <form
+      className="flex w-full flex-col gap-2 rounded border border-border p-3 sm:w-auto sm:flex-row sm:items-end"
+      onSubmit={(e) => {
+        e.preventDefault();
+        mutation.mutate();
+      }}
+    >
+      <div>
+        <label htmlFor={`refund-amount-${payment.id}`} className={LABEL_CLASS}>
+          Amount (blank = full remaining {remaining.toFixed(2)})
+        </label>
+        <input
+          id={`refund-amount-${payment.id}`}
+          type="number"
+          step="0.01"
+          min="0"
+          max={remaining}
+          placeholder={remaining.toFixed(2)}
+          value={amount}
+          onChange={(e) => setAmount(e.target.value)}
+          className={INPUT_CLASS}
+        />
+      </div>
+      <div>
+        <label htmlFor={`refund-reason-${payment.id}`} className={LABEL_CLASS}>
+          Reason (optional)
+        </label>
+        <input
+          id={`refund-reason-${payment.id}`}
+          type="text"
+          placeholder="e.g. duplicate charge"
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          className={INPUT_CLASS}
+        />
+      </div>
+      <div className="flex gap-2">
+        <button type="submit" disabled={mutation.isPending} className={BUTTON_CLASS}>
+          {mutation.isPending ? "Refunding..." : "Confirm refund"}
+        </button>
+        <button type="button" onClick={() => setOpen(false)} className={BUTTON_CLASS}>
+          Cancel
+        </button>
+      </div>
+      {mutation.isError && (
+        <p role="alert" className="w-full text-base text-accent-red">
+          {mutation.error instanceof Error
+            ? mutation.error.message
+            : "Could not issue the refund."}
+        </p>
+      )}
+    </form>
+  );
+}
+
+// Expandable per-invoice payment/refund/dispute detail -- the plain list
+// row only has enough fields for listAdminInvoices' summary shape
+// (status/amount/due/paid/memo); this fetches the real per-payment
+// breakdown (dispute_status, refund history) on demand via
+// getAdminInvoice, same lazy-fetch-on-expand pattern as
+// PaymentProofViewer above.
+function PaymentsPanel({ invoice }: { invoice: Invoice }) {
+  const [open, setOpen] = useState(false);
+  const queryClient = useQueryClient();
+  const detailQuery = useQuery({
+    queryKey: ["admin", "invoices", invoice.id, "detail"],
+    queryFn: () => getAdminInvoice(invoice.id),
+    enabled: open,
+  });
+
+  const invalidate = () => {
+    queryClient.invalidateQueries({ queryKey: ["admin", "invoices", invoice.id, "detail"] });
+    queryClient.invalidateQueries({ queryKey: ["admin", "invoices"] });
+  };
+
+  if (invoice.status === "draft") return null;
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className={BUTTON_CLASS}
+      >
+        {open ? "Hide" : "View"} payments
+      </button>
+      {open && (
+        <div className="mt-2 flex flex-col gap-3">
+          {detailQuery.isLoading && <p className="text-sm text-fg-muted">Loading...</p>}
+          {detailQuery.data?.payments.length === 0 && (
+            <p className="text-sm text-fg-muted">No payments recorded yet.</p>
+          )}
+          {detailQuery.data?.payments.map((payment) => (
+            <div
+              key={payment.id}
+              className="flex flex-col gap-2 rounded border border-border p-3"
+            >
+              <div className="flex flex-wrap items-center gap-2 text-base text-fg-primary">
+                <span>
+                  {payment.method} -- {payment.amount} ({payment.status})
+                </span>
+                {payment.dispute_status && (
+                  <span
+                    role="status"
+                    className="rounded bg-accent-red/10 px-2 py-0.5 text-sm text-accent-red"
+                  >
+                    {DISPUTE_STATUS_LABEL[payment.dispute_status] ?? payment.dispute_status}
+                  </span>
+                )}
+              </div>
+              {payment.note && (
+                <p className="text-sm text-fg-muted">Note: {payment.note}</p>
+              )}
+              {payment.refunds.length > 0 && (
+                <ul className="flex flex-col gap-1 text-sm text-fg-muted">
+                  {payment.refunds.map((refund) => (
+                    <li key={refund.id}>
+                      Refunded {refund.amount}
+                      {refund.reason ? ` -- ${refund.reason}` : ""} (
+                      {new Date(refund.created_at).toLocaleDateString()})
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <RefundForm invoiceId={invoice.id} payment={payment} onRefunded={invalidate} />
+            </div>
           ))}
         </div>
       )}
@@ -697,6 +893,7 @@ export function AdminInvoices() {
                     )}
                     <ManualPaymentForm invoice={invoice} onRecorded={invalidate} />
                     <PaymentProofViewer invoiceId={invoice.id} />
+                    <PaymentsPanel invoice={invoice} />
                   </td>
                 </tr>
               ))}

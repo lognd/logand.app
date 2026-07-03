@@ -22,6 +22,17 @@ export interface MockInvoiceLineItem {
   unit: string | null;
 }
 
+export interface MockRefund {
+  id: string;
+  amount: string;
+  reason: string | null;
+  status: string;
+  stripe_refund_id: string | null;
+  paypal_refund_id: string | null;
+  recorded_by: string;
+  created_at: string;
+}
+
 export interface MockPayment {
   id: string;
   method: string;
@@ -29,6 +40,8 @@ export interface MockPayment {
   status: string;
   transaction_id: string | null;
   note?: string | null;
+  dispute_status?: string | null;
+  refunds?: MockRefund[];
 }
 
 export interface MockInvoiceDetail extends Invoice {

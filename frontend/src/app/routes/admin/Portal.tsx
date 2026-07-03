@@ -22,6 +22,14 @@ export function AdminPortal() {
           </p>
         </li>
         <li>
+          <Link to="/admin/invoices/stats" className={LINK_CLASS}>
+            Invoice stats
+          </Link>
+          <p className="text-base text-fg-muted">
+            Revenue, refunds, and open dispute breakdown across every invoice.
+          </p>
+        </li>
+        <li>
           <Link to="/admin/budget" className={LINK_CLASS}>
             Budget
           </Link>
