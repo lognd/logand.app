@@ -225,6 +225,28 @@ async def update_row(
     after = _serialize_row(table, after_row)
 
     log_id = uuid4()
+    if before == after:
+        # Every column ended up equal to its starting value (e.g. a
+        # no-op edit submitted unchanged) -- writing a real "data.update"
+        # audit entry here would be indistinguishable from a genuine
+        # change, and revert_change on it is a silent no-op that still
+        # LOOKS like a real revert in the log (FINDINGS.md L3). Tag it
+        # distinctly instead of skipping the audit trail entirely, so
+        # the row-level edit still leaves a record that it happened.
+        db.add(
+            AdminAuditLog(
+                id=log_id,
+                admin_id=admin_id,
+                action="data.update.noop",
+                target_table=table_name,
+                target_id=row_id,
+                before_state=before,
+                after_state=after,
+            )
+        )
+        await db.flush()
+        return Ok(log_id)
+
     db.add(
         AdminAuditLog(
             id=log_id,
@@ -300,7 +322,14 @@ async def insert_row(
     if invalid is not None:
         return Err(invalid)
 
-    new_id = values.get("id") or str(uuid4())
+    supplied_id = values.get("id")
+    if supplied_id:
+        invalid_id = _validate_row_id(str(supplied_id))
+        if invalid_id is not None:
+            return Err(DataError.ConstraintViolation)
+        new_id = supplied_id
+    else:
+        new_id = str(uuid4())
     coerced_values = {
         k: _coerce_value(table, k, v) for k, v in values.items() if k != "id"
     }
