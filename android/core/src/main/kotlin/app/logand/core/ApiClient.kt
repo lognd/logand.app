@@ -261,14 +261,20 @@ class ApiClient(
         return ApiResult.Success(Unit)
     }
 
-    // Backend's HTTPException always serializes as {"detail": "..."}
-    // (see api/errors.py::to_http_exception) -- falls back to the raw
-    // body if that shape isn't there (a 5xx from something upstream of
-    // FastAPI, say), rather than silently swallowing it.
+    // Backend's HTTPException serializes as either {"detail": "..."} (flat,
+    // e.g. 401 from auth deps, bare-string HTTPExceptions) or, since commit
+    // 77bae7e (see api/errors.py::to_http_exception), a nested
+    // {"detail": {"detail": "...", "code": "..."}} for domain errors. Falls
+    // back to the raw body if neither shape is there (a 5xx from something
+    // upstream of FastAPI, say), rather than silently swallowing it.
     private fun errorDetail(bodyText: String): String =
         try {
             val obj = json.decodeFromString(JsonObject.serializer(), bodyText)
-            (obj["detail"] as? JsonPrimitive)?.content ?: bodyText
+            when (val detail = obj["detail"]) {
+                is JsonPrimitive -> detail.content
+                is JsonObject -> (detail["detail"] as? JsonPrimitive)?.content ?: bodyText
+                else -> bodyText
+            }
         } catch (e: SerializationException) {
             bodyText
         }

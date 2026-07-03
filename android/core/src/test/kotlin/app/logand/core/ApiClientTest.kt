@@ -154,15 +154,23 @@ class ApiClientTest {
 
     @Test
     fun `create mileage returns HttpError on 422 invalid distance`() = runTest {
+        // Nested shape matches the real backend response since commit
+        // 77bae7e (api/errors.py::to_http_exception) -- see FINDINGS.md M1.
         server.enqueue(
             MockResponse().setResponseCode(422)
-                .setBody("""{"detail":"distance must be a positive value, directly or via odometer readings"}""")
+                .setBody(
+                    """{"detail":{"detail":"distance must be a positive value, directly or via odometer readings","code":"MileageError.InvalidDistance"}}"""
+                )
         )
 
         val result = client.createMileageEntry(vehicle = "Civic", occurredOn = "2026-06-01")
 
         assertIs<ApiResult.HttpError>(result)
         assertEquals(422, result.statusCode)
+        assertEquals(
+            "distance must be a positive value, directly or via odometer readings",
+            result.message,
+        )
     }
 
     @Test
