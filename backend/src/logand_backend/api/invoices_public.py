@@ -260,6 +260,25 @@ async def capture_invoice_paypal_payment(
     invoice = await _get_owned_invoice(
         db, invoice_id, customer.user_id, for_update=True
     )
+    # Idempotent retry: if this exact order was already captured and
+    # recorded (the first capture succeeded server-side but the HTTP
+    # response was lost, e.g. a dropped connection or a page reload --
+    # capture_order's own docstring advertises retry safety), the invoice
+    # has already flipped to "paid" by now, so the payability guard below
+    # would 409 a customer who genuinely paid. Check for an existing
+    # succeeded Payment for this order_id BEFORE that guard and short-
+    # circuit to the same success response instead.
+    existing_payment = (
+        await db.execute(
+            select(Payment).where(
+                Payment.invoice_id == invoice.id,
+                Payment.paypal_order_id == body.order_id,
+                Payment.status == "succeeded",
+            )
+        )
+    ).scalar_one_or_none()
+    if existing_payment is not None:
+        return {"status": "captured"}
     if invoice.status not in ("sent", "overdue"):
         raise HTTPException(
             status_code=409, detail="invoice is not payable in its current state"
