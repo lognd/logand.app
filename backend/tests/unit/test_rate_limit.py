@@ -5,8 +5,36 @@ from unittest.mock import AsyncMock, patch
 import pytest
 import redis
 from fastapi import HTTPException
+from starlette.datastructures import Headers
 
-from logand_backend.auth.rate_limit import RateLimiter
+from logand_backend.auth.rate_limit import RateLimiter, client_key
+
+
+class _FakeRequest:
+    def __init__(self, headers: dict[str, str], client_host: str | None) -> None:
+        self.headers = Headers(headers)
+
+        class _Client:
+            def __init__(self, host: str) -> None:
+                self.host = host
+
+        self.client = _Client(client_host) if client_host is not None else None
+
+
+def test_client_key_uses_rightmost_xff_entry_not_leftmost() -> None:
+    """The rightmost X-Forwarded-For entry is the one Caddy itself appends
+    (see FINDINGS.md M1) -- everything to its left is attacker-controlled
+    and must never be used as the rate-limit key.
+    """
+    request = _FakeRequest(
+        headers={"x-forwarded-for": "10.0.0.1, 203.0.113.7"}, client_host=None
+    )
+    assert client_key(request) == "203.0.113.7"  # type: ignore[arg-type]
+
+
+def test_client_key_falls_back_to_peer_when_no_xff() -> None:
+    request = _FakeRequest(headers={}, client_host="127.0.0.1")
+    assert client_key(request) == "127.0.0.1"  # type: ignore[arg-type]
 
 
 async def test_in_process_fallback_blocks_after_limit() -> None:

@@ -121,9 +121,17 @@ def rate_limit(
 
 def client_key(request: Request) -> str:
     # NOTE: trusts X-Forwarded-For only because Caddy (docs/design/11) is the
-    # sole entrypoint and sets it -- do not trust this header if the app is
-    # ever exposed directly without a reverse proxy in front of it.
+    # sole entrypoint and is the single trusted proxy hop in front of this
+    # app. Caddy's default reverse_proxy behavior APPENDS the real peer IP
+    # to any client-supplied X-Forwarded-For rather than replacing it, so a
+    # request can arrive as "X-Forwarded-For: <attacker-chosen>, <real-ip>".
+    # The RIGHTMOST entry is the one Caddy itself appended (the only
+    # trustworthy part of the header); everything to its left is
+    # attacker-controlled and must never be used as the rate-limit key --
+    # see FINDINGS.md M1. If a second proxy hop is ever added in front of
+    # Caddy, this must change to strip that many trusted hops off the
+    # right, not just take the single rightmost entry.
     forwarded = request.headers.get("x-forwarded-for")
     if forwarded:
-        return forwarded.split(",")[0].strip()
+        return forwarded.split(",")[-1].strip()
     return request.client.host if request.client else "unknown"
