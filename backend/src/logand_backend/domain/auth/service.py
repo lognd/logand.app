@@ -7,7 +7,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from typani.result import Err, Result
 
-from logand_backend.auth.passwords import hash_password, verify_password
+from logand_backend.auth.passwords import (
+    DUMMY_PASSWORD_HASH,
+    hash_password,
+    verify_password,
+)
 from logand_backend.auth.sessions import SessionInfo, create_session
 from logand_backend.db.models.users import User
 from logand_backend.errors import AuthError
@@ -56,6 +60,12 @@ async def login(
         )
     ).scalar_one_or_none()
     if user is None:
+        # Run a verify against a fixed dummy hash so this branch costs the
+        # same argon2 latency as the "wrong password" branch below --
+        # otherwise the immediate return here is a timing side-channel for
+        # account enumeration (see FINDINGS.md L1). The result is always
+        # discarded: there is no real password to accept.
+        verify_password(password, DUMMY_PASSWORD_HASH)
         _log.warning("login failed: no such account", extra={"email": email})
         return Err(AuthError.InvalidCredentials)
     if not verify_password(password, user.password_hash):
