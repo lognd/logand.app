@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-from datetime import datetime, timezone
 from decimal import Decimal
 
 import stripe
@@ -13,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from logand_backend.app.config import AppConfig
 from logand_backend.db.base import get_db
 from logand_backend.db.models.invoices import Invoice, Payment
+from logand_backend.domain.invoices.service import settle_invoice_if_paid
 from logand_backend.domain.notifications.notify import notify_payment_received
 from logand_backend.logging import get_logger
 
@@ -100,6 +100,17 @@ async def _handle_payment_intent_event(
     if existing is not None:
         existing.status = "succeeded" if succeeded else "failed"
         await db.flush()
+        if succeeded and await settle_invoice_if_paid(db, invoice):
+            _log.info(
+                "invoice marked paid via stripe (retried intent)",
+                extra={
+                    "invoice_id": str(invoice.id),
+                    "stripe_payment_intent_id": intent_id,
+                },
+            )
+            await notify_payment_received(
+                db, cfg, invoice, Decimal(str(existing.amount))
+            )
         return
 
     try:
@@ -113,7 +124,7 @@ async def _handle_payment_intent_event(
                 Payment(
                     invoice_id=invoice.id,
                     stripe_payment_intent_id=intent_id,
-                    amount=intent["amount"] / 100,
+                    amount=Decimal(intent["amount"]) / 100,
                     status="succeeded" if succeeded else "failed",
                     # NOT intent.get(...) -- `intent` is a stripe.StripeObject,
                     # not a plain dict, and this SDK version's StripeObject
@@ -136,9 +147,7 @@ async def _handle_payment_intent_event(
         return
 
     if succeeded:
-        invoice.status = "paid"
-        invoice.paid_at = datetime.now(timezone.utc)
-        await db.flush()
+        await settle_invoice_if_paid(db, invoice)
         _log.info(
             "invoice marked paid via stripe",
             extra={

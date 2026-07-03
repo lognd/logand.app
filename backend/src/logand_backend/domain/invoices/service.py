@@ -202,10 +202,26 @@ async def record_manual_payment(
     )
     await db.flush()
 
+    await settle_invoice_if_paid(db, invoice)
+
+    return Ok(payment_id)
+
+
+async def settle_invoice_if_paid(db: AsyncSession, invoice: Invoice) -> bool:
+    """Marks `invoice` "paid" once its succeeded payments cover
+    `amount_total`. Shared by every path that can record a succeeded
+    payment (manual recording here, the Stripe webhook's insert AND
+    update-existing branches, the PayPal capture route) so "paid" is
+    decided in exactly one place regardless of which path last touched
+    the invoice's payments. Idempotent: a no-op if already paid or still
+    short of the total. Returns True iff this call is what flipped it.
+    """
+    if invoice.status == "paid":
+        return False
     existing_total = (
         await db.execute(
             select(Payment).where(
-                Payment.invoice_id == invoice_id, Payment.status == "succeeded"
+                Payment.invoice_id == invoice.id, Payment.status == "succeeded"
             )
         )
     ).scalars()
@@ -213,9 +229,9 @@ async def record_manual_payment(
     if paid_so_far >= invoice.amount_total:
         invoice.status = "paid"
         invoice.paid_at = datetime.now(timezone.utc)
-    await db.flush()
-
-    return Ok(payment_id)
+        await db.flush()
+        return True
+    return False
 
 
 async def generate_invoice_pdf(
