@@ -138,8 +138,14 @@ async def refund_payment(
     round-trip never holds a DB connection and row lock for its
     duration. The Refund row (and any resulting payment/invoice status
     change) is then written in a short, freshly re-locked follow-up
-    transaction that re-validates the balance, closing the window where
-    two admins race a refund on the same invoice.
+    transaction. For a MANUAL refund (no stripe/paypal refund id) that
+    follow-up transaction re-validates the balance, closing the window
+    where two admins race a refund on the same invoice. For a
+    provider-backed refund (stripe or paypal), the follow-up transaction
+    does NOT re-validate the balance -- see `_record_refund`'s own
+    comment -- so over-refund protection there rests entirely on the
+    provider rejecting a refund that exceeds the charge's unrefunded
+    balance (see FINDINGS.md L2).
     """
     if refund.client_request_id is not None:
         existing = (
