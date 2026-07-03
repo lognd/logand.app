@@ -53,8 +53,14 @@ class InvoiceStats(BaseModel):
     # already reflected in total_refunded) portion of lost-dispute
     # clawbacks -- what the business actually kept.
     net_collected: Decimal
-    # Sum of amount_total for every unpaid-but-payable invoice (sent or
-    # overdue) -- money owed but not yet in hand.
+    # Sum, over every unpaid-but-payable invoice (sent or overdue), of
+    # amount_total minus that invoice's own net payments so far (floored
+    # at zero per invoice) -- money still owed but not yet in hand. NOT
+    # raw amount_total: a partially-paid-but-still-open invoice (e.g. a
+    # manual partial payment that doesn't cover the full total) already
+    # has its paid portion counted in total_collected, so counting the
+    # invoice's full amount_total here too would double-count that money
+    # -- see FINDINGS.md L1.
     outstanding: Decimal
     by_payment_method: dict[str, PaymentMethodBreakdown]
     open_disputes: int
@@ -165,13 +171,42 @@ async def get_invoice_stats(db: AsyncSession) -> InvoiceStats:
         )
     ).scalar_one()
 
-    outstanding = (
+    # Net-of-refunds paid-so-far per invoice -- same subquery shape as
+    # domain/invoices/service.py::get_paid_so_far (a partially_refunded
+    # payment still contributes its unrefunded remainder), just computed
+    # in bulk across every open invoice rather than one at a time, since
+    # this is an aggregate stats query rather than a single-invoice call.
+    # Reuses refunded_by_payment (defined above for lost_dispute_amount)
+    # rather than redefining the same subquery a second time.
+    paid_by_invoice = (
+        select(
+            Payment.invoice_id.label("invoice_id"),
+            func.sum(
+                Payment.amount - func.coalesce(refunded_by_payment.c.refunded, 0)
+            ).label("paid"),
+        )
+        .select_from(Payment)
+        .outerjoin(refunded_by_payment, refunded_by_payment.c.payment_id == Payment.id)
+        .where(Payment.status.in_(("succeeded", "partially_refunded")))
+        .group_by(Payment.invoice_id)
+        .subquery()
+    )
+    outstanding_rows = (
         await db.execute(
-            select(func.coalesce(func.sum(Invoice.amount_total), 0)).where(
+            select(Invoice.amount_total, func.coalesce(paid_by_invoice.c.paid, 0))
+            .outerjoin(paid_by_invoice, paid_by_invoice.c.invoice_id == Invoice.id)
+            .where(
                 Invoice.deleted_at.is_(None), Invoice.status.in_(("sent", "overdue"))
             )
         )
-    ).scalar_one()
+    ).all()
+    outstanding = sum(
+        (
+            max(Decimal(amount_total) - Decimal(paid), Decimal(0))
+            for amount_total, paid in outstanding_rows
+        ),
+        Decimal(0),
+    )
 
     method_rows = (
         await db.execute(
