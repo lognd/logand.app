@@ -38,6 +38,13 @@ class InvoiceError(ErrorSet):
     AmountMismatch = "client-supplied amount does not match server-computed total"
 
 
+class RefundError(ErrorSet):
+    PaymentNotFound = "payment was not found on this invoice"
+    PaymentNotRefundable = "payment is not in a state that can be refunded"
+    AmountExceedsBalance = "refund amount exceeds the payment's remaining balance"
+    InvalidAmount = "refund amount must be greater than zero"
+
+
 class BudgetError(ErrorSet):
     NotFound = "budget entry was not found"
     EvidenceRequired = (
@@ -82,6 +89,10 @@ class BomError(ErrorSet):
     # compute at all until the admin fills in unit_cost.
     MissingUnitCost = "an item on this bill of materials has no unit_cost set"
     InsufficientStock = "not enough stock to consume this bill of materials"
+    # A zero/negative build_quantity would make consume_bom's own
+    # "need <= 0, stock check always passes" math silently ADD stock
+    # instead of consuming it -- see consume_bom's own doc comment.
+    InvalidBuildQuantity = "build_quantity must be a positive integer"
 
 
 class PaymentProviderError(ErrorSet):

@@ -20,12 +20,34 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from logand_backend.db.base import Base
 
-_STATUS_CHECK = "status in ('draft','sent','paid','overdue','void')"
+_STATUS_CHECK = "status in ('draft','sent','paid','overdue','void','refunded')"
 _RECURRENCE_CHECK = (
     "recurrence_interval in ('weekly','monthly','quarterly','yearly') "
     "or recurrence_interval is null"
 )
-_PAYMENT_STATUS_CHECK = "status in ('pending','succeeded','failed','refunded')"
+# "partially_refunded" and "refunded" are driven by Refund rows summing to
+# less than / at-least the payment's own amount (see
+# domain/invoices/refunds.py::refund_payment) -- never set directly by a
+# caller. "disputed" is separate from all of these: a Stripe dispute can
+# land on a payment regardless of whether it's also been (partially)
+# refunded, tracked instead via the dispute_status/stripe_dispute_id
+# columns below so the two lifecycles (refund vs. dispute) don't collide
+# on one status value.
+_PAYMENT_STATUS_CHECK = (
+    "status in ('pending','succeeded','failed','refunded','partially_refunded')"
+)
+# Mirrors Stripe's own dispute.status values, collapsed to the buckets
+# this app actually acts differently on: "needs_response" and
+# "under_review" are both still-open (Stripe has ~6 finer-grained open
+# states -- needs_response/warning_needs_response/warning_under_review/
+# under_review -- collapsed to these two since this app doesn't yet do
+# anything different between them), "won"/"lost" are terminal. See
+# api/webhooks.py's charge.dispute.* handler for what maps to what.
+_DISPUTE_STATUS_CHECK = (
+    "dispute_status in ('needs_response','under_review','won','lost') "
+    "or dispute_status is null"
+)
+_REFUND_STATUS_CHECK = "status in ('succeeded','failed')"
 # "stripe" stays the implicit default for the existing Stripe PaymentIntent
 # flow (api/invoices_public.py's /pay + api/webhooks.py) -- the other four
 # are all recorded manually by an admin (domain/invoices/service.py's
@@ -117,6 +139,7 @@ class Payment(Base):
     __table_args__ = (
         CheckConstraint(_PAYMENT_STATUS_CHECK, name="ck_payments_status"),
         CheckConstraint(_PAYMENT_METHOD_CHECK, name="ck_payments_method"),
+        CheckConstraint(_DISPUTE_STATUS_CHECK, name="ck_payments_dispute_status"),
         # Defined here too, not only in migration 0003_payment_idempotency
         # -- integration/system tests build their schema from THIS
         # metadata via Base.metadata.create_all() (see conftest.py's
@@ -141,6 +164,12 @@ class Payment(Base):
             unique=True,
             postgresql_where=text("paypal_order_id IS NOT NULL"),
         ),
+        Index(
+            "uq_payments_stripe_dispute_id",
+            "stripe_dispute_id",
+            unique=True,
+            postgresql_where=text("stripe_dispute_id IS NOT NULL"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -160,6 +189,19 @@ class Payment(Base):
     # API (domain/payments/providers/paypal.py) -- null for a manually-
     # recorded PayPal payment, same reasoning as stripe_payment_intent_id.
     paypal_order_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # PayPal refunds are issued against a CAPTURE id, not the order id --
+    # captured before capture_order's return value even reached this
+    # model (see domain/payments/providers/paypal.py::PayPalCapture),
+    # only set for method="paypal" rows created via the real Orders API,
+    # same as paypal_order_id above.
+    paypal_capture_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Both null until a real Stripe `charge.dispute.*` webhook event
+    # lands on this payment's charge (api/webhooks.py) -- see
+    # _DISPUTE_STATUS_CHECK above for the value set. stripe_dispute_id is
+    # the idempotency key for that handler, same reasoning as
+    # stripe_payment_intent_id's own uniqueness index.
+    dispute_status: Mapped[str | None] = mapped_column(Text, nullable=True)
+    stripe_dispute_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Which admin recorded this -- only ever set for manually-recorded
     # payments (method != "stripe" with no processor reference above);
     # null for anything created automatically from a real Stripe webhook
@@ -176,6 +218,70 @@ class Payment(Base):
     amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     status: Mapped[str] = mapped_column(Text, nullable=False, default="pending")
     transaction_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class Refund(Base):
+    """One (partial or full) refund issued against a Payment. Deliberately
+    its own table rather than a `refunded_amount` counter column on
+    Payment: a single payment can be refunded in more than one
+    installment (a partial refund now, another later), and each one
+    needs its own amount/reason/provider-reference/timestamp for the
+    audit trail -- see domain/invoices/refunds.py::refund_payment, the
+    only writer of this table. A payment's total refunded amount is
+    always SUM(Refund.amount) WHERE status='succeeded' for that
+    payment_id, computed on read rather than cached anywhere.
+    """
+
+    __tablename__ = "refunds"
+    __table_args__ = (
+        CheckConstraint(_REFUND_STATUS_CHECK, name="ck_refunds_status"),
+        Index(
+            "uq_refunds_stripe_refund_id",
+            "stripe_refund_id",
+            unique=True,
+            postgresql_where=text("stripe_refund_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_refunds_paypal_refund_id",
+            "paypal_refund_id",
+            unique=True,
+            postgresql_where=text("paypal_refund_id IS NOT NULL"),
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    payment_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("payments.id", ondelete="RESTRICT"), nullable=False
+    )
+    # Denormalized from payment.invoice_id -- lets the admin invoice-detail
+    # view fetch every refund for an invoice in one query instead of a
+    # join through payments for every row.
+    invoice_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("invoices.id", ondelete="RESTRICT"), nullable=False
+    )
+    amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    # Free-form admin-entered reason ("customer cancelled," "duplicate
+    # charge," ...) -- never required, never LaTeX/HTML-escaped here, same
+    # convention as Payment.note.
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Set only for a refund actually issued through the Stripe/PayPal
+    # provider API; both null for a manual-payment refund, which is pure
+    # bookkeeping (the admin returned the money outside this system --
+    # Zelle, cash, a manually-sent PayPal transfer -- there is no
+    # provider call to make).
+    stripe_refund_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    paypal_refund_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(Text, nullable=False, default="succeeded")
+    # Which admin issued this -- always set; unlike Payment.recorded_by
+    # there is no automated path that creates a Refund row.
+    recorded_by: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

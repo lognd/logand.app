@@ -56,24 +56,47 @@ async def capture_order(order_id: str) -> dict:
     # amount comes from whatever /orders was created with, tracked in
     # _orders above, so a system test can confirm the invoice actually
     # gets marked paid for the right amount rather than a fixed fake one.
-    order = _orders.get(order_id, {"amount": {"currency_code": "USD", "value": "0.00"}})
+    order = _orders.get(
+        order_id,
+        {
+            "reference_id": "unknown",
+            "amount": {"currency_code": "USD", "value": "0.00"},
+        },
+    )
+    capture_id = f"FAKE-CAPTURE-{uuid.uuid4().hex[:12].upper()}"
     return {
         "id": order_id,
         "status": "COMPLETED",
         "purchase_units": [
             {
+                # Real PayPal echoes reference_id back on the capture
+                # response too, not just on create -- domain/payments/
+                # providers/paypal.py's capture_order relies on this to
+                # let the caller verify a captured order actually belongs
+                # to the invoice it's being applied to.
+                "reference_id": order["reference_id"],
                 "payments": {
                     "captures": [
                         {
-                            "id": f"FAKE-CAPTURE-{uuid.uuid4().hex[:12].upper()}",
+                            "id": capture_id,
                             "status": "COMPLETED",
                             "amount": order["amount"],
                         }
                     ]
-                }
+                },
             }
         ],
     }
+
+
+@app.post("/v2/payments/captures/{capture_id}/refund")
+async def refund_capture(capture_id: str) -> dict:
+    # Real PayPal accepts an explicit amount body for a partial refund --
+    # this double only needs to echo an id and status back, since
+    # refund_capture (domain/payments/providers/paypal.py) only reads
+    # those two fields off the response.
+    refund_id = f"FAKE-REFUND-{uuid.uuid4().hex[:12].upper()}"
+    return {"id": refund_id, "status": "COMPLETED"}
 
 
 if __name__ == "__main__":

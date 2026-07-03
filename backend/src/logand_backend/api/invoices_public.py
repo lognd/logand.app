@@ -307,6 +307,7 @@ async def capture_invoice_paypal_payment(
             invoice_id=invoice.id,
             method="paypal",
             paypal_order_id=capture.order_id,
+            paypal_capture_id=capture.capture_id,
             amount=capture.captured_amount,
             status="succeeded",
         )

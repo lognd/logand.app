@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from decimal import Decimal
 
 import httpx
+from pydantic import BaseModel
 from typani.result import Err, Ok, Result
 
 from logand_backend.app.config import AppConfig
@@ -35,17 +35,38 @@ def _pay_page_url(cfg: AppConfig, invoice_id: str) -> str:
     return f"{cfg.public_base_url}/invoices/{invoice_id}/pay"
 
 
-@dataclass(frozen=True)
-class PayPalOrder:
+class PayPalOrder(BaseModel):
+    model_config = {"frozen": True}
+
     order_id: str
     approval_url: str | None
 
 
-@dataclass(frozen=True)
-class PayPalCapture:
+class PayPalCapture(BaseModel):
+    model_config = {"frozen": True}
+
     order_id: str
     status: str
     captured_amount: Decimal
+    captured_currency: str
+    # PayPal's own echo of the `reference_id` this app set on create_order
+    # (the invoice id, as a string) -- the caller MUST verify this matches
+    # the invoice it's capturing against before trusting the capture at
+    # all, see api/invoices_public.py's capture route. Never assume the
+    # client-supplied order_id in the capture request actually belongs to
+    # the invoice URL it was posted to.
+    reference_id: str | None
+    # PayPal refunds are issued against THIS id, not order_id -- see
+    # refund_capture below. Stored on Payment.paypal_capture_id so a
+    # later refund doesn't need to re-derive it.
+    capture_id: str
+
+
+class PayPalRefund(BaseModel):
+    model_config = {"frozen": True}
+
+    refund_id: str
+    status: str
 
 
 async def _get_access_token(
@@ -145,11 +166,54 @@ async def capture_order(
             return Err(PaymentProviderError.RequestFailed)
 
         body = resp.json()
-        capture = body["purchase_units"][0]["payments"]["captures"][0]
+        purchase_unit = body["purchase_units"][0]
+        capture = purchase_unit["payments"]["captures"][0]
         return Ok(
             PayPalCapture(
                 order_id=body["id"],
                 status=body["status"],
                 captured_amount=Decimal(capture["amount"]["value"]),
+                captured_currency=capture["amount"]["currency_code"],
+                reference_id=purchase_unit.get("reference_id"),
+                capture_id=capture["id"],
             )
         )
+
+
+async def refund_capture(
+    cfg: AppConfig, capture_id: str, amount: Decimal, currency: str
+) -> Result[PayPalRefund, PaymentProviderError]:
+    """Refunds (fully or partially) a completed capture -- PayPal's
+    Refunds API is keyed on the CAPTURE id, not the order id, unlike
+    create_order/capture_order above. Called from
+    domain/invoices/refunds.py::refund_payment for any Payment whose
+    method is "paypal" and paypal_capture_id is set (i.e. a real Orders
+    API payment, not a manually-recorded one -- see Payment.
+    paypal_capture_id's own doc comment).
+    """
+    if not is_configured(cfg):
+        return Err(PaymentProviderError.NotConfigured)
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        token_result = await _get_access_token(client, cfg)
+        if token_result.is_err:
+            return Err(token_result.danger_err)
+        token = token_result.danger_ok
+
+        try:
+            resp = await client.post(
+                f"{_api_base(cfg)}/v2/payments/captures/{capture_id}/refund",
+                headers={"Authorization": f"Bearer {token}"},
+                json={
+                    "amount": {
+                        "value": f"{amount:.2f}",
+                        "currency_code": currency.upper(),
+                    }
+                },
+            )
+            resp.raise_for_status()
+        except httpx.HTTPError:
+            return Err(PaymentProviderError.RequestFailed)
+
+        body = resp.json()
+        return Ok(PayPalRefund(refund_id=body["id"], status=body["status"]))

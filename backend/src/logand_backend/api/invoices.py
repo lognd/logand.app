@@ -13,8 +13,9 @@ from logand_backend.api.errors import to_http_exception
 from logand_backend.app.config import AppConfig
 from logand_backend.auth.sessions import SessionInfo, require_admin
 from logand_backend.db.base import get_db
-from logand_backend.db.models.invoices import Invoice, InvoiceLineItem, Payment
+from logand_backend.db.models.invoices import Invoice, InvoiceLineItem, Payment, Refund
 from logand_backend.domain.invoices.pdf.renderer import PdfRenderError
+from logand_backend.domain.invoices.refunds import RefundInput, refund_payment
 from logand_backend.domain.invoices.service import (
     LineItemInput,
     ManualPaymentInput,
@@ -142,6 +143,25 @@ async def get_invoice(
         .scalars()
         .all()
     )
+    refunds = (
+        (await db.execute(select(Refund).where(Refund.invoice_id == invoice_id)))
+        .scalars()
+        .all()
+    )
+    refunded_by_payment: dict[UUID, list[dict]] = {}
+    for r in refunds:
+        refunded_by_payment.setdefault(r.payment_id, []).append(
+            {
+                "id": str(r.id),
+                "amount": str(r.amount),
+                "reason": r.reason,
+                "status": r.status,
+                "stripe_refund_id": r.stripe_refund_id,
+                "paypal_refund_id": r.paypal_refund_id,
+                "recorded_by": str(r.recorded_by),
+                "created_at": r.created_at.isoformat(),
+            }
+        )
 
     return {
         **_invoice_summary(invoice),
@@ -164,6 +184,8 @@ async def get_invoice(
                 "transaction_id": p.transaction_id,
                 "note": p.note,
                 "recorded_by": str(p.recorded_by) if p.recorded_by else None,
+                "dispute_status": p.dispute_status,
+                "refunds": refunded_by_payment.get(p.id, []),
             }
             for p in payments
         ],
@@ -184,6 +206,25 @@ async def record_manual_invoice_payment(
     if invoice is not None:
         cfg = AppConfig.from_external(argparse.Namespace())
         await notify_payment_received(db, cfg, invoice, payment.amount)
+    return {"id": str(result.danger_ok)}
+
+
+@router.post("/{invoice_id}/payments/{payment_id}/refund")
+async def refund_invoice_payment(
+    invoice_id: UUID,
+    payment_id: UUID,
+    body: RefundInput,
+    admin: SessionInfo = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, str]:
+    if body.payment_id != payment_id:
+        raise HTTPException(
+            status_code=422, detail="payment_id in body must match the URL"
+        )
+    cfg = AppConfig.from_external(argparse.Namespace())
+    result = await refund_payment(db, cfg, invoice_id, admin.user_id, body)
+    if result.is_err:
+        raise to_http_exception(result.danger_err)
     return {"id": str(result.danger_ok)}
 
 

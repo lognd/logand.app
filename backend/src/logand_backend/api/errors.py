@@ -14,6 +14,7 @@ from logand_backend.errors import (
     MileageError,
     PaymentProviderError,
     ReceiptError,
+    RefundError,
     UserError,
 )
 
@@ -30,6 +31,10 @@ _STATUS_MAP: dict[ErrorSet, int] = {
     # customer's invoice exists, see docs/design/04
     InvoiceError.InvalidState: 409,
     InvoiceError.AmountMismatch: 422,
+    RefundError.PaymentNotFound: 404,
+    RefundError.PaymentNotRefundable: 409,
+    RefundError.AmountExceedsBalance: 422,
+    RefundError.InvalidAmount: 422,
     BudgetError.NotFound: 404,
     BudgetError.EvidenceRequired: 409,
     InventoryError.NotFound: 404,
@@ -47,6 +52,7 @@ _STATUS_MAP: dict[ErrorSet, int] = {
     BomError.DuplicateItem: 409,
     BomError.MissingUnitCost: 422,
     BomError.InsufficientStock: 422,
+    BomError.InvalidBuildQuantity: 422,
     UserError.NotFound: 404,
     UserError.CannotModifyAdmin: 403,
     UserError.PasswordTooShort: 422,
@@ -84,6 +90,7 @@ def _verify_complete_mapping() -> None:
         MileageError,
         PaymentProviderError,
         ReceiptError,
+        RefundError,
         UserError,
     ):
         for variant in error_set_cls:
