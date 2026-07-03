@@ -47,7 +47,7 @@ _DISPUTE_STATUS_CHECK = (
     "dispute_status in ('needs_response','under_review','won','lost') "
     "or dispute_status is null"
 )
-_REFUND_STATUS_CHECK = "status in ('succeeded','failed')"
+_REFUND_STATUS_CHECK = "status in ('pending','succeeded','failed')"
 # "stripe" stays the implicit default for the existing Stripe PaymentIntent
 # flow (api/invoices_public.py's /pay + api/webhooks.py) -- the other four
 # are all recorded manually by an admin (domain/invoices/service.py's

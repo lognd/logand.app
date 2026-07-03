@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from typani.result import Err, Ok, Result
 
 from logand_backend.app.config import AppConfig
+from logand_backend.domain.payments.currency import format_major_units
 from logand_backend.errors import PaymentProviderError
 
 # https://api-m.sandbox.paypal.com / https://api-m.paypal.com -- PayPal's
@@ -118,7 +119,7 @@ async def create_order(
                             "reference_id": invoice_id,
                             "amount": {
                                 "currency_code": currency.upper(),
-                                "value": f"{amount:.2f}",
+                                "value": format_major_units(amount, currency),
                             },
                         }
                     ],
@@ -181,7 +182,11 @@ async def capture_order(
 
 
 async def refund_capture(
-    cfg: AppConfig, capture_id: str, amount: Decimal, currency: str
+    cfg: AppConfig,
+    capture_id: str,
+    amount: Decimal,
+    currency: str,
+    idempotency_key: str | None = None,
 ) -> Result[PayPalRefund, PaymentProviderError]:
     """Refunds (fully or partially) a completed capture -- PayPal's
     Refunds API is keyed on the CAPTURE id, not the order id, unlike
@@ -190,6 +195,55 @@ async def refund_capture(
     method is "paypal" and paypal_capture_id is set (i.e. a real Orders
     API payment, not a manually-recorded one -- see Payment.
     paypal_capture_id's own doc comment).
+
+    idempotency_key, when given, is sent as PayPal-Request-Id -- a retry
+    (e.g. after a crash between this call succeeding and the caller's DB
+    write committing) with the SAME key returns PayPal's original
+    response instead of issuing a second real refund.
+    """
+    if not is_configured(cfg):
+        return Err(PaymentProviderError.NotConfigured)
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        token_result = await _get_access_token(client, cfg)
+        if token_result.is_err:
+            return Err(token_result.danger_err)
+        token = token_result.danger_ok
+
+        headers = {"Authorization": f"Bearer {token}"}
+        if idempotency_key is not None:
+            headers["PayPal-Request-Id"] = idempotency_key
+
+        try:
+            resp = await client.post(
+                f"{_api_base(cfg)}/v2/payments/captures/{capture_id}/refund",
+                headers=headers,
+                json={
+                    "amount": {
+                        "value": format_major_units(amount, currency),
+                        "currency_code": currency.upper(),
+                    }
+                },
+            )
+            resp.raise_for_status()
+        except httpx.HTTPError:
+            return Err(PaymentProviderError.RequestFailed)
+
+        body = resp.json()
+        return Ok(PayPalRefund(refund_id=body["id"], status=body["status"]))
+
+
+async def get_refund_status(
+    cfg: AppConfig, refund_id: str
+) -> Result[PayPalRefund, PaymentProviderError]:
+    """Polls a single refund's current status -- PayPal delivers no
+    webhook this app subscribes to for refund completion (unlike Stripe's
+    charge.refund.updated, see api/webhooks.py), so a refund recorded
+    "pending" (refund_capture above can return PENDING for some funding
+    sources) has no other way to ever settle. Called by
+    domain/invoices/refunds.py::reconcile_pending_paypal_refunds, which
+    scripts/scheduler.py runs on the same daily cadence as its other
+    housekeeping jobs.
     """
     if not is_configured(cfg):
         return Err(PaymentProviderError.NotConfigured)
@@ -201,15 +255,9 @@ async def refund_capture(
         token = token_result.danger_ok
 
         try:
-            resp = await client.post(
-                f"{_api_base(cfg)}/v2/payments/captures/{capture_id}/refund",
+            resp = await client.get(
+                f"{_api_base(cfg)}/v2/payments/refunds/{refund_id}",
                 headers={"Authorization": f"Bearer {token}"},
-                json={
-                    "amount": {
-                        "value": f"{amount:.2f}",
-                        "currency_code": currency.upper(),
-                    }
-                },
             )
             resp.raise_for_status()
         except httpx.HTTPError:

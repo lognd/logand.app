@@ -81,6 +81,39 @@ async def notify_payment_received(
         )
 
 
+async def notify_refund_settled(
+    db: AsyncSession, cfg: AppConfig, invoice: Invoice, amount: Decimal
+) -> None:
+    """A refund that settled asynchronously (charge.refund.updated
+    transitioning a "pending" Refund to "succeeded") is otherwise
+    invisible to the customer -- unlike a synchronous refund, which the
+    admin who issued it can already see confirmed in the response, an
+    async settlement has no other signal (see L3 in FINDINGS.md)."""
+    if not mailer.is_configured(cfg):
+        return
+    customer = await db.get(User, invoice.customer_id)
+    if customer is None or customer.emails_opted_out:
+        return
+
+    subject, html, text = templates.refund_settled(
+        cfg, invoice_id=invoice.id, amount=amount, currency=invoice.currency
+    )
+    try:
+        await mailer.send_email(
+            cfg,
+            to_email=customer.email,
+            to_user_id=customer.id,
+            subject=subject,
+            content_html=html,
+            content_text=text,
+        )
+    except Exception:
+        _log.error(
+            "failed to send refund-settled notification",
+            extra={"invoice_id": str(invoice.id)},
+        )
+
+
 async def notify_dispute_updated(
     db: AsyncSession, cfg: AppConfig, invoice: Invoice, dispute_status: str
 ) -> None:

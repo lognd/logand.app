@@ -80,7 +80,7 @@ def upgrade() -> None:
         ),
     )
     op.create_check_constraint(
-        "ck_refunds_status", "refunds", "status in ('succeeded','failed')"
+        "ck_refunds_status", "refunds", "status in ('pending','succeeded','failed')"
     )
     op.create_foreign_key(
         "fk_refunds_payment_id",

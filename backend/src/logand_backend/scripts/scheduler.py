@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import argparse
 import asyncio
 from datetime import datetime, time, timedelta, timezone
 
+from logand_backend.app.config import AppConfig
+from logand_backend.db import base as db_base
+from logand_backend.domain.invoices.refunds import reconcile_pending_paypal_refunds
 from logand_backend.logging.logger import get_logger, log_dir
 from logand_backend.logging.retention import prune_logs
 from logand_backend.scripts.generate_recurring_invoices import run
@@ -34,11 +38,13 @@ async def main_loop() -> None:
     a non-root `appuser` (see backend/Dockerfile), and cron's daemon
     needs root to manage per-user crontabs. A plain sleep-until-next-run
     loop needs no OS package and no elevated user at all, at the cost of
-    only running one job on one fixed schedule (fine -- this container's
-    only job, ever, is this one)."""
+    only running jobs on one fixed shared schedule (fine -- every job
+    below is daily housekeeping with no reason to run on its own cadence;
+    see reconcile_pending_paypal_refunds' own doc comment for why it
+    rides along here rather than getting a dedicated service)."""
     while True:
         delay = seconds_until_next_run(datetime.now(timezone.utc))
-        log.info("next recurring-invoice run in %.0f seconds", delay)
+        log.info("next scheduled run in %.0f seconds", delay)
         await asyncio.sleep(delay)
         try:
             created = await run()
@@ -50,6 +56,27 @@ async def main_loop() -> None:
             # blip, say) must not kill the whole long-running container;
             # it'll just try again at tomorrow's scheduled time.
             log.exception("recurring-invoice run failed")
+
+        # Independent DB session from run()'s own (that one opens and
+        # disposes its own engine per-call, same as this) -- polls any
+        # PayPal refund still "pending" for real settlement (see M1 in
+        # FINDINGS.md history: PayPal delivers no webhook this app
+        # subscribes to for refund completion, unlike Stripe).
+        try:
+            cfg = AppConfig.from_external(argparse.Namespace())
+            db_base.init_engine(cfg.database_url)
+            session = db_base.get_session()
+            try:
+                settled = await reconcile_pending_paypal_refunds(session, cfg)
+                if settled:
+                    log.info(
+                        "paypal refund reconciliation: settled %d refund(s)", settled
+                    )
+            finally:
+                await session.close()
+                await db_base.dispose_engine()
+        except Exception:
+            log.exception("paypal refund reconciliation run failed")
 
         # Same daily cadence as the recurring-invoice job above -- log
         # rotation/pruning needs to run somewhere on a schedule, and this

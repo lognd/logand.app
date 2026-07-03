@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-from decimal import Decimal
 
 import stripe
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -11,12 +10,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from logand_backend.app.config import AppConfig
 from logand_backend.db.base import get_db
-from logand_backend.db.models.invoices import Invoice, Payment
+from logand_backend.db.models.invoices import Invoice, Payment, Refund
+from logand_backend.domain.invoices.refunds import (
+    STRIPE_REFUND_STATUS_MAP,
+    apply_refund_settlement,
+)
 from logand_backend.domain.invoices.service import settle_invoice_if_paid
 from logand_backend.domain.notifications.notify import (
     notify_dispute_updated,
     notify_payment_received,
 )
+from logand_backend.domain.payments.currency import from_minor_units
 from logand_backend.logging import get_logger
 
 router = APIRouter(prefix="/api/webhooks", tags=["webhooks"])
@@ -80,6 +84,8 @@ async def stripe_webhook(
         "charge.dispute.closed",
     ):
         await _handle_dispute_event(db, event, cfg)
+    elif event["type"] == "charge.refund.updated":
+        await _handle_refund_updated_event(db, event, cfg)
 
     return {"status": "received"}
 
@@ -132,9 +138,7 @@ async def _handle_payment_intent_event(
                     "stripe_payment_intent_id": intent_id,
                 },
             )
-            await notify_payment_received(
-                db, cfg, invoice, Decimal(str(existing.amount))
-            )
+            await notify_payment_received(db, cfg, invoice, existing.amount)
         return
 
     try:
@@ -148,7 +152,7 @@ async def _handle_payment_intent_event(
                 Payment(
                     invoice_id=invoice.id,
                     stripe_payment_intent_id=intent_id,
-                    amount=Decimal(intent["amount"]) / 100,
+                    amount=from_minor_units(intent["amount"], invoice.currency),
                     status="succeeded" if succeeded else "failed",
                     # NOT intent.get(...) -- `intent` is a stripe.StripeObject,
                     # not a plain dict, and this SDK version's StripeObject
@@ -179,7 +183,9 @@ async def _handle_payment_intent_event(
                 "stripe_payment_intent_id": intent_id,
             },
         )
-        await notify_payment_received(db, cfg, invoice, Decimal(intent["amount"]) / 100)
+        await notify_payment_received(
+            db, cfg, invoice, from_minor_units(intent["amount"], invoice.currency)
+        )
         return
     _log.warning(
         "stripe payment_intent failed",
@@ -222,11 +228,55 @@ async def _handle_dispute_event(db: AsyncSession, event: dict, cfg: AppConfig) -
         )
         return
 
-    was_new = payment.dispute_status is None
+    prior_status = payment.dispute_status
+    status_changed = prior_status != mapped_status
     payment.dispute_status = mapped_status
     payment.stripe_dispute_id = dispute_id
     await db.flush()
 
     invoice = await db.get(Invoice, payment.invoice_id)
-    if invoice is not None and (was_new or event["type"] == "charge.dispute.closed"):
+    # Notify only on a real status transition -- Stripe webhook delivery
+    # is at-least-once, so a redelivered charge.dispute.closed (same
+    # mapped_status as what we already recorded) must not re-send the
+    # "dispute resolved" email (see FINDINGS.md L1).
+    if invoice is not None and status_changed:
         await notify_dispute_updated(db, cfg, invoice, mapped_status)
+
+
+async def _handle_refund_updated_event(
+    db: AsyncSession, event: dict, cfg: AppConfig
+) -> None:
+    """A refund this app recorded as "pending" (domain/invoices/refunds.py
+    -- Stripe doesn't always settle a refund synchronously) has since
+    transitioned. Looks up the row and hands off to
+    domain/invoices/refunds.py's apply_refund_settlement for the actual
+    status flip and any payment/invoice/notification side effects --
+    that function is shared with reconcile_pending_paypal_refunds, which
+    is PayPal's equivalent of this webhook (PayPal delivers no refund-
+    completion webhook this app subscribes to, so it's reconciled by
+    polling instead; see that function's own doc comment).
+    """
+    stripe_refund = event["data"]["object"]
+    stripe_refund_id = stripe_refund["id"]
+    mapped_status = STRIPE_REFUND_STATUS_MAP.get(stripe_refund["status"])
+    if mapped_status is None or mapped_status == "pending":
+        return
+
+    refund = (
+        await db.execute(
+            select(Refund)
+            .where(Refund.stripe_refund_id == stripe_refund_id)
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if refund is None:
+        _log.warning(
+            "stripe refund-updated webhook: no refund matches this id",
+            extra={"stripe_refund_id": stripe_refund_id},
+        )
+        return
+    if refund.status != "pending":
+        # Already settled (a replayed/duplicate delivery) -- idempotent no-op.
+        return
+
+    await apply_refund_settlement(db, cfg, refund, mapped_status)

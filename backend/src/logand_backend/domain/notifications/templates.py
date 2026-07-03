@@ -63,6 +63,29 @@ def payment_received(
     return subject, html, text
 
 
+def refund_settled(
+    cfg: AppConfig,
+    *,
+    invoice_id: UUID,
+    amount: Decimal,
+    currency: str,
+) -> tuple[str, str, str]:
+    subject = f"Refund processed -- {cfg.invoice_business_name}"
+    invoices_url = f"{cfg.public_base_url}/invoices"
+
+    html = (
+        f"<p>Your refund of {amount} {currency.upper()} for invoice "
+        f"{invoice_id} has been processed.</p>"
+        f'<p><a href="{invoices_url}">View your invoices</a>.</p>'
+    )
+    text = (
+        f"Your refund of {amount} {currency.upper()} for "
+        f"invoice {invoice_id} has been processed.\n\n"
+        f"View your invoices: {invoices_url}\n"
+    )
+    return subject, html, text
+
+
 def dispute_updated(
     cfg: AppConfig,
     *,
