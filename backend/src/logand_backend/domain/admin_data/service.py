@@ -50,6 +50,19 @@ def _get_table(table_name: str) -> Table | None:
     return Base.metadata.tables.get(table_name)
 
 
+def _validate_row_id(row_id: str) -> DataError | None:
+    """Every admin_data table's `id` column is a UUID -- a `row_id` that
+    isn't a valid UUID would otherwise reach Postgres as a raw string
+    compared against a UUID column, which raises at the DB level (an
+    uncaught 500) instead of the intended RowNotFound (404). Reject it
+    here, before any query runs."""
+    try:
+        uuid.UUID(row_id)
+    except ValueError:
+        return DataError.RowNotFound
+    return None
+
+
 def get_table_columns(table_name: str) -> Result[list[dict], DataError]:
     table = _get_table(table_name)
     if table is None:
@@ -118,6 +131,9 @@ async def get_row(
     table = _get_table(table_name)
     if table is None:
         return Err(DataError.TableNotFound)
+    invalid_id = _validate_row_id(row_id)
+    if invalid_id is not None:
+        return Err(invalid_id)
     row = (await db.execute(select(table).where(table.c.id == row_id))).first()
     if row is None:
         return Err(DataError.RowNotFound)
@@ -176,6 +192,9 @@ async def update_row(
     table = _get_table(table_name)
     if table is None:
         return Err(DataError.TableNotFound)
+    invalid_id = _validate_row_id(row_id)
+    if invalid_id is not None:
+        return Err(invalid_id)
     invalid = _validate_changes(table, changes)
     if invalid is not None:
         return Err(invalid)
@@ -227,6 +246,9 @@ async def delete_row(
     table = _get_table(table_name)
     if table is None:
         return Err(DataError.TableNotFound)
+    invalid_id = _validate_row_id(row_id)
+    if invalid_id is not None:
+        return Err(invalid_id)
 
     current = (
         await db.execute(select(table).where(table.c.id == row_id).with_for_update())
