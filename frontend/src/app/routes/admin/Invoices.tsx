@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError } from "../../../api/client";
+import { formatMajorUnits } from "../../../lib/currency";
 import { getBomCostBreakdown, listBoms } from "../../../api/bom";
 import { listCustomers } from "../../../api/customers";
 import {
@@ -103,10 +104,12 @@ const REFUNDABLE_PAYMENT_STATUSES = new Set(["succeeded", "partially_refunded"])
 
 function RefundForm({
   invoiceId,
+  currency,
   payment,
   onRefunded,
 }: {
   invoiceId: string;
+  currency: string;
   payment: InvoicePayment;
   onRefunded: () => void;
 }) {
@@ -189,7 +192,7 @@ function RefundForm({
     >
       <div>
         <label htmlFor={`refund-amount-${payment.id}`} className={LABEL_CLASS}>
-          Amount (blank = full remaining {remaining.toFixed(2)})
+          Amount (blank = full remaining {formatMajorUnits(remaining, currency)})
         </label>
         <input
           id={`refund-amount-${payment.id}`}
@@ -197,7 +200,7 @@ function RefundForm({
           step="0.01"
           min="0"
           max={remaining}
-          placeholder={remaining.toFixed(2)}
+          placeholder={formatMajorUnits(remaining, currency)}
           value={amount}
           onChange={(e) => setAmount(e.target.value)}
           className={INPUT_CLASS}
@@ -305,6 +308,7 @@ function PaymentsPanel({ invoice }: { invoice: Invoice }) {
               )}
               <RefundForm
                 invoiceId={invoice.id}
+                currency={invoice.currency}
                 payment={payment}
                 onRefunded={invalidate}
               />
