@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import html
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import HTMLResponse
@@ -47,9 +48,7 @@ async def unsubscribe_get(token: str) -> HTMLResponse:
     cfg = AppConfig.from_external(argparse.Namespace())
     if mailer.verify_unsubscribe_token(token, cfg) is None:
         raise HTTPException(status_code=400, detail=_INVALID_TOKEN_DETAIL)
-    escaped_token = (
-        token.replace("&", "&amp;").replace('"', "&quot;").replace("<", "&lt;")
-    )
+    escaped_token = html.escape(token, quote=True)
     return HTMLResponse(
         "<html><body>"
         "<p>Click below to confirm you want to unsubscribe from these emails.</p>"
