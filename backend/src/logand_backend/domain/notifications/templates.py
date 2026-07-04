@@ -33,7 +33,7 @@ def _cta(url: str, label: str) -> str:
     what sells it as a command rather than a normal link.
     """
     return (
-        f'<a href="{url}" class="ln-cta" '
+        f'<a href="{html_escape(url, quote=True)}" class="ln-cta" '
         f'style="color:{_CTA_COLOR}; text-decoration:none; font-weight:600;">'
         f"$ {html_escape(label)}</a>"
     )
@@ -83,7 +83,7 @@ def payment_received(
 
     html = (
         f'<p style="margin:0 0 16px;">We received your payment of '
-        f"<strong>{amount} {currency.upper()}</strong> for invoice "
+        f"<strong>{amount} {html_escape(currency.upper())}</strong> for invoice "
         f"{invoice_id}. Thank you.</p>"
         f'<p style="margin:0;">{_cta(invoices_url, "view-invoices")}</p>'
     )
@@ -107,7 +107,7 @@ def refund_settled(
 
     html = (
         f'<p style="margin:0 0 16px;">Your refund of '
-        f"<strong>{amount} {currency.upper()}</strong> for invoice "
+        f"<strong>{amount} {html_escape(currency.upper())}</strong> for invoice "
         f"{invoice_id} has been processed.</p>"
         f'<p style="margin:0;">{_cta(invoices_url, "view-invoices")}</p>'
     )
