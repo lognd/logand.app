@@ -124,6 +124,37 @@ cd backend && uv run python -m ../scripts/prodtest/cli
 Prints one line per probe (`PASS`/`FAIL`/`SKIP`), a detail block under
 any non-PASS, and a final tally. Non-zero exit on any `FAIL`.
 
+Run a subset with `-k` (pytest-style, case-insensitive substring match
+against each probe's `name`), e.g. to only exercise the email-sending
+probes:
+
+```bash
+python -m scripts.prodtest.cli -k notifications
+```
+
+Probes excluded by `-k` are reported `SKIP`, same as a capability-gated
+skip, so the summary line still accounts for every probe.
+
+## Recovering from an interrupted run
+
+If a run gets killed from outside Python (Ctrl-C is fine -- that's a
+normal `KeyboardInterrupt` a probe's own `finally` still sees; an
+external `kill`/`pkill` on the process is not: it terminates the
+interpreter immediately, so whichever probe was mid-`execute()` never
+gets its `cleanup.close()`), check production for anything left behind:
+
+```bash
+python -m scripts.prodtest.orphan_check          # report only
+python -m scripts.prodtest.orphan_check --delete # report + clean up
+```
+
+Every probe tags its throwaway customers with "prodtest" in the email
+local-part, so this is a real, complete audit via
+`/api/admin/customers?q=prodtest` plus each match's invoices/payments/
+refunds -- not a guess from stdout that may not have flushed before the
+kill. Cleanup goes through the same audited admin_data hard-delete
+route (and FK order) every probe's own cleanup already uses.
+
 ## Never run automatically
 
 `cli.py` (and everything under `probes/`) is not referenced anywhere in
