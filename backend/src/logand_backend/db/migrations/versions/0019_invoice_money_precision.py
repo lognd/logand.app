@@ -16,6 +16,37 @@ model's new Numeric(14, 3)/(12, 3) declarations in db/models/invoices.py)
 so a 3dp currency's amounts round-trip exactly instead of being silently
 truncated to 2dp by the column type itself. Existing 2dp values are
 untouched by a widen (ALTER COLUMN TYPE onto a wider NUMERIC is lossless).
+
+FINDINGS.md M2 (locking): this is data-lossless but NOT lock-free. An
+`ALTER COLUMN ... TYPE` that changes precision/scale -- especially with an
+explicit `postgresql_using` cast, as here -- forces Postgres to rewrite
+the whole table under an ACCESS EXCLUSIVE lock, one table at a time, for
+all five columns (invoices, invoice_line_items, payments, refunds) in a
+single transaction. On a small/staging table this is instant; on a large
+production table each `alter_column` blocks ALL reads and writes on that
+table for the full rewrite, and a concurrent invoice-send / payment
+webhook / pay request will queue behind it -- with no `lock_timeout` set,
+a blocked DDL statement can itself sit in the queue indefinitely and hold
+up unrelated live traffic behind IT. If these tables are still small at
+migration time, this is safe to run as-is; if any of them has grown
+large, run this during a maintenance window, set an explicit
+`lock_timeout` (and retry loop) around each `alter_column`, and/or split
+the five columns into separate off-peak migrations instead of one
+five-table transaction.
+
+FINDINGS.md L1 (downgrade overflow): downgrade() rounds any real 3dp
+value back to 2dp, which is intentionally lossy (accepted tradeoff of
+downgrading at all) -- but it can also raise outright rather than just
+losing precision. `numeric(14,3)` holds up to 11 integer digits;
+`numeric(12,2)`/`numeric(10,2)` (the old invoices.amount_total /
+invoice_line_items.quantity types respectively) hold only 10/8. An
+amount_total with 11 integer digits (or a quantity with 9) round-trips
+fine under the new wider columns but makes the downgrade's
+`::numeric(old_precision,old_scale)` cast raise a numeric field overflow,
+aborting the downgrade instead of silently rounding. Implausible at
+today's invoice sizes, so left as a documented caveat rather than adding
+clamping logic that would mask a legitimately-too-large value instead of
+surfacing it.
 """
 
 from __future__ import annotations
