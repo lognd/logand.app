@@ -12,7 +12,10 @@ from scripts.prodtest.probes.document_flow import DocumentUploadDeleteProbe
 from scripts.prodtest.probes.health import HealthCheckProbe
 from scripts.prodtest.probes.inventory_flow import InventoryItemLifecycleProbe
 from scripts.prodtest.probes.invoice_flow import InvoiceLifecycleProbe
-from scripts.prodtest.probes.notification_flow import InvoiceNotificationEmailProbe
+from scripts.prodtest.probes.notification_flow import (
+    InvoiceNotificationEmailProbe,
+    RefundSettlementNotificationProbe,
+)
 from scripts.prodtest.probes.payment_provider_health import (
     SmtpReachabilityProbe,
     StripeLiveCredentialsProbe,
@@ -34,4 +37,5 @@ ALL_PROBES = [
     StripeLiveCredentialsProbe(),
     SmtpReachabilityProbe(),
     InvoiceNotificationEmailProbe(),
+    RefundSettlementNotificationProbe(),
 ]

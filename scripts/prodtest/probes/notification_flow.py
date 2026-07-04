@@ -10,6 +10,24 @@ from scripts.prodtest.http_client import ProdHttpClient
 from scripts.prodtest.revert import Cleanup, Probe
 
 
+def _fetch_log_lines(admin_client: ProdHttpClient) -> list[str]:
+    log_lines = admin_client.get("/api/admin/logs/tail", params={"lines": 500})
+    assert log_lines.status_code == 200, log_lines.text
+    result: list[str] = log_lines.json()
+    return result
+
+
+def _assert_notification_not_failed(
+    lines: list[str], failure_marker: str, invoice_id: str, recipient: str
+) -> None:
+    failures = [
+        line for line in lines if failure_marker in line and invoice_id in line
+    ]
+    assert not failures, (
+        f"{failure_marker!r} was logged for {recipient}:\n" + "\n".join(failures)
+    )
+
+
 class InvoiceNotificationEmailProbe(Probe):
     name = "notifications.invoice_and_payment_email_send"
     description = (
@@ -133,32 +151,151 @@ class InvoiceNotificationEmailProbe(Probe):
         # tail below reads it.
         time.sleep(1.0)
 
-        log_lines = admin_client.get("/api/admin/logs/tail", params={"lines": 500})
-        assert log_lines.status_code == 200, log_lines.text
-        lines = log_lines.json()
-
-        invoice_sent_failure = [
-            line
-            for line in lines
-            if "failed to send invoice-sent notification" in line and invoice_id in line
-        ]
-        assert not invoice_sent_failure, (
-            f"invoice-sent notification to {test_email} was logged as "
-            f"failed:\n" + "\n".join(invoice_sent_failure)
+        lines = _fetch_log_lines(admin_client)
+        _assert_notification_not_failed(
+            lines, "failed to send invoice-sent notification", invoice_id, test_email
         )
-
-        payment_received_failure = [
-            line
-            for line in lines
-            if "failed to send payment-received notification" in line
-            and invoice_id in line
-        ]
-        assert not payment_received_failure, (
-            f"payment-received notification to {test_email} was logged as "
-            f"failed:\n" + "\n".join(payment_received_failure)
+        _assert_notification_not_failed(
+            lines,
+            "failed to send payment-received notification",
+            invoice_id,
+            test_email,
         )
 
         print(
             f"    (sent 2 real notification emails to {test_email} -- "
+            "glance at that inbox to finish confirming delivery/content)"
+        )
+
+
+class RefundSettlementNotificationProbe(Probe):
+    name = "notifications.refund_settled_email_send"
+    description = (
+        "Real end-to-end mail send test for notify_refund_settled -- the "
+        "one notify_* path InvoiceNotificationEmailProbe doesn't exercise. "
+        "Registers a throwaway customer, creates+sends an invoice, records "
+        "a manual payment, then refunds it via the manual refund path "
+        "(method='manual' settles synchronously inside refund_payment "
+        "itself -- see domain/invoices/refunds.py -- so the notification "
+        "send attempt has already happened by the time the refund request "
+        "returns, same as the invoice/payment sends above), then tails the "
+        "backend's own logs to confirm the send wasn't logged as failed."
+    )
+
+    def check_capability(self, env: ProdEnv) -> bool | str:
+        return True
+
+    def execute(self, env: ProdEnv, cleanup: Cleanup) -> None:
+        local, _, domain = env.notification_email.partition("@")
+        test_email = f"{local}-{uuid.uuid4().hex[:8]}@{domain}"
+        test_password = "prodtest-harness-password-1"
+
+        with ProdHttpClient(env.base_url) as customer_client:
+            register = customer_client.post(
+                "/api/auth/register",
+                json={"email": test_email, "password": test_password},
+            )
+            assert register.status_code == 200, register.text
+            customer_id = customer_client.get("/api/me").json()["user_id"]
+            customer_client.logout()
+
+        admin_client = get_shared_admin_client(env)
+
+        def _delete_customer() -> None:
+            hard_delete_row(admin_client, "users", customer_id)
+            if row_exists(admin_client, "users", customer_id):
+                raise RuntimeError(f"customer {customer_id} still exists")
+
+        cleanup.defer(
+            f"hard-delete prodtest refund-notification customer {test_email}",
+            _delete_customer,
+        )
+
+        create = admin_client.post(
+            "/api/admin/invoices",
+            params={
+                "customer_id": customer_id,
+                "memo": "prodtest harness invoice -- deleted automatically after run",
+            },
+            json=[
+                {
+                    "description": "prodtest harness line item",
+                    "quantity": "1",
+                    "unit_price": "1.00",
+                    "unit": "each",
+                }
+            ],
+        )
+        assert create.status_code == 200, create.text
+        invoice_id = create.json()["id"]
+
+        def _delete_invoice() -> None:
+            hard_delete_row(admin_client, "invoices", invoice_id)
+            if row_exists(admin_client, "invoices", invoice_id):
+                raise RuntimeError(f"invoice {invoice_id} still exists")
+
+        cleanup.defer(
+            f"hard-delete prodtest refund-notification invoice {invoice_id}",
+            _delete_invoice,
+        )
+
+        send = admin_client.post(f"/api/admin/invoices/{invoice_id}/send")
+        assert send.status_code == 200, send.text
+
+        payment = admin_client.post(
+            f"/api/admin/invoices/{invoice_id}/payments/manual",
+            json={"method": "zelle", "amount": "1.00", "note": "prodtest harness"},
+        )
+        assert payment.status_code == 200, payment.text
+        payment_id = payment.json()["id"]
+
+        def _delete_payment() -> None:
+            hard_delete_row(admin_client, "payments", payment_id)
+            if row_exists(admin_client, "payments", payment_id):
+                raise RuntimeError(f"payment {payment_id} still exists")
+
+        cleanup.defer(
+            f"hard-delete prodtest refund-notification payment {payment_id}",
+            _delete_payment,
+        )
+
+        refund = admin_client.post(
+            f"/api/admin/invoices/{invoice_id}/payments/{payment_id}/refund",
+            json={
+                "payment_id": payment_id,
+                "amount": "1.00",
+                "reason": "prodtest harness",
+                "client_request_id": str(uuid.uuid4()),
+            },
+        )
+        assert refund.status_code == 200, refund.text
+        refund_id = refund.json()["id"]
+
+        def _delete_refund() -> None:
+            # Refund.payment_id has the same RESTRICT-before-parent-delete
+            # constraint reasoning as Payment.invoice_id above -- must go
+            # before the payment's own delete.
+            hard_delete_row(admin_client, "refunds", refund_id)
+            if row_exists(admin_client, "refunds", refund_id):
+                raise RuntimeError(f"refund {refund_id} still exists")
+
+        cleanup.defer(
+            f"hard-delete prodtest refund-notification refund {refund_id}",
+            _delete_refund,
+        )
+
+        # A manual refund settles synchronously inside refund_payment
+        # itself (no provider webhook round-trip to wait for), so the
+        # send attempt has already happened by the time the request above
+        # returned 200 -- same cheap insurance sleep as the sibling probe.
+        time.sleep(1.0)
+
+        lines = _fetch_log_lines(admin_client)
+        _assert_notification_not_failed(
+            lines, "failed to send refund-settled notification", invoice_id, test_email
+        )
+
+        print(
+            f"    (sent 1 real refund-settled notification email to {test_email} -- "
             "glance at that inbox to finish confirming delivery/content)"
         )
