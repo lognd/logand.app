@@ -288,8 +288,15 @@ async def notify_password_reset_requested(
             content_text=text,
         )
     except Exception as exc:
-        _log.error(
+        # critical, not error (see FINDINGS.md L2): this fires from a
+        # BackgroundTask, after the response already told the user "a
+        # reset link was sent" -- there is no other signal to the user
+        # or to us that the send failed, and the token silently expires
+        # unused. Bumped severity + an explicit alertable=True marker so
+        # this is distinguishable from routine notify_* send failures in
+        # alerting/log-search, since this one blocks a security action.
+        _log.critical(
             "failed to send password-reset-requested notification",
-            extra={"user_id": str(to_user_id)},
+            extra={"user_id": str(to_user_id), "alertable": True},
             exc_info=exc,
         )

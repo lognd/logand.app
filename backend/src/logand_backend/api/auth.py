@@ -165,16 +165,20 @@ async def request_password_reset_route(
     below.
 
     Critically, the send itself is handed off to `background_tasks`
-    rather than awaited here (see FINDINGS.md M1): awaiting a real SMTP/
+    rather than awaited here (docs/design/02): awaiting a real SMTP/
     OAuth2 send in the request path made real-account responses take
     materially longer than unknown-account ones, a measurable timing
     oracle even though the response body/status were already identical.
     Scheduling it as a background task means this route returns as soon
-    as the (cheap, DB-only) token issuance is done either way, so the
-    response latency stops depending on whether mail actually gets sent.
-    The token row is committed explicitly before scheduling the send (see
-    FINDINGS.md L1) so a reset link can never be emailed out for a token
-    that a later commit failure rolls back.
+    as the (cheap, DB-only) token issuance is done either way.
+
+    The commit below runs unconditionally on both branches, not just the
+    found-account one, so the not-found branch's synchronous work isn't
+    cheaper by a full write/commit round-trip -- see docs/design/02 for
+    why even that smaller asymmetry is a timing oracle worth closing.
+    The token row is committed explicitly before scheduling the send so
+    a reset link can never be emailed out for a token that a later
+    commit failure rolls back.
 
     Builds its own `cfg` fresh here (NOT the module-level `_cfg` above,
     which is only for the rate-limiter's `Depends` default -- see this
@@ -184,13 +188,20 @@ async def request_password_reset_route(
     """
     cfg = AppConfig.from_external(argparse.Namespace())
     result = await request_password_reset(db, payload.email)
+    # Commit unconditionally, on both branches (see FINDINGS.md M1): the
+    # found branch always did a real write + commit round-trip here, but
+    # until now the not-found branch skipped this explicit commit
+    # entirely (only get_db()'s teardown commits an empty tx after
+    # return). That made the two branches' synchronous in-request work
+    # differ by a real write/fsync round-trip -- a smaller-magnitude
+    # version of the exact timing oracle the background-task move above
+    # was meant to close. Committing here either way (a no-op commit of
+    # an empty transaction when result is None) equalizes the
+    # synchronous cost so branch timing no longer leaks account
+    # existence.
+    await db.commit()
     if result is not None:
         user, raw_token = result
-        # Commit now so the token row is durable before we ever schedule
-        # the email that carries it -- get_db()'s teardown commit runs
-        # AFTER this function returns, i.e. after the background task
-        # could already have fired.
-        await db.commit()
         reset_url = f"{cfg.public_base_url}/reset-password?token={raw_token}"
         background_tasks.add_task(
             notify_password_reset_requested,
@@ -228,7 +239,7 @@ async def logout(
     if result.is_err:
         raise to_http_exception(result.danger_err)
     # secure/samesite/httponly must match _set_session_cookies' attributes
-    # (see FINDINGS.md L3) -- __Host- prefixed cookies in particular
+    # (docs/design/02) -- __Host- prefixed cookies in particular
     # REQUIRE Secure on every Set-Cookie, including the expiry one
     # delete_cookie emits; without it browsers ignore the deletion
     # entirely and the stale cookie lingers.

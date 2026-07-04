@@ -29,8 +29,8 @@ _TOKEN_TTL = timedelta(hours=1)
 # per docs/design/02) -- duplicated here, not imported, because pydantic
 # validation happens a layer above this function and every current caller
 # already goes through that model; this is a defense-in-depth backstop for
-# any future non-HTTP caller of reset_password() directly (see
-# FINDINGS.md L2), not the primary enforcement point.
+# any future non-HTTP caller of reset_password() directly, not the
+# primary enforcement point.
 _MIN_PASSWORD_LENGTH = 8
 _MAX_PASSWORD_LENGTH = 128
 
@@ -68,7 +68,7 @@ async def request_password_reset(
         return None
 
     # Invalidate any still-live tokens from earlier requests before
-    # issuing a new one (see FINDINGS.md L3) -- otherwise every unused,
+    # issuing a new one (docs/design/02) -- otherwise every unused,
     # unexpired token from prior "forgot password" submissions stays a
     # live credential in parallel with the new one, widening the window
     # any one forwarded/leaked reset email keeps working.
@@ -109,7 +109,7 @@ async def reset_password(
 
     The claim itself is a single atomic conditional UPDATE (WHERE
     used_at IS NULL AND expires_at > now, RETURNING user_id) rather than
-    a SELECT-then-check-then-UPDATE (see FINDINGS.md M2): under READ
+    a SELECT-then-check-then-UPDATE (docs/design/02): under READ
     COMMITTED, two concurrent confirms with the same token could
     otherwise both read used_at IS NULL before either writes it, both
     pass validation, and both redeem the same single-use token. The
