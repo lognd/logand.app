@@ -51,8 +51,8 @@ class InvoiceLineItemView:
     def line_total(self) -> Decimal:
         # Quantized to the currency's real precision so every export
         # format (PDF, email, .txt, for-robots.json) agrees on the same
-        # rounded figure -- quantity is Numeric(10,3) and unit_price is
-        # Numeric(12,3), so their raw product can carry more decimal
+        # rounded figure -- quantity is Numeric(12,3) and unit_price is
+        # Numeric(14,3), so their raw product can carry more decimal
         # places than the currency actually uses; leaving it unrounded (or
         # rounded to a fixed 2dp regardless of currency) let the PDF
         # (which used to format with :.2f) silently disagree with every
