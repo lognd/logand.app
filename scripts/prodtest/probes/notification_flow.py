@@ -20,9 +20,7 @@ def _fetch_log_lines(admin_client: ProdHttpClient) -> list[str]:
 def _assert_notification_not_failed(
     lines: list[str], failure_marker: str, invoice_id: str, recipient: str
 ) -> None:
-    failures = [
-        line for line in lines if failure_marker in line and invoice_id in line
-    ]
+    failures = [line for line in lines if failure_marker in line and invoice_id in line]
     assert not failures, (
         f"{failure_marker!r} was logged for {recipient}:\n" + "\n".join(failures)
     )
