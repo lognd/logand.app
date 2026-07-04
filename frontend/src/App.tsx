@@ -7,6 +7,8 @@ import { Projects } from "./app/routes/public/Projects";
 import { Contact } from "./app/routes/public/Contact";
 import { Login } from "./app/routes/public/Login";
 import { Register } from "./app/routes/public/Register";
+import { ForgotPassword } from "./app/routes/public/ForgotPassword";
+import { ResetPassword } from "./app/routes/public/ResetPassword";
 import { AdminPortal } from "./app/routes/admin/Portal";
 import { AdminInvoices } from "./app/routes/admin/Invoices";
 import { AdminStats } from "./app/routes/admin/Stats";
@@ -30,6 +32,8 @@ export function App() {
         <Route path="/contact" element={<Contact />} />
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />
+        <Route path="/forgot-password" element={<ForgotPassword />} />
+        <Route path="/reset-password" element={<ResetPassword />} />
 
         <Route
           path="/admin"

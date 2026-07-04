@@ -33,3 +33,24 @@ export function register(
 ): Promise<{ status: string }> {
   return apiPost<{ status: string }>("/api/auth/register", { email, password });
 }
+
+// ALWAYS resolves (never a 401/404-shaped rejection for "no such
+// account") -- the backend deliberately returns the identical response
+// regardless of whether the email matches a real account, so this
+// function's callers only ever need to handle the generic-success and
+// rate-limited (429) cases, never an "email not found" one that would
+// otherwise tempt a caller into displaying it and reintroducing the
+// account-enumeration leak the backend just closed.
+export function requestPasswordReset(email: string): Promise<{ status: string }> {
+  return apiPost<{ status: string }>("/api/auth/password-reset/request", { email });
+}
+
+export function confirmPasswordReset(
+  token: string,
+  newPassword: string,
+): Promise<{ status: string }> {
+  return apiPost<{ status: string }>("/api/auth/password-reset/confirm", {
+    token,
+    new_password: newPassword,
+  });
+}
