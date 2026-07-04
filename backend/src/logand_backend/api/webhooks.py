@@ -17,6 +17,7 @@ from logand_backend.domain.invoices.refunds import (
 )
 from logand_backend.domain.invoices.service import (
     flag_invoice_needs_review,
+    get_paid_so_far,
     has_pending_payment,
     settle_invoice_if_paid,
 )
@@ -121,6 +122,37 @@ async def _flag_if_paypal_pending_race(db: AsyncSession, invoice: Invoice) -> No
         )
 
 
+async def _flag_if_already_covered(db: AsyncSession, invoice: Invoice) -> None:
+    """M1 in FINDINGS.md: unlike the PayPal capture route
+    (api/invoices_public.py::pay_invoice_via_paypal) and
+    reconcile_pending_paypal_captures, this Stripe path had no check for a
+    Stripe payment landing on an invoice already fully covered by an
+    earlier succeeded payment (manual, PayPal, or a prior Stripe intent).
+    settle_invoice_if_paid is a silent no-op in that case (it just returns
+    False), so without this the double-collect never surfaces anywhere.
+    Call this AFTER the Payment row is flushed/updated so
+    get_paid_so_far's sum includes it.
+    """
+    paid_so_far = await get_paid_so_far(db, invoice)
+    if paid_so_far > invoice.amount_total:
+        _log.warning(
+            "stripe payment landed on an invoice already covered by "
+            "other payments -- possible double-collect, flagging for "
+            "admin review",
+            extra={
+                "invoice_id": str(invoice.id),
+                "paid_so_far": str(paid_so_far),
+                "amount_total": str(invoice.amount_total),
+            },
+        )
+        await flag_invoice_needs_review(
+            db,
+            invoice,
+            "stripe payment landed on an already-covered invoice "
+            f"(paid_so_far={paid_so_far}, amount_total={invoice.amount_total})",
+        )
+
+
 async def _handle_payment_intent_event(
     db: AsyncSession, event: dict, cfg: AppConfig
 ) -> None:
@@ -183,6 +215,8 @@ async def _handle_payment_intent_event(
         if succeeded:
             await _flag_if_paypal_pending_race(db, invoice)
         settled_now = succeeded and await settle_invoice_if_paid(db, invoice)
+        if succeeded:
+            await _flag_if_already_covered(db, invoice)
         # L1: notify whenever this delivery observes a succeeded payment
         # on a now-paid invoice, not only when THIS call is what flipped
         # it to paid -- otherwise a crash between a prior delivery's
@@ -241,6 +275,7 @@ async def _handle_payment_intent_event(
     if succeeded:
         await _flag_if_paypal_pending_race(db, invoice)
         await settle_invoice_if_paid(db, invoice)
+        await _flag_if_already_covered(db, invoice)
         _log.info(
             "invoice marked paid via stripe",
             extra={

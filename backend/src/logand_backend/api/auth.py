@@ -188,17 +188,23 @@ async def request_password_reset_route(
     """
     cfg = AppConfig.from_external(argparse.Namespace())
     result = await request_password_reset(db, payload.email)
-    # Commit unconditionally, on both branches (see FINDINGS.md M1): the
+    # Commit unconditionally, on both branches (see FINDINGS.md L1): the
     # found branch always did a real write + commit round-trip here, but
     # until now the not-found branch skipped this explicit commit
     # entirely (only get_db()'s teardown commits an empty tx after
-    # return). That made the two branches' synchronous in-request work
-    # differ by a real write/fsync round-trip -- a smaller-magnitude
-    # version of the exact timing oracle the background-task move above
-    # was meant to close. Committing here either way (a no-op commit of
-    # an empty transaction when result is None) equalizes the
-    # synchronous cost so branch timing no longer leaks account
-    # existence.
+    # return). NOTE: this does NOT equalize synchronous DB cost -- the
+    # found branch still does an UPDATE (invalidate live tokens) + INSERT
+    # + flush before this commit, while the not-found branch only ever
+    # ran a single SELECT, so a real write+flush+commit remains
+    # materially costlier than committing an empty transaction. What this
+    # DOES guarantee is that both branches always reach an explicit
+    # commit point (rather than one falling through to get_db's implicit
+    # teardown commit) and that the HTTP response body/status and
+    # email-scheduling behavior are identical either way. Closing the
+    # remaining synchronous-cost gap would mean doing throwaway
+    # write+rollback work on the not-found branch too -- not done here,
+    # since request_password_reset already has no password hashing on
+    # this path, so the residual timing signal is small.
     await db.commit()
     if result is not None:
         user, raw_token = result
