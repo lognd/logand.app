@@ -61,6 +61,24 @@ class SessionCookieJarTest {
     }
 
     @Test
+    fun `loadForRequest does not return cookies saved for a different host`() {
+        val jar = SessionCookieJar()
+        jar.saveFromResponse(
+            url,
+            listOf(Cookie.Builder().name("csrf_token").value("abc").domain("example.com").build()),
+        )
+
+        val otherHostUrl = "https://evil.example/".toHttpUrl()
+        val loaded = jar.loadForRequest(otherHostUrl)
+
+        assertEquals(emptyList(), loaded)
+        // Direct-by-name reads (used for the CSRF header) are unaffected --
+        // they aren't host-scoped, only the cookies OkHttp attaches to
+        // outgoing requests are.
+        assertEquals("abc", jar.value("csrf_token"))
+    }
+
+    @Test
     fun `clear removes every stored cookie`() {
         val jar = SessionCookieJar()
         jar.saveFromResponse(
