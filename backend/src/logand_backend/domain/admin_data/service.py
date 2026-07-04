@@ -179,6 +179,8 @@ async def update_row(
     row_id: str,
     changes: dict,
     admin_id: UUID | None,
+    *,
+    revert_replay: bool = False,
 ) -> Result[UUID, DataError]:
     """The core "absolute power, but never a corrupt state" write path:
     real UPDATE through SQLAlchemy Core against the reflected Table (so
@@ -247,11 +249,16 @@ async def update_row(
         await db.flush()
         return Ok(log_id)
 
+    # Per L2 in FINDINGS.md: when this write is itself the replayed write
+    # of a revert_change (revert_replay=True), tag it distinctly so it
+    # reads in the audit trail as what it is -- a revert's own side
+    # effect, not an independent edit -- and revert_change refuses to
+    # revert it again (which would silently re-apply the original edit).
     db.add(
         AdminAuditLog(
             id=log_id,
             admin_id=admin_id,
-            action="data.update",
+            action="data.update.revert-replay" if revert_replay else "data.update",
             target_table=table_name,
             target_id=row_id,
             before_state=before,
@@ -263,7 +270,12 @@ async def update_row(
 
 
 async def delete_row(
-    db: AsyncSession, table_name: str, row_id: str, admin_id: UUID | None
+    db: AsyncSession,
+    table_name: str,
+    row_id: str,
+    admin_id: UUID | None,
+    *,
+    revert_replay: bool = False,
 ) -> Result[UUID, DataError]:
     table = _get_table(table_name)
     if table is None:
@@ -297,7 +309,7 @@ async def delete_row(
         AdminAuditLog(
             id=log_id,
             admin_id=admin_id,
-            action="data.delete",
+            action="data.delete.revert-replay" if revert_replay else "data.delete",
             target_table=table_name,
             target_id=row_id,
             before_state=before,
@@ -309,7 +321,12 @@ async def delete_row(
 
 
 async def insert_row(
-    db: AsyncSession, table_name: str, values: dict, admin_id: UUID | None
+    db: AsyncSession,
+    table_name: str,
+    values: dict,
+    admin_id: UUID | None,
+    *,
+    revert_replay: bool = False,
 ) -> Result[UUID, DataError]:
     table = _get_table(table_name)
     if table is None:
@@ -348,7 +365,7 @@ async def insert_row(
         AdminAuditLog(
             id=log_id,
             admin_id=admin_id,
-            action="data.insert",
+            action="data.insert.revert-replay" if revert_replay else "data.insert",
             target_table=table_name,
             target_id=str(new_id),
             before_state=None,
@@ -396,6 +413,13 @@ async def revert_change(
     if log.target_table is None or log.target_id is None:
         return Err(DataError.ChangeNotRevertible)
 
+    # Per L2 in FINDINGS.md: a "*.revert-replay" entry is itself the
+    # replayed write of a PRIOR revert_change call, not an independent
+    # edit -- reverting it would silently re-apply the original change
+    # while looking, in the audit log, like a brand new revert of it.
+    if log.action.endswith(".revert-replay"):
+        return Err(DataError.ChangeNotRevertible)
+
     if log.action == "data.update":
         if log.before_state is None:
             return Err(DataError.ChangeNotRevertible)
@@ -405,7 +429,7 @@ async def revert_change(
             if k not in _NEVER_EDITABLE_COLUMNS
         }
         result = await update_row(
-            db, log.target_table, log.target_id, changes, admin_id
+            db, log.target_table, log.target_id, changes, admin_id, revert_replay=True
         )
     elif log.action == "data.delete":
         if log.before_state is None:
@@ -420,9 +444,13 @@ async def revert_change(
         # unlike password_hash, which stays excluded either way.
         if "id" in log.before_state:
             values["id"] = log.before_state["id"]
-        result = await insert_row(db, log.target_table, values, admin_id)
+        result = await insert_row(
+            db, log.target_table, values, admin_id, revert_replay=True
+        )
     elif log.action == "data.insert":
-        result = await delete_row(db, log.target_table, log.target_id, admin_id)
+        result = await delete_row(
+            db, log.target_table, log.target_id, admin_id, revert_replay=True
+        )
     elif log.action == "data.update.noop":
         # Per L2 in FINDINGS.md: a no-op edit was never a real change, so
         # reverting it is trivially a no-op too -- return success without
