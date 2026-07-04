@@ -18,6 +18,19 @@
 % (see backend/Dockerfile's install list), so this needs no new package.
 \RequirePackage{mathpazo}
 \linespread{1.05}
+% article's default \parindent (~15pt) indents the first line of every
+% new paragraph -- including the "Payment"/"Notes" section headers and
+% their body text below the line-item table, which have no \noindent of
+% their own (unlike the header/bill-to blocks, built as a single
+% minipage/tabular each rather than a sequence of paragraphs). The
+% result was every section below the table visibly dedented from the
+% table/header's own flush-left margin. Block-style paragraphs (no
+% first-line indent, blank-line spacing instead) is standard for
+% business letters/invoices anyway, so turn indenting off globally
+% rather than papering over it with more \noindent calls at each call
+% site that could still be missed the next time a section is added.
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{8pt plus 2pt minus 2pt}
 \RequirePackage{xcolor}
 \RequirePackage{tabularx}
 \RequirePackage{booktabs}
