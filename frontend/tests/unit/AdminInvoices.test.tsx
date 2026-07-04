@@ -58,7 +58,7 @@ describe("AdminInvoices (integration)", () => {
 
     expect(screen.getByText("Loading...")).toBeInTheDocument();
     expect(await screen.findByText("draft")).toBeInTheDocument();
-    expect(screen.getByText(/100.00 usd/)).toBeInTheDocument();
+    expect(screen.getByText(/100.00 USD/)).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/admin/invoices",
       expect.objectContaining({ method: "GET" }),
