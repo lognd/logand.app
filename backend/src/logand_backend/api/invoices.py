@@ -175,7 +175,7 @@ async def get_invoice(
         refunded_by_payment.setdefault(r.payment_id, []).append(
             {
                 "id": str(r.id),
-                "amount": str(r.amount),
+                "amount": str(quantize_to_currency(r.amount, invoice.currency)),
                 "reason": r.reason,
                 "status": r.status,
                 "stripe_refund_id": r.stripe_refund_id,
@@ -192,7 +192,9 @@ async def get_invoice(
                 "id": str(li.id),
                 "description": li.description,
                 "quantity": str(li.quantity),
-                "unit_price": str(li.unit_price),
+                "unit_price": str(
+                    quantize_to_currency(li.unit_price, invoice.currency)
+                ),
                 "unit": li.unit,
             }
             for li in line_items
@@ -201,7 +203,7 @@ async def get_invoice(
             {
                 "id": str(p.id),
                 "method": p.method,
-                "amount": str(p.amount),
+                "amount": str(quantize_to_currency(p.amount, invoice.currency)),
                 "status": p.status,
                 "transaction_id": p.transaction_id,
                 "note": p.note,

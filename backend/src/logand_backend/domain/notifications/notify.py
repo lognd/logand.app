@@ -16,6 +16,7 @@ from logand_backend.domain.invoices.export import (
 )
 from logand_backend.domain.invoices.pdf.renderer import PdfRenderError
 from logand_backend.domain.notifications import mailer, templates
+from logand_backend.domain.payments.currency import quantize_to_currency
 from logand_backend.logging import get_logger
 
 _log = get_logger(__name__)
@@ -153,7 +154,10 @@ async def notify_payment_received(
         return
 
     subject, html, text = templates.payment_received(
-        cfg, invoice_id=invoice.id, amount=amount, currency=invoice.currency
+        cfg,
+        invoice_id=invoice.id,
+        amount=quantize_to_currency(amount, invoice.currency),
+        currency=invoice.currency,
     )
     try:
         await mailer.send_email(
@@ -187,7 +191,10 @@ async def notify_refund_settled(
         return
 
     subject, html, text = templates.refund_settled(
-        cfg, invoice_id=invoice.id, amount=amount, currency=invoice.currency
+        cfg,
+        invoice_id=invoice.id,
+        amount=quantize_to_currency(amount, invoice.currency),
+        currency=invoice.currency,
     )
     try:
         await mailer.send_email(
