@@ -55,7 +55,7 @@ def invoice_sent(
 
     html = (
         f'<p style="margin:0 0 16px;">You have a new invoice from {business} '
-        f"for <strong>{amount_total} {currency.upper()}</strong>"
+        f"for <strong>{amount_total} {html_escape(currency.upper())}</strong>"
         f"{due_line}.</p>"
         f'<p style="margin:0 0 16px;">{_cta(pay_url, "pay-invoice --online")}</p>'
         '<p class="ln-muted" style="margin:0; font-size:12px;">'

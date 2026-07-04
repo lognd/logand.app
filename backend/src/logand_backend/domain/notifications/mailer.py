@@ -126,7 +126,8 @@ def _footer_html(cfg: AppConfig, unsubscribe_url: str) -> str:
     return (
         f'<p style="margin:0 0 6px;">{business}{address}</p>'
         f'<p style="margin:0;">'
-        f'<a href="{unsubscribe_url}" style="color:inherit;">Unsubscribe</a>'
+        f'<a href="{html_escape(unsubscribe_url, quote=True)}" '
+        f'style="color:inherit;">Unsubscribe</a>'
         " from these emails.</p>"
     )
 
