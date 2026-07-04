@@ -27,6 +27,7 @@ _STATUS_MAP: dict[ErrorSet, int] = {
     AuthError.SessionNotFound: 401,
     AuthError.EmailAlreadyRegistered: 409,
     AuthError.PasswordResetTokenInvalid: 400,
+    AuthError.PasswordInvalidLength: 422,
     InvoiceError.NotFound: 404,
     InvoiceError.NotOwned: 404,  # NOTE: 404 not 403, never confirm another
     # customer's invoice exists, see docs/design/04

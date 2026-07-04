@@ -9,6 +9,7 @@ class AuthError(ErrorSet):
     SessionNotFound = "session token does not match any known session"
     EmailAlreadyRegistered = "an account with this email already exists"
     PasswordResetTokenInvalid = "password reset link is invalid or has expired"
+    PasswordInvalidLength = "password must be between 8 and 128 characters"
 
 
 class DataError(ErrorSet):

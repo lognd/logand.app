@@ -3,7 +3,7 @@ from __future__ import annotations
 import secrets
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from typani.result import Err, Ok, Result
 
@@ -23,6 +23,16 @@ _log = get_logger(__name__)
 # tighter-rate-limited endpoint (see auth/rate_limit.py), so this isn't
 # the only thing standing between a leaked link and account takeover.
 _TOKEN_TTL = timedelta(hours=1)
+
+# Mirrors PasswordResetConfirmInput.new_password's Field(min_length=8,
+# max_length=128) in api/auth.py (same bound as RegisterRequest.password,
+# per docs/design/02) -- duplicated here, not imported, because pydantic
+# validation happens a layer above this function and every current caller
+# already goes through that model; this is a defense-in-depth backstop for
+# any future non-HTTP caller of reset_password() directly (see
+# FINDINGS.md L2), not the primary enforcement point.
+_MIN_PASSWORD_LENGTH = 8
+_MAX_PASSWORD_LENGTH = 128
 
 
 async def request_password_reset(
@@ -57,6 +67,21 @@ async def request_password_reset(
         )
         return None
 
+    # Invalidate any still-live tokens from earlier requests before
+    # issuing a new one (see FINDINGS.md L3) -- otherwise every unused,
+    # unexpired token from prior "forgot password" submissions stays a
+    # live credential in parallel with the new one, widening the window
+    # any one forwarded/leaked reset email keeps working.
+    await db.execute(
+        update(PasswordResetToken)
+        .where(
+            PasswordResetToken.user_id == user.id,
+            PasswordResetToken.used_at.is_(None),
+            PasswordResetToken.expires_at > datetime.now(timezone.utc),
+        )
+        .values(used_at=datetime.now(timezone.utc))
+    )
+
     raw_token = secrets.token_urlsafe(32)
     db.add(
         PasswordResetToken(
@@ -81,30 +106,49 @@ async def reset_password(
     domain/users/service.py::admin_reset_password: a password reset is
     frequently a response to a compromised or forgotten credential, so
     any session established under the old password must not survive it.
+
+    The claim itself is a single atomic conditional UPDATE (WHERE
+    used_at IS NULL AND expires_at > now, RETURNING user_id) rather than
+    a SELECT-then-check-then-UPDATE (see FINDINGS.md M2): under READ
+    COMMITTED, two concurrent confirms with the same token could
+    otherwise both read used_at IS NULL before either writes it, both
+    pass validation, and both redeem the same single-use token. The
+    UPDATE's WHERE clause makes the row-level lock the database takes
+    while evaluating it the only thing that decides which (if any)
+    concurrent request wins; zero rows updated means the token was
+    invalid, expired, or already claimed by another request.
     """
+    if not (_MIN_PASSWORD_LENGTH <= len(new_password) <= _MAX_PASSWORD_LENGTH):
+        _log.warning("password reset rejected: new password fails length bound")
+        return Err(AuthError.PasswordInvalidLength)
+
     token_hash = hash_token(raw_token)
-    row = (
+    now = datetime.now(timezone.utc)
+    claimed_user_id = (
         await db.execute(
-            select(PasswordResetToken).where(
-                PasswordResetToken.token_hash == token_hash
+            update(PasswordResetToken)
+            .where(
+                PasswordResetToken.token_hash == token_hash,
+                PasswordResetToken.used_at.is_(None),
+                PasswordResetToken.expires_at > now,
             )
+            .values(used_at=now)
+            .returning(PasswordResetToken.user_id)
         )
     ).scalar_one_or_none()
-    now = datetime.now(timezone.utc)
-    if row is None or row.used_at is not None or row.expires_at <= now:
+    if claimed_user_id is None:
         _log.warning("password reset token invalid, expired, or already used")
         return Err(AuthError.PasswordResetTokenInvalid)
 
-    user = await db.get(User, row.user_id)
+    user = await db.get(User, claimed_user_id)
     if user is None or user.disabled_at is not None:
         _log.warning(
             "password reset token redeemed for missing or disabled account",
-            extra={"user_id": str(row.user_id)},
+            extra={"user_id": str(claimed_user_id)},
         )
         return Err(AuthError.PasswordResetTokenInvalid)
 
     user.password_hash = hash_password(new_password)
-    row.used_at = now
     await db.flush()
     await revoke_all_sessions_for_user(db, user.id)
     _log.info("password reset completed", extra={"user_id": str(user.id)})

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -149,6 +149,7 @@ _PASSWORD_RESET_REQUESTED_MESSAGE = (
 @router.post("/password-reset/request")
 async def request_password_reset_route(
     payload: PasswordResetRequestInput,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     _rate_limit: None = Depends(
         rate_limit(
@@ -163,6 +164,18 @@ async def request_password_reset_route(
     account was found; both branches converge on the identical response
     below.
 
+    Critically, the send itself is handed off to `background_tasks`
+    rather than awaited here (see FINDINGS.md M1): awaiting a real SMTP/
+    OAuth2 send in the request path made real-account responses take
+    materially longer than unknown-account ones, a measurable timing
+    oracle even though the response body/status were already identical.
+    Scheduling it as a background task means this route returns as soon
+    as the (cheap, DB-only) token issuance is done either way, so the
+    response latency stops depending on whether mail actually gets sent.
+    The token row is committed explicitly before scheduling the send (see
+    FINDINGS.md L1) so a reset link can never be emailed out for a token
+    that a later commit failure rolls back.
+
     Builds its own `cfg` fresh here (NOT the module-level `_cfg` above,
     which is only for the rate-limiter's `Depends` default -- see this
     module's own top-of-file NOTE) so a test that monkeypatches SMTP_HOST/
@@ -173,9 +186,18 @@ async def request_password_reset_route(
     result = await request_password_reset(db, payload.email)
     if result is not None:
         user, raw_token = result
+        # Commit now so the token row is durable before we ever schedule
+        # the email that carries it -- get_db()'s teardown commit runs
+        # AFTER this function returns, i.e. after the background task
+        # could already have fired.
+        await db.commit()
         reset_url = f"{cfg.public_base_url}/reset-password?token={raw_token}"
-        await notify_password_reset_requested(
-            cfg, to_email=user.email, to_user_id=user.id, reset_url=reset_url
+        background_tasks.add_task(
+            notify_password_reset_requested,
+            cfg,
+            to_email=user.email,
+            to_user_id=user.id,
+            reset_url=reset_url,
         )
     return {"status": "ok", "detail": _PASSWORD_RESET_REQUESTED_MESSAGE}
 
