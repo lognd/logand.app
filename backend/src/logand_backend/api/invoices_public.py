@@ -168,9 +168,16 @@ async def upload_payment_proof(
     )
     if result.is_err:
         raise to_http_exception(result.danger_err)
-    # Written AFTER the DB row succeeds -- same ordering as
-    # api/budget.py's upload_evidence and api/documents.py's upload, so a
-    # rejected/failed DB write never leaves an orphaned file in storage.
+    # Written AFTER the DB row succeeds (attach_payment_proof only flushes;
+    # the real COMMIT happens in get_db's dependency teardown after this
+    # route returns) -- same ordering as api/budget.py's upload_evidence and
+    # api/documents.py's upload. This guards against a *failed* DB write (a
+    # flush error rolls back before we ever reach this put). It does NOT
+    # guard the reverse: if the final commit itself fails after this put
+    # succeeds, the object is orphaned in storage with no owning row.
+    # Accepted tradeoff (FINDINGS.md L1) -- a periodic storage GC is
+    # expected to reconcile objects with no owning row rather than this
+    # route attempting a compensating delete on a commit it can't observe.
     cfg = AppConfig.from_external(argparse.Namespace())
     storage = get_storage_backend(cfg)
     await storage.put(file_path, contents, file.content_type)
