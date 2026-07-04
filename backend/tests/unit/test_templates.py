@@ -67,6 +67,42 @@ def test_invoice_sent_mentions_attached_pdf_and_plaintext() -> None:
     assert "PDF and plain-text copy" in text
 
 
+def test_invoice_sent_lists_real_payment_options_not_just_the_pdf() -> None:
+    """The email must say HOW to pay by an alternative method (Zelle,
+    PayPal, in person) directly, not just point at the attached PDF for
+    that information -- most recipients decide what to do from the email
+    itself, not a second attachment."""
+    cfg = _cfg()
+    _subject, html, text = templates.invoice_sent(
+        cfg,
+        invoice_id=uuid.uuid4(),
+        amount_total=Decimal("10.00"),
+        currency="usd",
+        due_date=None,
+        line_items=[_line_item()],
+    )
+    assert "Zelle" in html and "PayPal" in html and "in-person" in html
+    assert cfg.invoice_contact_email in html
+    assert "Zelle" in text and "PayPal" in text and "in-person" in text
+    assert cfg.invoice_contact_email in text
+    assert "listed on the invoice PDF" not in html
+    assert "listed on the invoice PDF" not in text
+
+
+def test_invoice_sent_shows_the_real_zelle_handle_when_configured() -> None:
+    cfg = _cfg(zelle_handle="logan@example.com")
+    _subject, html, text = templates.invoice_sent(
+        cfg,
+        invoice_id=uuid.uuid4(),
+        amount_total=Decimal("10.00"),
+        currency="usd",
+        due_date=None,
+        line_items=[_line_item()],
+    )
+    assert "logan@example.com" in html
+    assert "logan@example.com" in text
+
+
 def test_invoice_sent_shows_due_date_when_present() -> None:
     cfg = _cfg()
     _subject, html, _text = templates.invoice_sent(

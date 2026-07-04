@@ -47,6 +47,48 @@ def _cta(url: str, label: str) -> str:
 _TABLE_BORDER_COLOR = "#d5c4a1"
 _TABLE_MUTED_COLOR = "#7c6f64"
 
+# Matches mailer._LIGHT["muted"] exactly (unlike _TABLE_MUTED_COLOR above,
+# which is a separate, lighter tone used only for the line-items table).
+# Every `class="ln-muted"` element below needs this set inline -- the
+# `.ln-muted` CSS rule only exists inside mailer.py's dark-mode media
+# query, so a client honoring light mode (the default everywhere) would
+# otherwise render "muted" text at full foreground strength with no
+# muting at all.
+_MUTED_COLOR = "#665c54"
+
+
+def _payment_options_html(cfg: AppConfig) -> str:
+    """The real alternative-payment-method sentence (Zelle handle, PayPal,
+    in person) as actual prose -- not a "see the attached PDF" pointer.
+    A customer reading the email on a phone shouldn't have to open a
+    second attachment just to learn HOW to pay; the PDF carries the same
+    text for the printed/archived copy, but the email is where most
+    people actually decide what to do next. Mirrors pdf/invoice.tex.jinja's
+    own payment-methods paragraph and customer/Pay.tsx's "Other ways to
+    pay" panel so the three surfaces agree on wording, not just data.
+    """
+    zelle = (
+        f"Zelle (<strong>{html_escape(cfg.zelle_handle)}</strong>), "
+        if cfg.zelle_handle
+        else "Zelle, "
+    )
+    contact = html_escape(cfg.invoice_contact_email)
+    return (
+        f"Prefer another way to pay? {zelle}PayPal, and in-person payment "
+        f"by prior arrangement are all accepted -- just email "
+        f'<a href="mailto:{contact}" style="color:inherit;">{contact}</a> '
+        "to arrange one of these instead."
+    )
+
+
+def _payment_options_text(cfg: AppConfig) -> str:
+    zelle = f"Zelle ({cfg.zelle_handle}), " if cfg.zelle_handle else "Zelle, "
+    return (
+        f"Prefer another way to pay? {zelle}PayPal, and in-person payment "
+        f"by prior arrangement are all accepted -- just email "
+        f"{cfg.invoice_contact_email} to arrange one of these instead."
+    )
+
 
 def _line_items_table(
     line_items: list[InvoiceLineItemView], currency: str, amount_total: Decimal
@@ -141,28 +183,34 @@ def invoice_sent(
 
     table_html = _line_items_table(line_items, currency, amount_total)
     memo_html = (
-        f'<p class="ln-muted" style="margin:0 0 12px; font-size:12px;">'
-        f"Memo: {html_escape(memo)}</p>"
+        f'<p class="ln-muted" style="margin:0 0 12px; font-size:12px; '
+        f'color:{_MUTED_COLOR};">Memo: {html_escape(memo)}</p>'
         if memo
         else ""
     )
-    cta_html = (
-        f'<p style="margin:16px 0;">{_cta(pay_url, "pay-invoice --online")}</p>'
-        if pay_url
-        else ""
+    # One flowing "Payment" paragraph -- the pay-online CTA (if this
+    # invoice is in a self-serve-payable state) followed by the real
+    # alternative-method sentence, instead of the CTA, a separate "see
+    # the PDF" pointer, and a separate attachment footnote as three
+    # disconnected one-liners.
+    pay_online_html = (
+        f'{_cta(pay_url, "pay-invoice --online")}<br>' if pay_url else ""
+    )
+    payment_html = (
+        f'<p style="margin:16px 0;">{pay_online_html}'
+        f'<span class="ln-muted" style="font-size:12px; color:{_MUTED_COLOR};">'
+        f"{_payment_options_html(cfg)}</span></p>"
     )
     html = (
         f'<p style="margin:0 0 4px;">You have a new invoice from {business}'
         f"{due_line}.</p>"
-        f'<p class="ln-muted" style="margin:0; font-size:12px;">'
-        f"Order ID: {invoice_id}</p>"
+        f'<p class="ln-muted" style="margin:0 0 12px; font-size:12px; '
+        f'color:{_MUTED_COLOR};">Order ID: {invoice_id}</p>'
         f"{table_html}"
         f"{memo_html}"
-        f"{cta_html}"
-        '<p class="ln-muted" style="margin:0 0 16px; font-size:12px;">'
-        "Or use one of the other payment methods listed on the invoice PDF."
-        "</p>"
-        '<p class="ln-muted" style="margin:0; font-size:11px;">'
+        f"{payment_html}"
+        f'<p class="ln-muted" style="margin:0; font-size:11px; '
+        f'color:{_MUTED_COLOR};">'
         "Not rendering correctly? A PDF and plain-text copy of this "
         "invoice are attached."
         "</p>"
@@ -179,7 +227,7 @@ def invoice_sent(
         f"{'Total':<60} {amount_total:>12} {currency.upper()}\n\n"
         f"{memo_text}"
         f"{pay_text}"
-        "Other payment methods are listed on the invoice PDF.\n\n"
+        f"{_payment_options_text(cfg)}\n\n"
         "Not rendering correctly? A PDF and plain-text copy of this "
         "invoice are attached.\n"
     )
@@ -253,7 +301,8 @@ def dispute_updated(
     html = (
         f'<p style="margin:0 0 16px;">A Stripe dispute on invoice '
         f"{invoice_id} {status_line}.</p>"
-        '<p class="ln-muted" style="margin:0; font-size:12px;">'
+        f'<p class="ln-muted" style="margin:0; font-size:12px; '
+        f'color:{_MUTED_COLOR};">'
         "Review it in your Stripe Dashboard."
         "</p>"
     )
