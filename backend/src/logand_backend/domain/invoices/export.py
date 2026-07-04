@@ -42,7 +42,14 @@ class InvoiceLineItemView:
 
     @property
     def line_total(self) -> Decimal:
-        return self.quantity * self.unit_price
+        # Quantized to 2dp so every export format (PDF, email, .txt,
+        # for-robots.json) agrees on the same rounded figure -- quantity
+        # is Numeric(10,2) and unit_price is Numeric(12,2), so their raw
+        # product can carry up to 4 decimal places; leaving it unrounded
+        # let the PDF (which formats with :.2f) silently disagree with
+        # every other format, and let the visible rows fail to sum to
+        # amount_total (also stored at 2dp). See FINDINGS.md M1.
+        return (self.quantity * self.unit_price).quantize(Decimal("0.01"))
 
 
 @dataclass(frozen=True)
@@ -78,7 +85,9 @@ async def load_invoice_export_data(
     line_items = (
         (
             await db.execute(
-                select(InvoiceLineItem).where(InvoiceLineItem.invoice_id == invoice_id)
+                select(InvoiceLineItem)
+                .where(InvoiceLineItem.invoice_id == invoice_id)
+                .order_by(InvoiceLineItem.created_at)
             )
         )
         .scalars()
@@ -114,7 +123,10 @@ async def load_invoice_export_data(
 
 
 async def generate_invoice_pdf(
-    db: AsyncSession, invoice_id: UUID, cfg: AppConfig
+    db: AsyncSession,
+    invoice_id: UUID,
+    cfg: AppConfig,
+    export_data: InvoiceExportData | None = None,
 ) -> Result[bytes, InvoiceError]:
     """Renders a professional, printable PDF for the given invoice (see
     domain/invoices/pdf/ for the LaTeX class/template/renderer this calls
@@ -123,8 +135,19 @@ async def generate_invoice_pdf(
     checks belong at each caller (this function doesn't take a requesting
     user at all), this only knows how to build the PDF once an
     invoice_id has already been authorized.
+
+    `export_data` lets a caller that already loaded the invoice's export
+    data (e.g. notify.notify_invoice_sent, which builds the email body/
+    .txt/.json from one snapshot) pass it straight through instead of
+    this function re-querying independently -- avoids both the doubled
+    query and the narrow TOCTOU where the PDF could reflect a different
+    snapshot than the other attached formats in the same email (see
+    FINDINGS.md L1). Route callers that only want the PDF still omit it
+    and get the load-then-render path.
     """
-    data = await load_invoice_export_data(db, invoice_id, cfg)
+    data = export_data
+    if data is None:
+        data = await load_invoice_export_data(db, invoice_id, cfg)
     if data is None:
         return Err(InvoiceError.NotFound)
 
@@ -206,15 +229,25 @@ def build_invoice_plaintext(data: InvoiceExportData, cfg: AppConfig) -> str:
     lines.append(
         f"{'Description':<40} {'Qty':>6} {'Unit price':>12} {'Line total':>12}"
     )
-    lines.append("-" * 72)
+    # 73, not a round number -- matches the exact width of the header row
+    # above (40 + 1 + 6 + 1 + 12 + 1 + 12), so the divider spans the full
+    # table rather than falling one column short of "Line total"'s edge.
+    lines.append("-" * 73)
     for li in data.line_items:
-        unit_suffix = f" / {li.unit}" if li.unit else ""
+        # Unit appended to the description column (not the unit-price
+        # column) to match templates._line_items_text/_line_items_table --
+        # every rendering of a given invoice should place `unit` in the
+        # same spot. See FINDINGS.md L2.
+        unit_suffix = f" ({li.unit})" if li.unit else ""
         lines.append(
-            f"{li.description:<40} {str(li.quantity):>6} "
-            f"{f'{li.unit_price}{unit_suffix}':>12} {str(li.line_total):>12}"
+            f"{li.description + unit_suffix:<40} {str(li.quantity):>6} "
+            f"{str(li.unit_price):>12} {str(li.line_total):>12}"
         )
-    lines.append("-" * 72)
-    lines.append(f"{'Total':<59} {str(data.amount_total):>12} {data.currency.upper()}")
+    lines.append("-" * 73)
+    # <60 (not <59) so the amount field starts one column later, landing
+    # its right edge on the same column as "Line total" above -- <59 put
+    # it one column short of that edge.
+    lines.append(f"{'Total':<60} {str(data.amount_total):>12} {data.currency.upper()}")
     lines.append("")
     if data.pay_url:
         lines.append(f"Pay online: {data.pay_url}")

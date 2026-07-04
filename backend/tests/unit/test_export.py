@@ -176,6 +176,28 @@ def test_build_invoice_plaintext_total_matches_amount_total() -> None:
     assert "42.50 USD" in text
 
 
+def test_build_invoice_plaintext_columns_stay_aligned() -> None:
+    """Regression test: the header row is 40+1+6+1+12+1+12 = 73 chars
+    wide, but the divider was 72 dashes and the Total row's amount field
+    was one column left of where "Line total" ends above it -- both were
+    off by one. Locks in that the divider matches the header's width and
+    that "Line total"'s right edge lines up with the Total row's amount."""
+    cfg = AppConfig()
+    data = _data()
+    lines = build_invoice_plaintext(data, cfg).splitlines()
+
+    header = next(line for line in lines if line.startswith("Description"))
+    dividers = [line for line in lines if set(line) == {"-"}]
+    total_line = next(line for line in lines if line.startswith("Total"))
+
+    assert all(len(d) == len(header) for d in dividers)
+    line_total_end = header.index("Line total") + len("Line total")
+    # The Total row's amount field is immediately followed by a space and
+    # the currency code, so its own right edge is where that space starts.
+    amount_end = total_line.index(" USD")
+    assert amount_end == line_total_end
+
+
 def test_build_invoice_plaintext_survives_curly_braces_in_description() -> None:
     """Same regression concern as the JSON test above, applied to the
     plaintext path -- plain string formatting (f-strings/%-less), never

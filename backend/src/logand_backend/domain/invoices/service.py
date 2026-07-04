@@ -89,7 +89,15 @@ async def recompute_amount_total(db: AsyncSession, invoice_id: UUID) -> Decimal:
             select(InvoiceLineItem).where(InvoiceLineItem.invoice_id == invoice_id)
         )
     ).scalars()
-    total = sum((li.quantity * li.unit_price for li in line_items), Decimal(0))
+    # Quantize each line total to 2dp before summing -- must match
+    # InvoiceLineItemView.line_total's rounding rule (export.py) exactly,
+    # otherwise amount_total (this column) can disagree with the sum of
+    # the per-line totals shown in the PDF/email/attachments. See
+    # FINDINGS.md M1.
+    total = sum(
+        ((li.quantity * li.unit_price).quantize(Decimal("0.01")) for li in line_items),
+        Decimal(0),
+    )
 
     invoice = await db.get(Invoice, invoice_id)
     if invoice is not None:

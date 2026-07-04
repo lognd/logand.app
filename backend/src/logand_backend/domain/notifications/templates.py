@@ -101,14 +101,17 @@ def _line_items_table(
 
 def _line_items_text(line_items: list[InvoiceLineItemView], currency: str) -> str:
     lines = [f"{'Description':<40} {'Qty':>6} {'Unit price':>12} {'Line total':>12}"]
-    lines.append("-" * 72)
+    # 73, not a round number -- matches the exact width of the header row
+    # above (40 + 1 + 6 + 1 + 12 + 1 + 12), so the divider spans the full
+    # table rather than falling one column short of "Line total"'s edge.
+    lines.append("-" * 73)
     for li in line_items:
         unit_suffix = f" ({li.unit})" if li.unit else ""
         lines.append(
             f"{li.description + unit_suffix:<40} {str(li.quantity):>6} "
             f"{str(li.unit_price):>12} {str(li.line_total):>12}"
         )
-    lines.append("-" * 72)
+    lines.append("-" * 73)
     return "\n".join(lines)
 
 
@@ -120,21 +123,42 @@ def invoice_sent(
     currency: str,
     due_date: str | None,
     line_items: list[InvoiceLineItemView],
+    memo: str | None = None,
+    pay_url: str | None = None,
 ) -> tuple[str, str, str]:
-    """Returns (subject, content_html, content_text)."""
-    pay_url = f"{cfg.public_base_url}/invoices/{invoice_id}/pay"
+    """Returns (subject, content_html, content_text).
+
+    `pay_url` is caller-supplied (from InvoiceExportData.pay_url) rather
+    than derived here, and rendered only when set -- InvoiceExportData
+    already suppresses the pay link for invoices that aren't in a
+    self-serve-payable state (draft/void/paid/refunded); this template
+    must agree with that, not always show a link that would just 409 on
+    a future non-"sent" caller. See FINDINGS.md L5.
+    """
     business = html_escape(cfg.invoice_business_name)
     subject = f"Invoice from {cfg.invoice_business_name}"
     due_line = f" (due {due_date})" if due_date else ""
 
     table_html = _line_items_table(line_items, currency, amount_total)
+    memo_html = (
+        f'<p class="ln-muted" style="margin:0 0 12px; font-size:12px;">'
+        f"Memo: {html_escape(memo)}</p>"
+        if memo
+        else ""
+    )
+    cta_html = (
+        f'<p style="margin:16px 0;">{_cta(pay_url, "pay-invoice --online")}</p>'
+        if pay_url
+        else ""
+    )
     html = (
         f'<p style="margin:0 0 4px;">You have a new invoice from {business}'
         f"{due_line}.</p>"
         f'<p class="ln-muted" style="margin:0; font-size:12px;">'
         f"Order ID: {invoice_id}</p>"
         f"{table_html}"
-        f'<p style="margin:16px 0;">{_cta(pay_url, "pay-invoice --online")}</p>'
+        f"{memo_html}"
+        f"{cta_html}"
         '<p class="ln-muted" style="margin:0 0 16px; font-size:12px;">'
         "Or use one of the other payment methods listed on the invoice PDF."
         "</p>"
@@ -143,12 +167,18 @@ def invoice_sent(
         "invoice are attached."
         "</p>"
     )
+    memo_text = f"Memo: {memo}\n\n" if memo else ""
+    pay_text = f"Pay online: {pay_url}\n" if pay_url else ""
     text = (
         f"You have a new invoice from {cfg.invoice_business_name}{due_line}.\n"
         f"Order ID: {invoice_id}\n\n"
         f"{_line_items_text(line_items, currency)}\n"
-        f"{'Total':<59} {amount_total:>12} {currency.upper()}\n\n"
-        f"Pay online: {pay_url}\n"
+        # <60 (not <59) so the amount lands on the same right-hand edge
+        # as "Line total" in the header row above -- see export.py's
+        # build_invoice_plaintext, which has the identical fix.
+        f"{'Total':<60} {amount_total:>12} {currency.upper()}\n\n"
+        f"{memo_text}"
+        f"{pay_text}"
         "Other payment methods are listed on the invoice PDF.\n\n"
         "Not rendering correctly? A PDF and plain-text copy of this "
         "invoice are attached.\n"

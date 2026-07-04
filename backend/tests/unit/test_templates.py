@@ -133,6 +133,31 @@ def test_invoice_sent_total_row_matches_amount_total() -> None:
     assert "123.45" in text
 
 
+def test_invoice_sent_text_columns_stay_aligned() -> None:
+    """Regression test mirroring test_export.py's plaintext-attachment
+    version of the same bug: the header row is 73 chars wide but the
+    divider/Total row were off by one, so the email's own text/plain
+    body must line up correctly too."""
+    cfg = _cfg()
+    _subject, _html, text = templates.invoice_sent(
+        cfg,
+        invoice_id=uuid.uuid4(),
+        amount_total=Decimal("1968.00"),
+        currency="usd",
+        due_date=None,
+        line_items=[_line_item()],
+    )
+    lines = text.splitlines()
+    header = next(line for line in lines if line.startswith("Description"))
+    dividers = [line for line in lines if set(line) == {"-"}]
+    total_line = next(line for line in lines if line.startswith("Total"))
+
+    assert all(len(d) == len(header) for d in dividers)
+    line_total_end = header.index("Line total") + len("Line total")
+    amount_end = total_line.index(" USD")
+    assert amount_end == line_total_end
+
+
 def test_invoice_sent_no_line_items_renders_empty_table_without_raising() -> None:
     cfg = _cfg()
     subject, html, text = templates.invoice_sent(
