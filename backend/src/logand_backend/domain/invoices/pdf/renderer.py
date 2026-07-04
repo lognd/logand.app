@@ -71,6 +71,20 @@ def latex_escape(value: object) -> str:
     return "".join(_LATEX_SPECIAL_CHARS.get(ch, ch) for ch in str(value))
 
 
+def latex_escape_lines(value: object) -> str:
+    """Like `latex_escape`, but preserves line breaks the admin actually
+    typed (e.g. INVOICE_BUSINESS_DETAILS's street/city/EIN lines) as real
+    LaTeX line breaks. LaTeX source treats a bare newline as
+    interchangeable with any other whitespace -- passing a multi-line
+    value through plain `latex_escape` alone silently collapses it into
+    one run-on line in the compiled PDF, which is not a rendering choice,
+    it's data loss the admin never asked for. Escapes each line
+    individually (so a literal backslash within a line still can't
+    inject LaTeX) before joining with an explicit `\\` line-break command.
+    """
+    return r"\\".join(latex_escape(line) for line in str(value).splitlines())
+
+
 class InvoiceLineItemData(BaseModel):
     model_config = {"frozen": True}
 
@@ -163,7 +177,7 @@ def build_invoice_pdf_data(
         status=latex_escape(status.capitalize()),
         bill_to=latex_escape(customer_email),
         business_name=latex_escape(business_name),
-        business_details=latex_escape(business_details),
+        business_details=latex_escape_lines(business_details),
         currency_upper=latex_escape(currency.upper()),
         currency_symbol=_currency_symbol(currency),
         amount_total=latex_escape(format_major_units(amount_total, currency)),

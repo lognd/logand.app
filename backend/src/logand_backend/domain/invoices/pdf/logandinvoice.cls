@@ -11,11 +11,13 @@
 
 \RequirePackage[margin=1in]{geometry}
 \RequirePackage[T1]{fontenc}
-% No lmodern -- standard Computer Modern (always bundled with any LaTeX
-% install, no extra package dependency) already looks professional; this
-% avoids depending on a package split across Debian's texlive-* names in
-% a way that isn't guaranteed present just because texlive-fonts-
-% recommended is installed.
+% Palatino (mathpazo), not Computer Modern -- CM is the LaTeX2e default
+% and reads as "typeset academic paper," which is exactly wrong for a
+% financial/legal letterhead document. mathpazo ships in texlive-latex-
+% base, already a transitive dependency of texlive-latex-recommended
+% (see backend/Dockerfile's install list), so this needs no new package.
+\RequirePackage{mathpazo}
+\linespread{1.05}
 \RequirePackage{xcolor}
 \RequirePackage{tabularx}
 \RequirePackage{booktabs}
@@ -54,7 +56,8 @@
 \pagestyle{fancy}
 \fancyhf{}
 \renewcommand{\headrulewidth}{0pt}
-\fancyfoot[C]{\small\color{invoicegray}\thepage}
+\renewcommand{\footrulewidth}{0.4pt}
+\fancyfoot[C]{\small\color{invoicegray}Thank you for your business.\\[2pt]\thepage}
 
 % ---- Data commands -- renderer.py's Jinja2 template calls these once,
 % near the top of the document, before \begin{document}. Every value

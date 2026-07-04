@@ -16,13 +16,14 @@
 \invoiceheader
 \billtoblock
 
+{\renewcommand{\arraystretch}{1.35}%
 \begin{tabularx}{\textwidth}{@{}X r r r@{}}
 \invoicetableheader
 \BLOCK{ for item in line_items }
 \VAR{item.description} & \VAR{item.quantity} & \BLOCK{ if item.unit }\VAR{currency_symbol}\VAR{item.unit_price} / \VAR{item.unit}\BLOCK{ else }\VAR{currency_symbol}\VAR{item.unit_price}\BLOCK{ endif } & \VAR{currency_symbol}\VAR{item.amount} \\
 \BLOCK{ endfor }
 \bottomrule
-\end{tabularx}
+\end{tabularx}}
 
 \invoicetotals{%
 \begin{tabular}{@{}r r@{}}
@@ -50,11 +51,5 @@ to arrange one of these instead.
 \vspace{6pt}
 \noindent \VAR{memo}
 \BLOCK{ endif }
-
-\vfill
-\begin{center}
-\small\color{invoicegray}
-Thank you for your business.
-\end{center}
 
 \end{document}
