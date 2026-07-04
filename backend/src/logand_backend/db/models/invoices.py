@@ -131,6 +131,18 @@ class InvoiceLineItem(Base):
         ForeignKey("invoices.id", ondelete="CASCADE"),
         nullable=False,
     )
+    __table_args__ = (
+        # Backstop for the pydantic-layer guard in
+        # domain/invoices/service.py::LineItemInput -- see FINDINGS.md
+        # M-2. A negative/zero quantity or negative unit_price would
+        # silently corrupt the denormalized amount_total every downstream
+        # money calc trusts.
+        CheckConstraint("quantity > 0", name="ck_invoice_line_items_quantity_positive"),
+        CheckConstraint(
+            "unit_price >= 0", name="ck_invoice_line_items_unit_price_nonnegative"
+        ),
+    )
+
     description: Mapped[str] = mapped_column(Text, nullable=False)
     quantity: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False, default=1)
     # Free-form ("hr", "ea", "ft"...) -- blank/null for a flat one-off
@@ -152,6 +164,11 @@ class Payment(Base):
         CheckConstraint(_PAYMENT_STATUS_CHECK, name="ck_payments_status"),
         CheckConstraint(_PAYMENT_METHOD_CHECK, name="ck_payments_method"),
         CheckConstraint(_DISPUTE_STATUS_CHECK, name="ck_payments_dispute_status"),
+        # Backstop for the pydantic-layer guard in
+        # domain/invoices/service.py::ManualPaymentInput -- see
+        # FINDINGS.md M-1. A non-positive amount would corrupt
+        # get_paid_so_far/get_amount_due.
+        CheckConstraint("amount > 0", name="ck_payments_amount_positive"),
         # Defined here too, not only in migration 0003_payment_idempotency
         # -- integration/system tests build their schema from THIS
         # metadata via Base.metadata.create_all() (see conftest.py's

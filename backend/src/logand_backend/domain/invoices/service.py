@@ -6,7 +6,7 @@ from decimal import Decimal
 from typing import Literal
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from typani.result import Err, Ok, Result
@@ -42,7 +42,11 @@ class ManualPaymentInput(BaseModel):
     model_config = {}
 
     method: ManualPaymentMethod
-    amount: Decimal
+    # Mirrors the refund guard (refunds.py: RefundError.InvalidAmount on
+    # amount <= 0) -- see FINDINGS.md M-1. A non-positive amount here would
+    # silently corrupt get_paid_so_far/get_amount_due and can send a
+    # "received your payment of 0.00" email.
+    amount: Decimal = Field(gt=0)
     note: str | None = None
 
 
@@ -50,8 +54,11 @@ class LineItemInput(BaseModel):
     model_config = {}
 
     description: str
-    quantity: Decimal = Decimal(1)
-    unit_price: Decimal
+    # See FINDINGS.md M-2: an unconstrained quantity/unit_price lets a
+    # negative line silently corrupt the denormalized amount_total that
+    # every downstream money calc trusts.
+    quantity: Decimal = Field(default=Decimal(1), gt=0)
+    unit_price: Decimal = Field(ge=0)
     unit: str | None = None
 
 
