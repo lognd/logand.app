@@ -49,7 +49,7 @@ export function CustomerInvoices() {
                 <tr key={invoice.id} className="border-b border-border">
                   <td className="p-2">{invoice.status}</td>
                   <td className="p-2">
-                    {invoice.amount_total} {invoice.currency}
+                    {invoice.amount_total} {invoice.currency.toUpperCase()}
                   </td>
                   <td className="p-2">{invoice.due_date ?? "-"}</td>
                   <td className="p-2">
