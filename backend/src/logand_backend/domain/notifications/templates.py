@@ -57,36 +57,57 @@ _TABLE_MUTED_COLOR = "#7c6f64"
 _MUTED_COLOR = "#665c54"
 
 
+# The one place this sentence's WORDING is written down. Both the HTML
+# and plain-text variants below fill in just the two dynamic fragments
+# (the Zelle clause, the contact address) rather than each spelling out
+# the surrounding sentence independently -- two copies of the same
+# prose is exactly the kind of thing that quietly drifts apart the next
+# time only one gets edited. The PDF (pdf/invoice.tex.jinja) and
+# customer/Pay.tsx's "Other ways to pay" panel can't literally share
+# this Python string (different templating languages), but all three
+# are driven from the same `cfg.zelle_handle`/`cfg.invoice_contact_email`
+# fields, not independently-typed literals.
+_PAYMENT_OPTIONS_TEMPLATE = (
+    "Prefer another way to pay? {zelle_clause}PayPal, and in-person "
+    "payment by prior arrangement are all accepted -- just email "
+    "{contact} to arrange one of these instead."
+)
+
+
+def _zelle_clause(zelle_handle: str | None, *, handle_markup: str = "{handle}") -> str:
+    """"Zelle (<handle>), " when configured, else bare "Zelle, " -- the
+    one place that decision is made. `handle_markup` lets a caller wrap
+    the handle in its own markup (e.g. HTML `<strong>`) without
+    duplicating the surrounding "Zelle (...), "/"Zelle, " punctuation.
+    """
+    if not zelle_handle:
+        return "Zelle, "
+    return f"Zelle ({handle_markup.format(handle=zelle_handle)}), "
+
+
 def _payment_options_html(cfg: AppConfig) -> str:
     """The real alternative-payment-method sentence (Zelle handle, PayPal,
     in person) as actual prose -- not a "see the attached PDF" pointer.
     A customer reading the email on a phone shouldn't have to open a
     second attachment just to learn HOW to pay; the PDF carries the same
     text for the printed/archived copy, but the email is where most
-    people actually decide what to do next. Mirrors pdf/invoice.tex.jinja's
-    own payment-methods paragraph and customer/Pay.tsx's "Other ways to
-    pay" panel so the three surfaces agree on wording, not just data.
+    people actually decide what to do next.
     """
-    zelle = (
-        f"Zelle (<strong>{html_escape(cfg.zelle_handle)}</strong>), "
-        if cfg.zelle_handle
-        else "Zelle, "
+    zelle_clause = _zelle_clause(
+        html_escape(cfg.zelle_handle) if cfg.zelle_handle else None,
+        handle_markup="<strong>{handle}</strong>",
     )
     contact = html_escape(cfg.invoice_contact_email)
-    return (
-        f"Prefer another way to pay? {zelle}PayPal, and in-person payment "
-        f"by prior arrangement are all accepted -- just email "
-        f'<a href="mailto:{contact}" style="color:inherit;">{contact}</a> '
-        "to arrange one of these instead."
+    contact_link = f'<a href="mailto:{contact}" style="color:inherit;">{contact}</a>'
+    return _PAYMENT_OPTIONS_TEMPLATE.format(
+        zelle_clause=zelle_clause, contact=contact_link
     )
 
 
 def _payment_options_text(cfg: AppConfig) -> str:
-    zelle = f"Zelle ({cfg.zelle_handle}), " if cfg.zelle_handle else "Zelle, "
-    return (
-        f"Prefer another way to pay? {zelle}PayPal, and in-person payment "
-        f"by prior arrangement are all accepted -- just email "
-        f"{cfg.invoice_contact_email} to arrange one of these instead."
+    zelle_clause = _zelle_clause(cfg.zelle_handle)
+    return _PAYMENT_OPTIONS_TEMPLATE.format(
+        zelle_clause=zelle_clause, contact=cfg.invoice_contact_email
     )
 
 

@@ -40,9 +40,10 @@
 \BLOCK{ if pay_url }
 Pay online: \href{\VAR{pay_url}}{\VAR{pay_url}}\\[6pt]
 \BLOCK{ endif }
-Alternative payment methods accepted: Zelle, PayPal, or in person by prior
-arrangement -- contact \href{mailto:\VAR{contact_email}}{\VAR{contact_email}}
-to arrange one of these instead.
+Alternative payment methods accepted: \BLOCK{ if zelle_handle }Zelle (\VAR{zelle_handle})\BLOCK{ else }Zelle\BLOCK{ endif }, PayPal, or in
+person by prior arrangement -- contact
+\href{mailto:\VAR{contact_email}}{\VAR{contact_email}} to arrange one of
+these instead.
 
 \BLOCK{ if memo }
 \vspace{18pt}

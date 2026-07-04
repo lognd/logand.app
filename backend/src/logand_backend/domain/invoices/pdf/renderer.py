@@ -113,6 +113,11 @@ class InvoicePdfData(BaseModel):
     amount_total: str
     line_items: list[InvoiceLineItemData]
     contact_email: str
+    # None means no Zelle handle is configured at all (cfg.zelle_handle is
+    # unset) -- distinct from an empty string, so the template can decide
+    # whether to mention the real handle or fall back to bare "Zelle"
+    # without a separate "is Zelle even offered" flag.
+    zelle_handle: str | None = None
     pay_url: str | None = None
     memo: str | None = None
 
@@ -131,6 +136,7 @@ def build_invoice_pdf_data(
     business_name: str,
     business_details: str,
     contact_email: str,
+    zelle_handle: str | None = None,
     pay_url: str | None,
 ) -> InvoicePdfData:
     """Assembles + LaTeX-escapes everything the template needs from raw
@@ -183,6 +189,7 @@ def build_invoice_pdf_data(
         amount_total=latex_escape(format_major_units(amount_total, currency)),
         line_items=line_item_data,
         contact_email=latex_escape(contact_email),
+        zelle_handle=latex_escape(zelle_handle) if zelle_handle else None,
         pay_url=pay_url,
         memo=latex_escape(memo) if memo else None,
     )

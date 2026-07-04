@@ -90,6 +90,45 @@ def test_build_invoice_pdf_data_escapes_every_free_text_field() -> None:
     assert data.status == "Sent"
 
 
+def test_build_invoice_pdf_data_carries_zelle_handle_when_configured() -> None:
+    data = build_invoice_pdf_data(
+        invoice_id="abc-123",
+        status="sent",
+        currency="usd",
+        amount_total=Decimal("50.00"),
+        due_date=None,
+        created_at="2026-07-01",
+        memo=None,
+        customer_email="customer@example.com",
+        line_items=[],
+        business_name="logand.app",
+        business_details="",
+        contact_email="billing@logand.app",
+        zelle_handle="logan@example.com",
+        pay_url=None,
+    )
+    assert data.zelle_handle == "logan@example.com"
+
+
+def test_build_invoice_pdf_data_zelle_handle_defaults_to_none() -> None:
+    data = build_invoice_pdf_data(
+        invoice_id="abc-123",
+        status="sent",
+        currency="usd",
+        amount_total=Decimal("50.00"),
+        due_date=None,
+        created_at="2026-07-01",
+        memo=None,
+        customer_email="customer@example.com",
+        line_items=[],
+        business_name="logand.app",
+        business_details="",
+        contact_email="billing@logand.app",
+        pay_url=None,
+    )
+    assert data.zelle_handle is None
+
+
 def test_build_invoice_pdf_data_zero_decimal_currency_has_no_fractional_digits() -> (
     None
 ):
@@ -222,6 +261,55 @@ def test_template_renders_without_compiling() -> None:
     # Balanced braces is a cheap but real sanity check -- a template bug
     # that drops a closing brace on one branch (e.g. the `if memo`
     # conditional) would show up here even without a full LaTeX compile.
+    assert tex_source.count("{") == tex_source.count("}")
+
+
+def test_template_mentions_real_zelle_handle_when_configured() -> None:
+    data = build_invoice_pdf_data(
+        invoice_id="abc-123",
+        status="sent",
+        currency="usd",
+        amount_total=Decimal("75.00"),
+        due_date=None,
+        created_at="2026-07-01",
+        memo=None,
+        customer_email="customer@example.com",
+        line_items=[],
+        business_name="logand.app",
+        business_details="",
+        contact_email="billing@logand.app",
+        zelle_handle="logan@example.com",
+        pay_url=None,
+    )
+    env = _template_env()
+    template = env.get_template("invoice.tex.jinja")
+    tex_source = template.render(**data.__dict__)
+
+    assert "Zelle (logan@example.com)" in tex_source
+    assert tex_source.count("{") == tex_source.count("}")
+
+
+def test_template_falls_back_to_bare_zelle_when_not_configured() -> None:
+    data = build_invoice_pdf_data(
+        invoice_id="abc-123",
+        status="sent",
+        currency="usd",
+        amount_total=Decimal("75.00"),
+        due_date=None,
+        created_at="2026-07-01",
+        memo=None,
+        customer_email="customer@example.com",
+        line_items=[],
+        business_name="logand.app",
+        business_details="",
+        contact_email="billing@logand.app",
+        pay_url=None,
+    )
+    env = _template_env()
+    template = env.get_template("invoice.tex.jinja")
+    tex_source = template.render(**data.__dict__)
+
+    assert "Zelle, PayPal" in tex_source
     assert tex_source.count("{") == tex_source.count("}")
 
 
