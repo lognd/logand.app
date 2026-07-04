@@ -500,6 +500,11 @@ async def apply_refund_settlement(
         if refund.status == "succeeded" and mapped_status == "succeeded":
             invoice = await db.get(Invoice, refund.invoice_id)
             if invoice is not None:
+                # Release the Refund row lock (held by the caller via
+                # with_for_update) before the notification email send --
+                # same early-commit-before-external-I/O pattern as the
+                # normal settlement path below (FINDINGS.md M1).
+                await db.commit()
                 await notify_refund_settled(db, cfg, invoice, refund.amount)
         return
     refund.status = mapped_status
