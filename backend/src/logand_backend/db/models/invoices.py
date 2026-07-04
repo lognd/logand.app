@@ -78,7 +78,7 @@ class Invoice(Base):
     # Must be recomputed server-side on every write -- never trust client input
     # for this field. See domain/invoices/ for the recompute helper.
     amount_total: Mapped[Decimal] = mapped_column(
-        Numeric(12, 2), nullable=False, default=0
+        Numeric(14, 3), nullable=False, default=0
     )
     currency: Mapped[str] = mapped_column(Text, nullable=False, default="usd")
     memo: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -144,7 +144,7 @@ class InvoiceLineItem(Base):
     )
 
     description: Mapped[str] = mapped_column(Text, nullable=False)
-    quantity: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False, default=1)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(12, 3), nullable=False, default=1)
     # Free-form ("hr", "ea", "ft"...) -- blank/null for a flat one-off
     # charge with no natural unit. Purely display: "$45.00 / hr" instead
     # of a bare "$45.00" next to unit_price, on the admin form, the
@@ -152,7 +152,7 @@ class InvoiceLineItem(Base):
     # (that's always quantity * unit_price regardless of what the unit
     # label says).
     unit: Mapped[str | None] = mapped_column(Text, nullable=True)
-    unit_price: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    unit_price: Mapped[Decimal] = mapped_column(Numeric(14, 3), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -244,7 +244,7 @@ class Payment(Base):
     # LaTeX/HTML-escaped here (that's the PDF renderer's job when this
     # ever shows up in an invoice PDF, not this model's).
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
-    amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    amount: Mapped[Decimal] = mapped_column(Numeric(14, 3), nullable=False)
     status: Mapped[str] = mapped_column(Text, nullable=False, default="pending")
     transaction_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -297,7 +297,7 @@ class Refund(Base):
         ForeignKey("invoices.id", ondelete="RESTRICT"),
         nullable=False,
     )
-    amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    amount: Mapped[Decimal] = mapped_column(Numeric(14, 3), nullable=False)
     # Free-form admin-entered reason ("customer cancelled," "duplicate
     # charge," ...) -- never required, never LaTeX/HTML-escaped here, same
     # convention as Payment.note.

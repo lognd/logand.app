@@ -37,6 +37,7 @@ def _data(**overrides: object) -> InvoiceExportData:
                 quantity=Decimal("3"),
                 unit="hr",
                 unit_price=Decimal("5.00"),
+                currency="usd",
             )
         ],
         pay_url="https://logand.app/invoices/x/pay",
@@ -51,8 +52,38 @@ def test_line_item_view_computes_line_total() -> None:
         quantity=Decimal("4"),
         unit=None,
         unit_price=Decimal("2.50"),
+        currency="usd",
     )
     assert li.line_total == Decimal("10.00")
+
+
+def test_line_item_view_quantizes_to_currency_precision_zero_decimal() -> None:
+    """JPY has 0 decimal places -- a fractional yen line total must round
+    to a whole number, not a fixed 2dp. See FINDINGS.md L1."""
+    li = InvoiceLineItemView(
+        description="Widget",
+        quantity=Decimal("3"),
+        unit=None,
+        unit_price=Decimal("1000"),
+        currency="jpy",
+    )
+    assert li.line_total == Decimal("3000")
+    assert str(li.line_total) == "3000"
+
+
+def test_line_item_view_quantizes_to_currency_precision_three_decimal() -> None:
+    """BHD has 3 decimal places -- a line total must keep the third
+    decimal place instead of being rounded away at 2dp. See
+    FINDINGS.md L1."""
+    li = InvoiceLineItemView(
+        description="Widget",
+        quantity=Decimal("2"),
+        unit=None,
+        unit_price=Decimal("1.005"),
+        currency="bhd",
+    )
+    assert li.line_total == Decimal("2.010")
+    assert str(li.line_total) == "2.010"
 
 
 # -- build_invoice_json ------------------------------------------------------
@@ -122,6 +153,7 @@ def test_build_invoice_json_survives_curly_braces_in_description() -> None:
                 quantity=Decimal("1"),
                 unit=None,
                 unit_price=Decimal("100.00"),
+                currency="usd",
             )
         ]
     )
@@ -210,6 +242,7 @@ def test_build_invoice_plaintext_survives_curly_braces_in_description() -> None:
                 quantity=Decimal("1"),
                 unit=None,
                 unit_price=Decimal("1.00"),
+                currency="usd",
             )
         ]
     )

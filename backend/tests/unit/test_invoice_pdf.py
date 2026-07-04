@@ -68,6 +68,56 @@ def test_build_invoice_pdf_data_escapes_every_free_text_field() -> None:
     assert data.status == "Sent"
 
 
+def test_build_invoice_pdf_data_zero_decimal_currency_has_no_fractional_digits() -> (
+    None
+):
+    """JPY (0dp) -- amounts must render as whole numbers, not a hardcoded
+    2dp (e.g. "1000", not "1000.00"). See FINDINGS.md L1."""
+    data = build_invoice_pdf_data(
+        invoice_id="abc-123",
+        status="sent",
+        currency="jpy",
+        amount_total=Decimal("3000"),
+        due_date=None,
+        created_at="2026-07-01",
+        memo=None,
+        customer_email="customer@example.com",
+        line_items=[("Widget", Decimal("3"), Decimal("1000"), Decimal("3000"), None)],
+        business_name="logand.app",
+        business_details="",
+        contact_email="billing@logand.app",
+        pay_url=None,
+    )
+
+    assert data.amount_total == "3000"
+    assert data.line_items[0].unit_price == "1000"
+    assert data.line_items[0].amount == "3000"
+
+
+def test_build_invoice_pdf_data_three_decimal_currency_keeps_third_digit() -> None:
+    """BHD (3dp) -- amounts must keep the third decimal place instead of
+    being rounded away at 2dp. See FINDINGS.md L1."""
+    data = build_invoice_pdf_data(
+        invoice_id="abc-123",
+        status="sent",
+        currency="bhd",
+        amount_total=Decimal("2.010"),
+        due_date=None,
+        created_at="2026-07-01",
+        memo=None,
+        customer_email="customer@example.com",
+        line_items=[("Widget", Decimal("2"), Decimal("1.005"), Decimal("2.010"), None)],
+        business_name="logand.app",
+        business_details="",
+        contact_email="billing@logand.app",
+        pay_url=None,
+    )
+
+    assert data.amount_total == "2.010"
+    assert data.line_items[0].unit_price == "1.005"
+    assert data.line_items[0].amount == "2.010"
+
+
 def test_build_invoice_pdf_data_defaults_due_date_when_absent() -> None:
     data = build_invoice_pdf_data(
         invoice_id="abc-123",

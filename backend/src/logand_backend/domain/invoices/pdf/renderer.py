@@ -9,6 +9,7 @@ from pathlib import Path
 import jinja2
 from pydantic import BaseModel
 
+from logand_backend.domain.payments.currency import format_major_units
 from logand_backend.logging import get_logger
 
 _log = get_logger(__name__)
@@ -133,16 +134,24 @@ def build_invoice_pdf_data(
     element) rather than this function recomputing `quantity * unit_price`
     itself -- every caller already has one via
     domain.invoices.export.InvoiceLineItemView.line_total, which is the
-    single place that rounding rule (quantize to 2dp) is defined. Having
-    this function re-derive its own amount independently is exactly how
-    FINDINGS.md's M1/L2 desync happened the first time.
+    single place that rounding rule (quantize to the currency's real
+    precision) is defined. Having this function re-derive its own amount
+    independently is exactly how FINDINGS.md's M1/L2 desync happened the
+    first time.
+
+    `unit_price`/`amount`/`amount_total` are formatted with
+    `format_major_units` (this currency's real decimal places -- 0dp for
+    JPY/KRW/..., 3dp for BHD/KWD/..., 2dp otherwise), not a hardcoded
+    `:.2f`, so a zero- or three-decimal-currency invoice's PDF shows the
+    same figure as its email/.txt/for-robots.json siblings. See
+    FINDINGS.md L1.
     """
     line_item_data = [
         InvoiceLineItemData(
             description=latex_escape(description),
             quantity=latex_escape(str(quantity)),
-            unit_price=latex_escape(f"{unit_price:.2f}"),
-            amount=latex_escape(f"{line_total:.2f}"),
+            unit_price=latex_escape(format_major_units(unit_price, currency)),
+            amount=latex_escape(format_major_units(line_total, currency)),
             unit=latex_escape(unit) if unit else "",
         )
         for description, quantity, unit_price, line_total, unit in line_items
@@ -157,7 +166,7 @@ def build_invoice_pdf_data(
         business_details=latex_escape(business_details),
         currency_upper=latex_escape(currency.upper()),
         currency_symbol=_currency_symbol(currency),
-        amount_total=latex_escape(f"{amount_total:.2f}"),
+        amount_total=latex_escape(format_major_units(amount_total, currency)),
         line_items=line_item_data,
         contact_email=latex_escape(contact_email),
         pay_url=pay_url,

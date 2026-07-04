@@ -18,6 +18,7 @@ from logand_backend.domain.invoices.pdf.renderer import (
     build_invoice_pdf_data,
     render_invoice_pdf,
 )
+from logand_backend.domain.payments.currency import decimal_places
 from logand_backend.errors import InvoiceError
 
 # Lives here (not domain/invoices/service.py) specifically so
@@ -39,17 +40,41 @@ class InvoiceLineItemView:
     quantity: Decimal
     unit: str | None
     unit_price: Decimal
+    # Needed so line_total can quantize to THIS currency's real precision
+    # (0dp for JPY/KRW/..., 3dp for BHD/KWD/..., 2dp otherwise) rather than
+    # a hardcoded 2dp -- see FINDINGS.md L1. Every currency stored on an
+    # invoice line item is the parent invoice's own currency (there is no
+    # per-line currency), so this is always InvoiceExportData.currency.
+    currency: str
 
     @property
     def line_total(self) -> Decimal:
-        # Quantized to 2dp so every export format (PDF, email, .txt,
-        # for-robots.json) agrees on the same rounded figure -- quantity
-        # is Numeric(10,2) and unit_price is Numeric(12,2), so their raw
-        # product can carry up to 4 decimal places; leaving it unrounded
-        # let the PDF (which formats with :.2f) silently disagree with
-        # every other format, and let the visible rows fail to sum to
-        # amount_total (also stored at 2dp). See FINDINGS.md M1.
-        return (self.quantity * self.unit_price).quantize(Decimal("0.01"))
+        # Quantized to the currency's real precision so every export
+        # format (PDF, email, .txt, for-robots.json) agrees on the same
+        # rounded figure -- quantity is Numeric(10,3) and unit_price is
+        # Numeric(12,3), so their raw product can carry more decimal
+        # places than the currency actually uses; leaving it unrounded (or
+        # rounded to a fixed 2dp regardless of currency) let the PDF
+        # (which used to format with :.2f) silently disagree with every
+        # other format, and let the visible rows fail to sum to
+        # amount_total (also stored at the currency's real precision).
+        # See FINDINGS.md M1/L1.
+        places = decimal_places(self.currency)
+        quantum = Decimal(1).scaleb(-places) if places else Decimal(1)
+        return (self.quantity * self.unit_price).quantize(quantum)
+
+    @property
+    def unit_price_display(self) -> Decimal:
+        # unit_price is stored at Numeric(14,3) (widened for FINDINGS.md
+        # L1 so a 3dp-currency invoice can hold a real 3-decimal price),
+        # but a 2dp/0dp currency's unit_price should still DISPLAY at its
+        # own real precision (e.g. "10.00" for USD, not "10.000") rather
+        # than the column's full storage scale -- every export format
+        # (PDF, email, .txt, for-robots.json) reads this, not raw
+        # unit_price, so they all show the same figure.
+        places = decimal_places(self.currency)
+        quantum = Decimal(1).scaleb(-places) if places else Decimal(1)
+        return self.unit_price.quantize(quantum)
 
 
 @dataclass(frozen=True)
@@ -68,6 +93,21 @@ class InvoiceExportData:
     # invoice that would just 409 on that route is misleading, not merely
     # unhelpful, per docs/design/04.
     pay_url: str | None
+
+    @property
+    def amount_total_display(self) -> Decimal:
+        # amount_total is stored in a Numeric(14,3) column, so ANY value
+        # read back from the DB carries a 3-decimal-place scale
+        # regardless of what quantum recompute_amount_total actually used
+        # to compute it (Postgres normalizes to the column's declared
+        # scale on write) -- e.g. a JPY amount_total correctly computed as
+        # Decimal("1000") still round-trips as Decimal("1000.000"). Every
+        # export format must re-quantize to the currency's real precision
+        # at display time rather than trusting the raw column's scale.
+        # See FINDINGS.md L1.
+        places = decimal_places(self.currency)
+        quantum = Decimal(1).scaleb(-places) if places else Decimal(1)
+        return self.amount_total.quantize(quantum)
 
 
 async def load_invoice_export_data(
@@ -111,6 +151,7 @@ async def load_invoice_export_data(
                 quantity=li.quantity,
                 unit=li.unit,
                 unit_price=li.unit_price,
+                currency=invoice.currency,
             )
             for li in line_items
         ],
@@ -187,7 +228,7 @@ def build_invoice_json(data: InvoiceExportData) -> bytes:
         "invoice_id": str(data.invoice_id),
         "status": data.status,
         "currency": data.currency,
-        "amount_total": str(data.amount_total),
+        "amount_total": str(data.amount_total_display),
         "due_date": data.due_date.isoformat() if data.due_date else None,
         "created_at": data.created_at.isoformat(),
         "memo": data.memo,
@@ -198,7 +239,7 @@ def build_invoice_json(data: InvoiceExportData) -> bytes:
                 "description": li.description,
                 "quantity": str(li.quantity),
                 "unit": li.unit,
-                "unit_price": str(li.unit_price),
+                "unit_price": str(li.unit_price_display),
                 "line_total": str(li.line_total),
             }
             for li in data.line_items
@@ -241,13 +282,15 @@ def build_invoice_plaintext(data: InvoiceExportData, cfg: AppConfig) -> str:
         unit_suffix = f" ({li.unit})" if li.unit else ""
         lines.append(
             f"{li.description + unit_suffix:<40} {str(li.quantity):>6} "
-            f"{str(li.unit_price):>12} {str(li.line_total):>12}"
+            f"{str(li.unit_price_display):>12} {str(li.line_total):>12}"
         )
     lines.append("-" * 73)
     # <60 (not <59) so the amount field starts one column later, landing
     # its right edge on the same column as "Line total" above -- <59 put
     # it one column short of that edge.
-    lines.append(f"{'Total':<60} {str(data.amount_total):>12} {data.currency.upper()}")
+    lines.append(
+        f"{'Total':<60} {str(data.amount_total_display):>12} {data.currency.upper()}"
+    )
     lines.append("")
     if data.pay_url:
         lines.append(f"Pay online: {data.pay_url}")

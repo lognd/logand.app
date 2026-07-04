@@ -159,8 +159,78 @@ async def test_sending_invoice_attaches_txt_and_for_robots_json_last(
     payload = json.loads(json_part.get_content())
     assert payload["invoice_id"] == invoice_id
     assert payload["line_items"][0]["description"] == "widget"
-    assert payload["line_items"][0]["quantity"] == "1.00"
+    # 3dp, not 2dp -- InvoiceLineItem.quantity was widened to Numeric(12,3)
+    # (FINDINGS.md L1, to cover 3-decimal currencies' unit_price/quantity
+    # precision), so a stored quantity always carries the column's full
+    # scale regardless of currency (quantity isn't itself a currency
+    # amount, so it isn't quantized to currency.decimal_places).
+    assert payload["line_items"][0]["quantity"] == "1.000"
     assert payload["line_items"][0]["unit_price"] == "10.00"
+
+
+async def test_sending_jpy_invoice_shows_zero_decimal_amounts_everywhere(
+    db_client: AsyncClient,
+    make_user,
+    login_as,
+    monkeypatch: pytest.MonkeyPatch,
+    fake_smtp_server: FakeSmtpServer,
+    db_session: AsyncSession,
+) -> None:
+    """FINDINGS.md L1 regression: a JPY (0dp) invoice's PDF/email/.txt/
+    for-robots.json must all show whole-yen amounts, not a hardcoded 2dp
+    "1000.00". There's no admin-API knob to set an invoice's currency at
+    creation time, so this sets it directly on the row (same pattern the
+    integration tests for recompute_amount_total use) between create and
+    send.
+    """
+    _configure_smtp(monkeypatch, fake_smtp_server)
+    admin = await make_user(role="admin", password="pw")
+    customer = await make_user(role="customer", password="pw")
+    await login_as(db_client, admin.email, "pw")
+    headers = _csrf_headers(db_client)
+
+    create_resp = await db_client.post(
+        "/api/admin/invoices",
+        params={"customer_id": str(customer.id)},
+        json=[{"description": "widget", "quantity": "1", "unit_price": "1000"}],
+        headers=headers,
+    )
+    invoice_id = create_resp.json()["id"]
+
+    from logand_backend.db.models.invoices import Invoice
+    from logand_backend.domain.invoices.service import recompute_amount_total
+
+    invoice = await db_session.get(Invoice, invoice_id)
+    invoice.currency = "jpy"
+    # amount_total was already quantized under "usd" rules at creation
+    # time (2dp) -- flipping currency alone doesn't retroactively
+    # re-quantize the stored total, so recompute explicitly under the
+    # new currency, same as any real write path would.
+    await recompute_amount_total(db_session, invoice_id)
+    await db_session.commit()
+
+    resp = await db_client.post(
+        f"/api/admin/invoices/{invoice_id}/send", headers=headers
+    )
+    assert resp.status_code == 200
+
+    msg = fake_smtp_server.messages[0]
+    attachments = list(msg.iter_attachments())
+
+    if shutil.which("latexmk") is not None:
+        pdf_part = next(p for p in attachments if p.get_filename().endswith(".pdf"))
+        assert pdf_part.get_content_type() == "application/pdf"
+
+    txt_part = next(p for p in attachments if p.get_filename().endswith(".txt"))
+    txt_content = txt_part.get_content()
+    assert "1000 JPY" in txt_content
+    assert "1000.00" not in txt_content
+
+    json_part = next(p for p in attachments if p.get_filename() == "for-robots.json")
+    payload = json.loads(json_part.get_content())
+    assert payload["amount_total"] == "1000"
+    assert payload["line_items"][0]["unit_price"] == "1000"
+    assert payload["line_items"][0]["line_total"] == "1000"
 
 
 async def test_manual_payment_emails_the_customer(

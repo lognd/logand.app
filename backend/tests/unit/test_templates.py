@@ -23,6 +23,7 @@ def _line_item(**overrides: object) -> InvoiceLineItemView:
         quantity=Decimal("2"),
         unit="hr",
         unit_price=Decimal("50.00"),
+        currency="usd",
     )
     defaults.update(overrides)
     return InvoiceLineItemView(**defaults)  # type: ignore[arg-type]

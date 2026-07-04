@@ -64,6 +64,52 @@ async def test_recompute_amount_total_ignores_stale_invoice_total(
     assert invoice.amount_total == Decimal("100.00")
 
 
+async def test_recompute_amount_total_quantizes_zero_decimal_currency(
+    db_session, make_user
+) -> None:
+    """JPY (0dp) -- amount_total must be a whole number, not a fixed 2dp.
+    See FINDINGS.md L1."""
+    customer = await make_user(role="customer")
+    line_items = [
+        LineItemInput(
+            description="widget", quantity=Decimal(3), unit_price=Decimal("1000")
+        ),
+    ]
+    invoice_id = (await create_invoice(db_session, customer.id, line_items)).danger_ok
+    invoice = await db_session.get(Invoice, invoice_id)
+    invoice.currency = "jpy"
+    await db_session.flush()
+
+    total = await recompute_amount_total(db_session, invoice_id)
+
+    assert total == Decimal("3000")
+    await db_session.refresh(invoice)
+    assert invoice.amount_total == Decimal("3000")
+
+
+async def test_recompute_amount_total_quantizes_three_decimal_currency(
+    db_session, make_user
+) -> None:
+    """BHD (3dp) -- amount_total must keep the third decimal place instead
+    of being rounded away at 2dp. See FINDINGS.md L1."""
+    customer = await make_user(role="customer")
+    line_items = [
+        LineItemInput(
+            description="widget", quantity=Decimal(2), unit_price=Decimal("1.005")
+        ),
+    ]
+    invoice_id = (await create_invoice(db_session, customer.id, line_items)).danger_ok
+    invoice = await db_session.get(Invoice, invoice_id)
+    invoice.currency = "bhd"
+    await db_session.flush()
+
+    total = await recompute_amount_total(db_session, invoice_id)
+
+    assert total == Decimal("2.010")
+    await db_session.refresh(invoice)
+    assert invoice.amount_total == Decimal("2.010")
+
+
 async def test_send_invoice_draft_to_sent(db_session, make_user) -> None:
     customer = await make_user(role="customer")
     invoice_id = (await create_invoice(db_session, customer.id, [])).danger_ok

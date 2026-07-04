@@ -52,7 +52,11 @@ async def notify_invoice_sent(
         subject, html, text = templates.invoice_sent(
             cfg,
             invoice_id=invoice.id,
-            amount_total=invoice.amount_total,
+            # export_data.amount_total_display (not the raw invoice.amount_
+            # total column value) -- the column always round-trips at its
+            # full Numeric(14,3) storage scale regardless of the
+            # currency's real precision. See FINDINGS.md L1.
+            amount_total=export_data.amount_total_display,
             currency=invoice.currency,
             due_date=invoice.due_date.isoformat() if invoice.due_date else None,
             line_items=export_data.line_items,

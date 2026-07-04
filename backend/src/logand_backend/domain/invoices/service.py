@@ -20,6 +20,7 @@ from logand_backend.db.models.invoices import (
     Refund,
 )
 from logand_backend.domain.notifications.notify import notify_payment_received
+from logand_backend.domain.payments import currency
 from logand_backend.domain.payments.providers import paypal
 from logand_backend.errors import InvoiceError
 from logand_backend.logging import get_logger
@@ -91,25 +92,30 @@ async def recompute_amount_total(db: AsyncSession, invoice_id: UUID) -> Decimal:
     invoices.amount_total in the same transaction. Called on every write
     path -- amount_total must never be trusted from client input
     (docs/design/04, the tamper vector this exists to close)."""
+    invoice = await db.get(Invoice, invoice_id)
+    if invoice is None:
+        return Decimal(0)
+
     line_items = (
         await db.execute(
             select(InvoiceLineItem).where(InvoiceLineItem.invoice_id == invoice_id)
         )
     ).scalars()
-    # Quantize each line total to 2dp before summing -- must match
-    # InvoiceLineItemView.line_total's rounding rule (export.py) exactly,
-    # otherwise amount_total (this column) can disagree with the sum of
-    # the per-line totals shown in the PDF/email/attachments. See
-    # FINDINGS.md M1.
+    # Quantize each line total to the invoice's OWN currency's real
+    # precision (0dp for JPY/KRW/..., 3dp for BHD/KWD/..., 2dp otherwise)
+    # before summing -- must match InvoiceLineItemView.line_total's
+    # rounding rule (export.py) exactly, otherwise amount_total (this
+    # column) can disagree with the sum of the per-line totals shown in
+    # the PDF/email/attachments. See FINDINGS.md M1/L1.
+    places = currency.decimal_places(invoice.currency)
+    quantum = Decimal(1).scaleb(-places) if places else Decimal(1)
     total = sum(
-        ((li.quantity * li.unit_price).quantize(Decimal("0.01")) for li in line_items),
+        ((li.quantity * li.unit_price).quantize(quantum) for li in line_items),
         Decimal(0),
     )
 
-    invoice = await db.get(Invoice, invoice_id)
-    if invoice is not None:
-        invoice.amount_total = total
-        await db.flush()
+    invoice.amount_total = total
+    await db.flush()
     return total
 
 

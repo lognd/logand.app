@@ -72,7 +72,7 @@ def _line_items_table(
         f"{f' ({html_escape(li.unit)})' if li.unit else ''}"
         "</td>"
         f'<td style="padding:4px 8px; text-align:right;">{li.quantity}</td>'
-        f'<td style="padding:4px 8px; text-align:right;">{li.unit_price}</td>'
+        f'<td style="padding:4px 8px; text-align:right;">{li.unit_price_display}</td>'
         f'<td style="padding:4px 0 4px 8px; text-align:right;">'
         f"{li.line_total}</td></tr>"
         for li in line_items
@@ -109,7 +109,7 @@ def _line_items_text(line_items: list[InvoiceLineItemView], currency: str) -> st
         unit_suffix = f" ({li.unit})" if li.unit else ""
         lines.append(
             f"{li.description + unit_suffix:<40} {str(li.quantity):>6} "
-            f"{str(li.unit_price):>12} {str(li.line_total):>12}"
+            f"{str(li.unit_price_display):>12} {str(li.line_total):>12}"
         )
     lines.append("-" * 73)
     return "\n".join(lines)
