@@ -18,11 +18,11 @@ from logand_backend.auth.rate_limit import CUSTOMER_PAY, RateLimiter
 from logand_backend.auth.sessions import SessionInfo, require_customer
 from logand_backend.db.base import get_db
 from logand_backend.db.models.invoices import Invoice, Payment
+from logand_backend.domain.invoices.export import generate_invoice_pdf
 from logand_backend.domain.invoices.pdf.renderer import PdfRenderError
 from logand_backend.domain.invoices.service import (
     attach_payment_proof,
     flag_invoice_needs_review,
-    generate_invoice_pdf,
     get_amount_due,
     has_pending_payment,
     settle_invoice_if_paid,

@@ -14,13 +14,13 @@ from logand_backend.app.config import AppConfig
 from logand_backend.auth.sessions import SessionInfo, require_admin
 from logand_backend.db.base import get_db
 from logand_backend.db.models.invoices import Invoice, InvoiceLineItem, Payment, Refund
+from logand_backend.domain.invoices.export import generate_invoice_pdf
 from logand_backend.domain.invoices.pdf.renderer import PdfRenderError
 from logand_backend.domain.invoices.refunds import RefundInput, refund_payment
 from logand_backend.domain.invoices.service import (
     LineItemInput,
     ManualPaymentInput,
     create_invoice,
-    generate_invoice_pdf,
     get_payment_proof,
     list_payment_proofs,
     record_manual_payment,
