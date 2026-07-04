@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { apiGet, apiPatch, apiPost, RateLimitedError } from "../../src/api/client";
+import { ApiError, apiGet, apiPatch, apiPost, RateLimitedError } from "../../src/api/client";
 
 function jsonResponse(body: unknown, init: ResponseInit = {}): Response {
   return new Response(JSON.stringify(body), {
@@ -70,6 +70,31 @@ describe("api/client", () => {
 
     await expect(apiGet("/api/me")).rejects.toThrow("unauthenticated");
     expect(window.location.assign).not.toHaveBeenCalled();
+  });
+
+  it("does NOT redirect on a 401 from /api/auth/login, and surfaces the real detail", async () => {
+    // A wrong password on the login form itself 401s -- previously this
+    // fell into the same "protected endpoint" branch as e.g.
+    // /api/admin/invoices, triggering a full-page redirect to /login
+    // (already the current page) before the login form's own error
+    // handler ever ran, so the real "email or password is incorrect"
+    // message from the backend was silently discarded.
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ detail: "email or password is incorrect" }), {
+        status: 401,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const error = await apiPost("/api/auth/login", {
+      email: "x@example.com",
+      password: "wrong",
+    }).catch((e) => e);
+
+    expect(window.location.assign).not.toHaveBeenCalled();
+    expect(error).toBeInstanceOf(ApiError);
+    expect((error as ApiError).message).toBe("email or password is incorrect");
   });
 
   it("throws a RateLimitedError with the parsed Retry-After on a 429 response", async () => {

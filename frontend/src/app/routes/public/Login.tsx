@@ -2,7 +2,29 @@ import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { login } from "../../../api/auth";
+import { ApiError, RateLimitedError } from "../../../api/client";
+import { formatRetryAt } from "../../../lib/time";
 import { BUTTON_CLASS, INPUT_CLASS, LABEL_CLASS } from "../../../styles/a11y";
+
+// The backend already returns a deliberately generic message here
+// ("email or password is incorrect") that never distinguishes "no such
+// account" from "wrong password" -- safe to show verbatim, not a
+// security regression, since that's the whole design of
+// AuthError.InvalidCredentials (see domain/auth/service.py::login's own
+// doc comment). This is only a fallback for the rare case the backend
+// didn't send a detail body at all (a raw network failure, a non-JSON
+// 401 from something in front of the app).
+const GENERIC_LOGIN_ERROR = "Login failed. Check your email and password.";
+
+function loginErrorMessage(error: unknown): string {
+  if (error instanceof RateLimitedError) {
+    return `Too many attempts. Try again at ${formatRetryAt(error.retryAfterSeconds)}.`;
+  }
+  if (error instanceof ApiError && error.message) {
+    return error.message;
+  }
+  return GENERIC_LOGIN_ERROR;
+}
 
 // Every field is a real labeled input per docs/design/09's accessibility bar
 // (no icon-only controls, 16px+ text, visible labels, 44px+ tap targets).
@@ -70,11 +92,19 @@ export function Login() {
 
         {mutation.isError && (
           <p role="alert" className="text-base text-accent-red">
-            Login failed. Check your email and password.
+            {loginErrorMessage(mutation.error)}
           </p>
         )}
       </form>
       <p className="mt-4 text-base text-fg-primary">
+        <a
+          href="/forgot-password"
+          className="text-accent-aqua underline underline-offset-2"
+        >
+          Forgot your password?
+        </a>
+      </p>
+      <p className="mt-2 text-base text-fg-primary">
         Don&apos;t have an account?{" "}
         <a href="/register" className="text-accent-aqua underline underline-offset-2">
           Register

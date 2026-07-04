@@ -5,6 +5,7 @@ import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Login } from "../../src/app/routes/public/Login";
 import * as authApi from "../../src/api/auth";
+import { ApiError, RateLimitedError } from "../../src/api/client";
 
 function renderWithClient() {
   const queryClient = new QueryClient();
@@ -53,5 +54,42 @@ describe("Login", () => {
     await user.click(screen.getByRole("button", { name: "Log in" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(/login failed/i);
+  });
+
+  it("shows the backend's real detail message on wrong credentials", async () => {
+    vi.spyOn(authApi, "login").mockRejectedValue(
+      new ApiError("email or password is incorrect", "AuthError.InvalidCredentials"),
+    );
+    const user = userEvent.setup();
+    renderWithClient();
+
+    await user.type(screen.getByLabelText("Email"), "logan@logandapp.com");
+    await user.type(screen.getByLabelText("Password"), "wrong");
+    await user.click(screen.getByRole("button", { name: "Log in" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "email or password is incorrect",
+    );
+  });
+
+  it("shows a retry time on rate limiting instead of a generic failure", async () => {
+    vi.spyOn(authApi, "login").mockRejectedValue(new RateLimitedError(60));
+    const user = userEvent.setup();
+    renderWithClient();
+
+    await user.type(screen.getByLabelText("Email"), "logan@logandapp.com");
+    await user.type(screen.getByLabelText("Password"), "wrong");
+    await user.click(screen.getByRole("button", { name: "Log in" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/too many attempts/i);
+    expect(await screen.findByRole("alert")).toHaveTextContent(/try again at/i);
+  });
+
+  it("links to the forgot-password page", () => {
+    renderWithClient();
+    expect(screen.getByRole("link", { name: "Forgot your password?" })).toHaveAttribute(
+      "href",
+      "/forgot-password",
+    );
   });
 });

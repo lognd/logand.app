@@ -101,8 +101,26 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     // hard reload loop: every page (including /login itself) mounts the
     // nav, which calls /api/me, which 401s, which redirected to /login,
     // which mounts the nav again, which 401s again... Real protected
-    // endpoints (admin/customer data fetches) still redirect on 401 --
-    // only this passive check is exempt.
+    // endpoints (admin/customer data fetches) still redirect on 401.
+    //
+    // /api/auth/* is exempt for a different reason: a 401 from THIS
+    // family of routes never means "your existing session died," it
+    // means "the auth action itself failed" (wrong password on /login,
+    // an already-invalid session on /logout). Previously only /api/me
+    // was exempted, so a mistyped password on the login form got a
+    // full-page redirect to /login (already the current page) before
+    // Login.tsx's mutation error handler ever ran -- the error was real,
+    // it just never reached the screen (FINDINGS-style silent-failure
+    // bug: "I mistyped my password and saw no explanation why login
+    // failed").
+    if (path.startsWith("/api/auth/")) {
+      // Also surface the backend's real detail/code (see parseErrorBody
+      // below) instead of the generic UnauthenticatedError -- a caller
+      // like Login.tsx needs the actual message ("email or password is
+      // incorrect") to show the user, not just "unauthenticated".
+      const { detail, code } = await parseErrorBody(res);
+      throw new ApiError(detail ?? "unauthenticated", code);
+    }
     if (path !== "/api/me") {
       window.location.assign("/login");
     }
