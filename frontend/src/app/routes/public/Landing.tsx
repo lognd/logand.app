@@ -194,10 +194,19 @@ export function Landing() {
           can drift out of sync with the content above it ("make sure
           there isn't any ugly seams"). shrink-0 keeps it from being
           squeezed by the flex-1 content div above on a very short
-          viewport. This footer is deliberately its own opaque-background
-          territory now (bg-bg-primary, not bg-transparent) -- the
-          animated background belongs to the content area above it, not
-          behind the footer's own controls.
+          viewport. This footer uses .glass-panel (translucent +
+          backdrop-blur) instead of solid bg-bg-primary, and sits at a
+          HIGHER z-index than ParticleLayer below (z-30 vs its z-20) --
+          backdrop-filter only blurs whatever's actually BEHIND an
+          element, so with the footer below the particles (the original
+          z-10 arrangement) the glass background had nothing to blur:
+          particles painted on top of it at full unblurred opacity
+          ("Footer doesn't hide", confirmed via screenshot showing crisp
+          glyphs over the footer). Putting the footer on top instead
+          means its own translucent backdrop-blur now sits over
+          whatever's passing underneath, softening it, while the
+          footer's own controls stay perfectly sharp since they're
+          painted on the glass itself, not behind it.
 
           Reserving bottom padding here to clear ReportProblemButton's
           `fixed bottom-4 right-4` footprint was tried first and didn't
@@ -211,7 +220,7 @@ export function Landing() {
           over the content area rather than downward into that corner --
           same pattern Shell.tsx's own mobile nav dropdown already uses
           for the equivalent problem at the top of the page. */}
-      <footer className="relative z-10 shrink-0 border-t border-border bg-bg-primary px-4 py-4">
+      <footer className="glass-panel relative z-30 shrink-0 border-t px-4 py-4">
         {/* Desktop/wide: always visible inline, matching the original
             "kind of hidden" quiet-footer-row feel -- there's no overlap
             risk at this width, plenty of horizontal room next to the
@@ -259,14 +268,18 @@ export function Landing() {
           div -- that div's own `relative z-10` makes it establish a
           stacking context, which caps everything inside it (including
           this, no matter what z-index IT used) at the content div's own
-          rank when compared against the footer (an equal-z-10 sibling
-          painted later in DOM order, so it always painted on top
-          regardless). Trail/explosion particles were still spawning and
-          animating over the footer's area the whole time (verified via
-          canvas pixel data) but invisibly, occluded by the footer's own
-          opaque bg-bg-primary paint ("the trails and explosions don't
-          work on the footer"). As a true sibling of the footer with a
-          higher z-index, this now actually paints above it.
+          rank when compared against the footer.
+          z-20, BELOW the footer's z-30 -- particles used to be a higher
+          z-index than the footer so the trail/explosion would paint over
+          it unobstructed, but that meant the footer's own background
+          (opaque at first, then briefly glass-panel) never actually sat
+          in front of the particles, so there was nothing for
+          backdrop-filter to blur ("Footer doesn't hide" -- confirmed via
+          screenshot showing crisp, unblurred glyphs over the footer).
+          With particles now behind the footer, its glass-panel backdrop-
+          blur has actual particle pixels behind it to soften, while the
+          footer's own controls (painted on the glass, not behind it)
+          stay sharp.
           `fixed` (not `absolute`) -- the trail/explosion effect is popular
           enough to want everywhere on the page, header included ("I like
           the trail and explosion trailing everywhere... enable it on the

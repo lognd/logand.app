@@ -159,7 +159,15 @@ export function Shell({ children }: { children: ReactNode }) {
           top) read as distracting. */}
       <AsciiCanvas className="pointer-events-none fixed inset-0 -z-10 opacity-10" />
       <ReportProblemButton />
-      <header className="relative z-20 border-b border-border">
+      {/* glass-panel, not a plain border -- ParticleLayer (Landing.tsx) is a
+          `fixed` element also covering the header ("enable it on the
+          header"), and this header used to have no background at all
+          (just border-b), so the trail/explosion painted straight through
+          the nav text completely unblurred. glass-panel's translucent +
+          backdrop-blur background keeps the nav legible while letting
+          whatever's passing underneath show through softened, same
+          treatment as Landing's footer. */}
+      <header className="glass-panel relative z-20 border-b">
         <div className="flex items-center justify-between gap-4 p-4">
           <a href="/" aria-label="logand.app" className={NAV_BRAND_CLASS}>
             <GlitchText>logand.app</GlitchText>
