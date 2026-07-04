@@ -8,6 +8,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from logand_backend.app.config import AppConfig
 from logand_backend.db.models.invoices import Invoice
 from logand_backend.db.models.users import User
+from logand_backend.domain.invoices.export import (
+    build_invoice_json,
+    build_invoice_plaintext,
+    generate_invoice_pdf,
+    load_invoice_export_data,
+)
+from logand_backend.domain.invoices.pdf.renderer import PdfRenderError
 from logand_backend.domain.notifications import mailer, templates
 from logand_backend.logging import get_logger
 
@@ -30,13 +37,79 @@ async def notify_invoice_sent(
     if customer is None or customer.emails_opted_out:
         return
 
+    export_data = await load_invoice_export_data(db, invoice.id, cfg)
+    if export_data is None:
+        # Invoice vanished (soft-deleted) between the caller's commit and
+        # here -- nothing left to notify about.
+        return
+
     subject, html, text = templates.invoice_sent(
         cfg,
         invoice_id=invoice.id,
         amount_total=invoice.amount_total,
         currency=invoice.currency,
         due_date=invoice.due_date.isoformat() if invoice.due_date else None,
+        line_items=export_data.line_items,
     )
+
+    attachments: list[mailer.EmailAttachment] = []
+    # Best-effort: the email still carries the full HTML/plaintext
+    # breakdown even if PDF generation fails -- a PDF-less invoice email
+    # is degraded, not useless, and must never 500 the whole /send route.
+    # generate_invoice_pdf can return Err(InvoiceError) (invoice vanished),
+    # raise PdfRenderError (a LaTeX compile failure with a log to inspect),
+    # or raise something else entirely (e.g. FileNotFoundError if latexmk
+    # itself isn't on PATH) -- all three are swallowed here.
+    try:
+        pdf_result = await generate_invoice_pdf(db, invoice.id, cfg)
+    except PdfRenderError as exc:
+        _log.warning(
+            "invoice PDF rendering failed for invoice-sent notification",
+            extra={"invoice_id": str(invoice.id), "log": exc.log},
+        )
+    except Exception as exc:
+        _log.error(
+            "unexpected error generating invoice PDF for invoice-sent notification",
+            extra={"invoice_id": str(invoice.id)},
+            exc_info=exc,
+        )
+    else:
+        if pdf_result.is_err:
+            _log.warning(
+                "failed to generate invoice PDF for invoice-sent notification",
+                extra={
+                    "invoice_id": str(invoice.id),
+                    "error": str(pdf_result.danger_err),
+                },
+            )
+        else:
+            attachments.append(
+                mailer.EmailAttachment(
+                    filename=f"invoice-{invoice.id}.pdf",
+                    content=pdf_result.danger_ok,
+                    maintype="application",
+                    subtype="pdf",
+                )
+            )
+    attachments.append(
+        mailer.EmailAttachment(
+            filename=f"invoice-{invoice.id}.txt",
+            content=build_invoice_plaintext(export_data, cfg).encode("utf-8"),
+            maintype="text",
+            subtype="plain",
+        )
+    )
+    # Must be the LAST attachment -- a human skimming the attachment list
+    # should see the PDF/plaintext copies before the machine-readable one.
+    attachments.append(
+        mailer.EmailAttachment(
+            filename="for-robots.json",
+            content=build_invoice_json(export_data),
+            maintype="application",
+            subtype="json",
+        )
+    )
+
     try:
         await mailer.send_email(
             cfg,
@@ -45,6 +118,7 @@ async def notify_invoice_sent(
             subject=subject,
             content_html=html,
             content_text=text,
+            attachments=tuple(attachments),
         )
     except Exception as exc:
         _log.error(

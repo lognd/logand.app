@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import shutil
 from collections.abc import Iterator
 
 import pytest
@@ -93,6 +95,72 @@ async def test_sending_invoice_emails_the_customer(
     assert msg["List-Unsubscribe"].startswith("<")
     assert msg["List-Unsubscribe-Post"] == "List-Unsubscribe=One-Click"
     assert "123 Main St, Springfield" in msg.get_body(("html",)).get_content()
+
+
+async def test_sending_invoice_attaches_txt_and_for_robots_json_last(
+    db_client: AsyncClient,
+    make_user,
+    login_as,
+    monkeypatch: pytest.MonkeyPatch,
+    fake_smtp_server: FakeSmtpServer,
+) -> None:
+    """The user's explicit request: a plaintext copy and a for-robots.json
+    export attached to the invoice-sent email, with the JSON explicitly
+    LAST so a human skimming attachments sees the readable copies first.
+    The PDF attachment is asserted only when latexmk is actually
+    available -- generate_invoice_pdf is best-effort and this test
+    otherwise runs in environments without a LaTeX toolchain installed
+    (see tests/system/test_invoice_pdf_generation.py's own skip logic).
+    """
+    _configure_smtp(monkeypatch, fake_smtp_server)
+    admin = await make_user(role="admin", password="pw")
+    customer = await make_user(role="customer", password="pw")
+    await login_as(db_client, admin.email, "pw")
+    headers = _csrf_headers(db_client)
+
+    create_resp = await db_client.post(
+        "/api/admin/invoices",
+        params={"customer_id": str(customer.id)},
+        json=[{"description": "widget", "quantity": "1", "unit_price": "10.00"}],
+        headers=headers,
+    )
+    invoice_id = create_resp.json()["id"]
+    resp = await db_client.post(
+        f"/api/admin/invoices/{invoice_id}/send", headers=headers
+    )
+    assert resp.status_code == 200
+
+    msg = fake_smtp_server.messages[0]
+    attachments = list(msg.iter_attachments())
+    filenames = [part.get_filename() for part in attachments]
+
+    assert filenames[-1] == "for-robots.json"
+    assert f"invoice-{invoice_id}.txt" in filenames
+
+    if shutil.which("latexmk") is not None:
+        assert filenames == [
+            f"invoice-{invoice_id}.pdf",
+            f"invoice-{invoice_id}.txt",
+            "for-robots.json",
+        ]
+        pdf_part = attachments[0]
+        assert pdf_part.get_content_type() == "application/pdf"
+    else:
+        assert filenames == [f"invoice-{invoice_id}.txt", "for-robots.json"]
+
+    txt_part = next(p for p in attachments if p.get_filename().endswith(".txt"))
+    assert txt_part.get_content_type() == "text/plain"
+    txt_content = txt_part.get_content()
+    assert f"Invoice {invoice_id}" in txt_content
+    assert "widget" in txt_content
+
+    json_part = next(p for p in attachments if p.get_filename() == "for-robots.json")
+    assert json_part.get_content_type() == "application/json"
+    payload = json.loads(json_part.get_content())
+    assert payload["invoice_id"] == invoice_id
+    assert payload["line_items"][0]["description"] == "widget"
+    assert payload["line_items"][0]["quantity"] == "1.00"
+    assert payload["line_items"][0]["unit_price"] == "10.00"
 
 
 async def test_manual_payment_emails_the_customer(
