@@ -9,6 +9,7 @@ import logging
 import smtplib
 import ssl
 import time
+from dataclasses import dataclass
 from email import policy
 from email.message import EmailMessage
 from email.utils import formatdate, make_msgid
@@ -288,6 +289,22 @@ def _wrap_terminal_shell(*, subject: str, content_html: str, footer_html: str) -
     return "\n".join(lines)
 
 
+@dataclass(frozen=True)
+class EmailAttachment:
+    """A real MIME attachment (distinct from the multipart/alternative
+    html/plain BODY every message already has). `maintype`/`subtype`
+    are the two halves of the attachment's own Content-Type (e.g.
+    "application"/"pdf", "text"/"plain", "application"/"json") --
+    `EmailMessage.add_attachment` needs them split, not as one
+    "application/pdf" string.
+    """
+
+    filename: str
+    content: bytes
+    maintype: str
+    subtype: str
+
+
 def build_message(
     cfg: AppConfig,
     *,
@@ -296,7 +313,17 @@ def build_message(
     subject: str,
     content_html: str,
     content_text: str,
+    attachments: tuple[EmailAttachment, ...] = (),
 ) -> EmailMessage:
+    """`attachments` are added in the given order, after the html/plain
+    body -- `EmailMessage.add_attachment` appends each as its own MIME
+    part (promoting the message to multipart/mixed wrapping the
+    multipart/alternative body), so callers control ordering simply by
+    the order they pass attachments in. Callers that want a specific
+    attachment last (e.g. notify.py puts "for-robots.json" last, after
+    the PDF and plaintext copies, so a human skimming an attachment list
+    sees the human-readable ones first) just order the tuple that way.
+    """
     token = sign_unsubscribe_token(to_user_id, cfg)
     unsubscribe_url = f"{cfg.public_base_url}/api/unsubscribe?token={token}"
 
@@ -337,6 +364,13 @@ def build_message(
         ),
         subtype="html",
     )
+    for attachment in attachments:
+        msg.add_attachment(
+            attachment.content,
+            maintype=attachment.maintype,
+            subtype=attachment.subtype,
+            filename=attachment.filename,
+        )
     return msg
 
 
@@ -515,6 +549,7 @@ async def send_email(
     subject: str,
     content_html: str,
     content_text: str,
+    attachments: tuple[EmailAttachment, ...] = (),
 ) -> None:
     """Callers must check is_configured(cfg) first -- this asserts rather
     than gracefully no-op-ing, since a caller reaching here with neither
@@ -533,6 +568,7 @@ async def send_email(
         subject=subject,
         content_html=content_html,
         content_text=content_text,
+        attachments=attachments,
     )
     if _gmail_oauth_configured(cfg):
         await _send_via_gmail_api(cfg, msg)
