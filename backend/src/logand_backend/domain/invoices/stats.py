@@ -15,6 +15,24 @@ from logand_backend.db.models.invoices import Invoice, Payment, Refund
 _INVOICE_STATUSES = ("draft", "sent", "paid", "overdue", "void", "refunded")
 _OPEN_DISPUTE_STATUSES = ("needs_response", "under_review")
 
+# These aggregate figures sum across every invoice/payment/refund
+# regardless of currency (this endpoint has never grouped by currency --
+# out of scope for FINDINGS.md M1 to redesign), so there is no single
+# per-row currency to re-quantize against the way the per-invoice display
+# helpers in export.py/api/invoices.py do. What DID change with the
+# Numeric(_,3) widen (FINDINGS.md M1) is that these sums now round-trip
+# from Postgres carrying a spurious 3rd decimal place instead of the 2dp
+# they carried before the widen. Quantizing to 2dp here restores the
+# pre-widen display (not currency-correct for an all-JPY/all-BHD
+# deployment, but was already not currency-aware before this commit either
+# -- this only removes the NEW stray decimal, it doesn't newly break
+# anything that worked before).
+_STATS_DISPLAY_QUANTUM = Decimal("0.01")
+
+
+def _quantize_stat(amount: Decimal) -> Decimal:
+    return amount.quantize(_STATS_DISPLAY_QUANTUM)
+
 
 class InvoiceStatusBreakdown(BaseModel):
     model_config = {"frozen": True}
@@ -92,7 +110,7 @@ async def get_invoice_stats(db: AsyncSession) -> InvoiceStats:
     }
     for status, count, amount_total in status_rows:
         by_status[status] = InvoiceStatusBreakdown(
-            count=count, amount_total=amount_total
+            count=count, amount_total=_quantize_stat(Decimal(amount_total))
         )
 
     # Every money query below joins through Invoice and applies the SAME
@@ -225,7 +243,9 @@ async def get_invoice_stats(db: AsyncSession) -> InvoiceStats:
         )
     ).all()
     by_payment_method = {
-        method: PaymentMethodBreakdown(count=count, amount=amount)
+        method: PaymentMethodBreakdown(
+            count=count, amount=_quantize_stat(Decimal(amount))
+        )
         for method, count, amount in method_rows
     }
 
@@ -260,10 +280,10 @@ async def get_invoice_stats(db: AsyncSession) -> InvoiceStats:
     )
     return InvoiceStats(
         by_status=by_status,
-        total_collected=gross_total_collected,
-        total_refunded=Decimal(total_refunded),
-        net_collected=net_collected,
-        outstanding=Decimal(outstanding),
+        total_collected=_quantize_stat(gross_total_collected),
+        total_refunded=_quantize_stat(Decimal(total_refunded)),
+        net_collected=_quantize_stat(net_collected),
+        outstanding=_quantize_stat(Decimal(outstanding)),
         by_payment_method=by_payment_method,
         open_disputes=open_disputes,
         disputes=disputes,

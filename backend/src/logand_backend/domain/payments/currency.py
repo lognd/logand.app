@@ -68,3 +68,28 @@ def format_major_units(amount: Decimal, currency: str) -> str:
     places = decimal_places(currency)
     quantum = Decimal(1).scaleb(-places) if places else Decimal(1)
     return str(amount.quantize(quantum, rounding=ROUND_HALF_UP))
+
+
+def quantize_to_currency(
+    amount: Decimal, currency: str, rounding: str | None = None
+) -> Decimal:
+    """Re-quantizes a Decimal read back from the wide `Numeric(_,3)` money
+    columns to the currency's real precision (e.g. Decimal("100.000") ->
+    Decimal("100.00") for USD, Decimal("3000.000") -> Decimal("3000") for
+    JPY). Storage widened to 3dp to fit BHD/JOD/etc, but every currency's
+    column value now carries that scale regardless of its own precision,
+    so display/serialization call sites must re-quantize before showing
+    or stringifying an amount to avoid a stored-vs-displayed desync.
+
+    `rounding` defaults to None (the ambient context's ROUND_HALF_EVEN),
+    matching recompute_amount_total/InvoiceLineItemView so a re-quantized
+    display value never disagrees with how the figure was actually
+    computed and stored; pass ROUND_HALF_UP explicitly for
+    provider-facing formatting (e.g. PayPal's `value` field) where that
+    convention is required instead.
+    """
+    places = decimal_places(currency)
+    quantum = Decimal(1).scaleb(-places) if places else Decimal(1)
+    if rounding is None:
+        return amount.quantize(quantum)
+    return amount.quantize(quantum, rounding=rounding)

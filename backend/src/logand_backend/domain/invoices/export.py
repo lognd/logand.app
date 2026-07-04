@@ -18,7 +18,7 @@ from logand_backend.domain.invoices.pdf.renderer import (
     build_invoice_pdf_data,
     render_invoice_pdf,
 )
-from logand_backend.domain.payments.currency import decimal_places
+from logand_backend.domain.payments.currency import quantize_to_currency
 from logand_backend.errors import InvoiceError
 
 # Lives here (not domain/invoices/service.py) specifically so
@@ -59,9 +59,7 @@ class InvoiceLineItemView:
         # other format, and let the visible rows fail to sum to
         # amount_total (also stored at the currency's real precision).
         # See FINDINGS.md M1/L1.
-        places = decimal_places(self.currency)
-        quantum = Decimal(1).scaleb(-places) if places else Decimal(1)
-        return (self.quantity * self.unit_price).quantize(quantum)
+        return quantize_to_currency(self.quantity * self.unit_price, self.currency)
 
     @property
     def unit_price_display(self) -> Decimal:
@@ -72,9 +70,7 @@ class InvoiceLineItemView:
         # than the column's full storage scale -- every export format
         # (PDF, email, .txt, for-robots.json) reads this, not raw
         # unit_price, so they all show the same figure.
-        places = decimal_places(self.currency)
-        quantum = Decimal(1).scaleb(-places) if places else Decimal(1)
-        return self.unit_price.quantize(quantum)
+        return quantize_to_currency(self.unit_price, self.currency)
 
 
 @dataclass(frozen=True)
@@ -105,9 +101,7 @@ class InvoiceExportData:
         # export format must re-quantize to the currency's real precision
         # at display time rather than trusting the raw column's scale.
         # See FINDINGS.md L1.
-        places = decimal_places(self.currency)
-        quantum = Decimal(1).scaleb(-places) if places else Decimal(1)
-        return self.amount_total.quantize(quantum)
+        return quantize_to_currency(self.amount_total, self.currency)
 
 
 async def load_invoice_export_data(

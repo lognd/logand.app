@@ -28,7 +28,7 @@ from logand_backend.domain.invoices.service import (
     settle_invoice_if_paid,
 )
 from logand_backend.domain.notifications.notify import notify_payment_received
-from logand_backend.domain.payments.currency import to_minor_units
+from logand_backend.domain.payments.currency import quantize_to_currency, to_minor_units
 from logand_backend.domain.payments.providers import paypal
 from logand_backend.domain.storage.factory import get_storage_backend
 from logand_backend.logging import get_logger
@@ -49,7 +49,9 @@ def _invoice_summary(invoice: Invoice) -> dict:
     return {
         "id": str(invoice.id),
         "status": invoice.status,
-        "amount_total": str(invoice.amount_total),
+        "amount_total": str(
+            quantize_to_currency(invoice.amount_total, invoice.currency)
+        ),
         "currency": invoice.currency,
         "memo": invoice.memo,
         "due_date": invoice.due_date.isoformat() if invoice.due_date else None,

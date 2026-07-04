@@ -107,10 +107,11 @@ async def recompute_amount_total(db: AsyncSession, invoice_id: UUID) -> Decimal:
     # rounding rule (export.py) exactly, otherwise amount_total (this
     # column) can disagree with the sum of the per-line totals shown in
     # the PDF/email/attachments. See FINDINGS.md M1/L1.
-    places = currency.decimal_places(invoice.currency)
-    quantum = Decimal(1).scaleb(-places) if places else Decimal(1)
     total = sum(
-        ((li.quantity * li.unit_price).quantize(quantum) for li in line_items),
+        (
+            currency.quantize_to_currency(li.quantity * li.unit_price, invoice.currency)
+            for li in line_items
+        ),
         Decimal(0),
     )
 
