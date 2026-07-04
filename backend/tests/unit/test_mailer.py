@@ -235,6 +235,96 @@ def test_unsubscribe_token_rejects_tampered_day() -> None:
     assert mailer.verify_unsubscribe_token(tampered_token, cfg) is None
 
 
+# -- _wrap_terminal_shell / _window_title: the light/dark HTML chrome ------
+
+
+def test_wrap_terminal_shell_includes_dark_mode_media_query_and_meta_tags() -> None:
+    """The two meta tags are what actually make Apple Mail/iOS Mail/
+    Outlook.com honor the media query at all -- without them some
+    clients ignore it and force one mode regardless of the CSS present.
+    """
+    result = mailer._wrap_terminal_shell(
+        subject="Invoice from Acme", content_html="<p>hi</p>", footer_html="<p>f</p>"
+    )
+    assert '<meta name="color-scheme" content="light dark">' in result
+    assert '<meta name="supported-color-schemes" content="light dark">' in result
+    assert "@media (prefers-color-scheme: dark)" in result
+    # Every class the dark-mode block repaints must actually exist on an
+    # element in the body -- a class only in the <style> block with no
+    # matching element anywhere would be a silent no-op.
+    for class_name in (
+        "ln-page",
+        "ln-card",
+        "ln-titlebar",
+        "ln-titlebar-text",
+        "ln-text",
+        "ln-muted",
+    ):
+        assert f'class="{class_name}"' in result, f"{class_name} unused in body"
+
+
+def test_wrap_terminal_shell_embeds_content_and_footer_verbatim() -> None:
+    result = mailer._wrap_terminal_shell(
+        subject="s",
+        content_html="<p>UNIQUE_CONTENT_MARKER</p>",
+        footer_html="<p>UNIQUE_FOOTER_MARKER</p>",
+    )
+    assert "UNIQUE_CONTENT_MARKER" in result
+    assert "UNIQUE_FOOTER_MARKER" in result
+
+
+def test_wrap_terminal_shell_escapes_subject_in_titlebar() -> None:
+    """The titlebar text is built from the real Subject line -- which
+    ultimately traces back to admin-configured business name/invoice
+    data, not free-form customer input, but escaping here is what
+    stops a malicious "<script>" in a subject from ever being
+    interpreted as markup in the titlebar specifically (the Subject
+    email HEADER itself has no such risk -- headers aren't HTML -- this
+    is only about the in-body titlebar decoration).
+    """
+    result = mailer._wrap_terminal_shell(
+        subject="<script>alert(1)</script>", content_html="<p>x</p>", footer_html=""
+    )
+    assert "<script>alert(1)</script>" not in result
+    assert "&lt;script&gt;" in result
+
+
+def test_window_title_passes_through_short_subject_unchanged() -> None:
+    assert mailer._window_title("Invoice from Acme") == "Invoice from Acme"
+
+
+def test_window_title_truncates_long_subject_with_ellipsis() -> None:
+    long_subject = "A" * 100
+    title = mailer._window_title(long_subject)
+    assert len(title) == mailer._TITLE_MAX_LEN
+    assert title.endswith("...")
+
+
+def test_window_title_boundary_length_is_not_truncated() -> None:
+    exact_subject = "A" * mailer._TITLE_MAX_LEN
+    assert mailer._window_title(exact_subject) == exact_subject
+
+
+# -- _footer_html: business name / mailing address escaping -----------------
+
+
+def test_footer_html_escapes_business_name_and_address() -> None:
+    """Both are admin-configured, not attacker-controlled from a
+    customer-facing form -- but this is the one place free-form admin
+    text reaches raw HTML, so it gets the same escaping discipline as
+    genuinely untrusted input would.
+    """
+    cfg = _cfg(
+        invoice_business_name="<b>Evil</b> Corp",
+        mailing_address="1 <script>x</script> St",
+    )
+    result = mailer._footer_html(cfg, "https://example.com/unsub")
+    assert "<b>Evil</b>" not in result
+    assert "<script>x</script>" not in result
+    assert "&lt;b&gt;Evil&lt;/b&gt; Corp" in result
+    assert "&lt;script&gt;x&lt;/script&gt;" in result
+
+
 def test_build_signed_jwt_rejects_tampered_payload() -> None:
     """Sanity check the other direction -- a tampered signing input must
     NOT verify, so the "verifies" test above isn't accidentally trivially

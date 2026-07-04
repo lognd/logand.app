@@ -12,6 +12,7 @@ import time
 from email import policy
 from email.message import EmailMessage
 from email.utils import formatdate, make_msgid
+from html import escape as html_escape
 from uuid import UUID
 
 import httpx
@@ -115,12 +116,18 @@ def verify_unsubscribe_token(token: str, cfg: AppConfig) -> UUID | None:
 
 
 def _footer_html(cfg: AppConfig, unsubscribe_url: str) -> str:
+    # html_escape on business_name/mailing_address -- both are admin-
+    # configured (not attacker-controlled from a customer-facing form),
+    # but escaping is nearly free and this is the one place free-form
+    # admin text reaches raw HTML, so there's no reason to trust it any
+    # more than genuinely untrusted input would be trusted elsewhere.
+    business = html_escape(cfg.invoice_business_name)
+    address = f", {html_escape(cfg.mailing_address)}" if cfg.mailing_address else ""
     return (
-        "<hr>"
-        f"<p>{cfg.invoice_business_name}"
-        + (f", {cfg.mailing_address}" if cfg.mailing_address else "")
-        + "</p>"
-        f'<p><a href="{unsubscribe_url}">Unsubscribe</a> from these emails.</p>'
+        f'<p style="margin:0 0 6px;">{business}{address}</p>'
+        f'<p style="margin:0;">'
+        f'<a href="{unsubscribe_url}" style="color:inherit;">Unsubscribe</a>'
+        " from these emails.</p>"
     )
 
 
@@ -130,6 +137,154 @@ def _footer_text(cfg: AppConfig, unsubscribe_url: str) -> str:
         f"\n\n--\n{cfg.invoice_business_name}{address}\n"
         f"Unsubscribe from these emails: {unsubscribe_url}\n"
     )
+
+
+# Gruvbox palette (see frontend/src/styles/tokens.css's own doc comment
+# and frontend/src/app/routes/public/TerminalWindow.tsx) -- the same
+# Ubuntu-GNOME-styled terminal window chrome the site itself uses,
+# reused here so a notification email reads as unmistakably "this app"
+# rather than a generic transactional email template. The site itself
+# only implements the dark palette so far (tokens.css: "Light theme is
+# deferred"); email dark-mode support is common enough in real mail
+# clients (Apple Mail, iOS Mail, Outlook.com) that shipping email-only
+# without waiting on the site's own light theme is worth doing now --
+# the light values below are the official Gruvbox Light palette, not
+# an invented one, so they're a real, correct pairing for the dark
+# palette already in use, not a mismatched guess.
+_LIGHT = {
+    "page_bg": "#ebdbb2",
+    "card_bg": "#fbf1c7",
+    "titlebar_bg": "#ebdbb2",
+    "fg": "#3c3836",
+    "muted": "#7c6f64",
+    "border": "#d5c4a1",
+    "accent_green": "#79740e",
+}
+_DARK = {
+    "page_bg": "#1d2021",
+    "card_bg": "#282828",
+    "titlebar_bg": "#3c3836",
+    "fg": "#ebdbb2",
+    "muted": "#a89984",
+    "border": "#504945",
+    "accent_green": "#b8bb26",
+}
+# Monospace stack matching the site's own (frontend/src/styles/tailwind.css
+# imports JetBrains Mono as a web font) -- email clients don't reliably
+# load web fonts at all, so this is a graceful-degradation stack: real
+# JetBrains Mono for a recipient who happens to have it installed
+# locally, falling through to each platform's own default monospace
+# otherwise. Never assumed to actually render as JetBrains Mono.
+_MONO_STACK = (
+    "'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
+)
+_TITLE_MAX_LEN = 46
+
+
+def _window_title(subject: str) -> str:
+    """Truncates like a real terminal window truncates a long title/path
+    -- the full, untruncated text is still what the mail client shows in
+    its own UI (the real Subject header); this is purely the in-body
+    titlebar decoration.
+    """
+    if len(subject) <= _TITLE_MAX_LEN:
+        return subject
+    return subject[: _TITLE_MAX_LEN - 3] + "..."
+
+
+def _wrap_terminal_shell(*, subject: str, content_html: str, footer_html: str) -> str:
+    """Wraps message-specific `content_html` in a light/dark-aware,
+    Ubuntu-terminal-styled card matching the site's own TerminalWindow
+    chrome: a titlebar (title left, monochrome window-control glyphs
+    right, exactly TerminalWindow.tsx's own GNOME-style ordering) over a
+    monospace body.
+
+    Table-based layout throughout (not flexbox/grid, which Outlook
+    desktop's Word rendering engine doesn't support at all) -- this is
+    the standard email-HTML compatibility pattern, not an oversight.
+    Every color is set twice: once as an inline style (the default every
+    client renders, including ones with zero dark-mode awareness) and
+    once in the `<style>` block's `@media (prefers-color-scheme: dark)`
+    rule with `!important` (the only way to override an inline style
+    from a stylesheet) -- `!important` here is correct email-HTML
+    practice, not a specificity hack to be suspicious of. The
+    `color-scheme`/`supported-color-schemes` meta tags are what actually
+    make Apple Mail/iOS Mail/Outlook.com honor the media query at all;
+    without them some clients ignore it and force one mode.
+    """
+    title = html_escape(_window_title(subject))
+    table_open = '<table role="presentation" width="100%" cellpadding="0" '
+    table_open += 'cellspacing="0" border="0">'
+    dot = '<span class="ln-dot" style="color:{muted}; margin-left:10px;">{glyph}</span>'
+    dots = "".join(
+        dot.format(muted=_LIGHT["muted"], glyph=glyph)
+        for glyph in ("&#8722;", "&#9633;", "&#215;")
+    )
+    lines = [
+        "<!doctype html>",
+        "<html>",
+        "<head>",
+        '<meta charset="utf-8">',
+        '<meta name="viewport" content="width=device-width, initial-scale=1">',
+        '<meta name="color-scheme" content="light dark">',
+        '<meta name="supported-color-schemes" content="light dark">',
+        "<style>",
+        "@media (prefers-color-scheme: dark) {",
+        f"  .ln-page {{ background-color: {_DARK['page_bg']} !important; }}",
+        f"  .ln-card {{ background-color: {_DARK['card_bg']} !important;",
+        f"    border-color: {_DARK['border']} !important; }}",
+        f"  .ln-titlebar {{ background-color: {_DARK['titlebar_bg']} !important;",
+        f"    border-color: {_DARK['border']} !important; }}",
+        f"  .ln-titlebar-text, .ln-dot {{ color: {_DARK['muted']} !important; }}",
+        f"  .ln-text {{ color: {_DARK['fg']} !important; }}",
+        f"  .ln-muted {{ color: {_DARK['muted']} !important; }}",
+        f"  .ln-cta {{ color: {_DARK['accent_green']} !important; }}",
+        "}",
+        "</style>",
+        "</head>",
+        f'<body class="ln-page" style="margin:0; padding:24px 12px; '
+        f'background-color:{_LIGHT["page_bg"]};">',
+        table_open,
+        '<tr><td align="center">',
+        '<table role="presentation" width="600" cellpadding="0" '
+        'cellspacing="0" border="0" style="max-width:600px; width:100%;">',
+        f'<tr><td class="ln-card" style="background-color:{_LIGHT["card_bg"]}; '
+        f'border:1px solid {_LIGHT["border"]}; border-radius:6px;">',
+        table_open,
+        f'<tr><td class="ln-titlebar" style="background-color:'
+        f"{_LIGHT['titlebar_bg']}; border-bottom:1px solid {_LIGHT['border']}; "
+        f'border-radius:6px 6px 0 0; padding:10px 16px;">',
+        table_open,
+        "<tr>",
+        f'<td class="ln-titlebar-text" style="font-family:{_MONO_STACK}; '
+        f'font-size:12px; color:{_LIGHT["muted"]};">{title}</td>',
+        f'<td align="right" style="white-space:nowrap; '
+        f'font-family:{_MONO_STACK}; font-size:13px; color:{_LIGHT["muted"]};">'
+        f"{dots}</td>",
+        "</tr>",
+        "</table>",
+        "</td></tr>",
+        '<tr><td style="padding:24px 20px;">',
+        f'<div class="ln-text" style="font-family:{_MONO_STACK}; '
+        f'font-size:14px; line-height:1.6; color:{_LIGHT["fg"]};">',
+        content_html,
+        "</div>",
+        "</td></tr>",
+        "</table>",
+        "</td></tr>",
+        '<tr><td style="padding:16px 8px 0;">',
+        f'<div class="ln-muted" style="font-family:{_MONO_STACK}; '
+        f'font-size:11px; line-height:1.6; color:{_LIGHT["muted"]};">',
+        footer_html,
+        "</div>",
+        "</td></tr>",
+        "</table>",
+        "</td></tr>",
+        "</table>",
+        "</body>",
+        "</html>",
+    ]
+    return "\n".join(lines)
 
 
 def build_message(
@@ -174,7 +329,11 @@ def build_message(
 
     msg.set_content(content_text + _footer_text(cfg, unsubscribe_url))
     msg.add_alternative(
-        f"<html><body>{content_html}{_footer_html(cfg, unsubscribe_url)}</body></html>",
+        _wrap_terminal_shell(
+            subject=subject,
+            content_html=content_html,
+            footer_html=_footer_html(cfg, unsubscribe_url),
+        ),
         subtype="html",
     )
     return msg
