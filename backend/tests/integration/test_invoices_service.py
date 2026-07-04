@@ -94,13 +94,23 @@ async def test_recompute_amount_total_quantizes_three_decimal_currency(
     of being rounded away at 2dp. See FINDINGS.md L1."""
     customer = await make_user(role="customer")
     line_items = [
-        LineItemInput(
-            description="widget", quantity=Decimal(2), unit_price=Decimal("1.005")
-        ),
+        LineItemInput(description="widget", quantity=Decimal(2), unit_price=Decimal(1)),
     ]
     invoice_id = (await create_invoice(db_session, customer.id, line_items)).danger_ok
     invoice = await db_session.get(Invoice, invoice_id)
     invoice.currency = "bhd"
+    # create_invoice quantizes unit_price to the invoice's currency at
+    # write time (FINDINGS.md M1) -- set the raw 3dp price directly here,
+    # bypassing that quantization, so this test isolates
+    # recompute_amount_total's OWN currency-aware rounding rather than
+    # create_invoice's (a currency switch after creation doesn't happen in
+    # production; currency is hardcoded "usd" today).
+    line_item = (
+        await db_session.execute(
+            select(InvoiceLineItem).where(InvoiceLineItem.invoice_id == invoice_id)
+        )
+    ).scalar_one()
+    line_item.unit_price = Decimal("1.005")
     await db_session.flush()
 
     total = await recompute_amount_total(db_session, invoice_id)

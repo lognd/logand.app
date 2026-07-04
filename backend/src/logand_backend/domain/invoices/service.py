@@ -129,6 +129,11 @@ async def create_invoice(
     invoice_id = uuid4()
     invoice = Invoice(id=invoice_id, customer_id=customer_id, memo=memo, status="draft")
     db.add(invoice)
+    # Flush now so the model's `currency` column default ("usd") is
+    # actually populated on the instance -- it's a Python-side default
+    # applied by SQLAlchemy at flush time, not at construction, so reading
+    # invoice.currency before this point would be None.
+    await db.flush()
     for item in line_items:
         db.add(
             InvoiceLineItem(
@@ -136,7 +141,13 @@ async def create_invoice(
                 invoice_id=invoice_id,
                 description=item.description,
                 quantity=item.quantity,
-                unit_price=item.unit_price,
+                # Quantize to the invoice's currency precision on write so
+                # unit_price_display (export.py) always equals the stored
+                # value and every line reconciles (qty * unit_price ==
+                # line_total). See FINDINGS.md M1.
+                unit_price=currency.quantize_to_currency(
+                    item.unit_price, invoice.currency
+                ),
                 unit=item.unit,
             )
         )
