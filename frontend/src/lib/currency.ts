@@ -38,3 +38,11 @@ export function decimalPlaces(currency: string): number {
 export function formatMajorUnits(amount: number, currency: string): string {
   return amount.toFixed(decimalPlaces(currency));
 }
+
+// Smallest valid increment for a money <input step="...">, matching the
+// currency's real precision (FINDINGS.md L1). A hardcoded step="0.01"
+// rejects valid 3dp BHD/KWD input (e.g. 5.125) via native step validation,
+// and lets JPY inputs step by cents instead of whole units.
+export function stepFor(currency: string): string {
+  return (10 ** -decimalPlaces(currency)).toString();
+}

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError } from "../../../api/client";
-import { formatMajorUnits } from "../../../lib/currency";
+import { formatMajorUnits, stepFor } from "../../../lib/currency";
 import { getBomCostBreakdown, listBoms } from "../../../api/bom";
 import { listCustomers } from "../../../api/customers";
 import {
@@ -197,7 +197,7 @@ function RefundForm({
         <input
           id={`refund-amount-${payment.id}`}
           type="number"
-          step="0.01"
+          step={stepFor(currency)}
           min="0"
           max={remaining}
           placeholder={formatMajorUnits(remaining, currency)}
@@ -391,7 +391,7 @@ function ManualPaymentForm({
         <input
           id={`amount-${invoice.id}`}
           type="number"
-          step="0.01"
+          step={stepFor(invoice.currency)}
           min="0"
           required
           value={amount}
