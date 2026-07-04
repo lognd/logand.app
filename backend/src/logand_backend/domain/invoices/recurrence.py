@@ -67,6 +67,7 @@ async def generate_due_recurring_invoices(db: AsyncSession, as_of: date) -> list
                 Invoice.status.in_(_ACTIVE_RECURRING_STATUSES),
                 Invoice.due_date.is_not(None),
                 Invoice.due_date <= as_of,
+                Invoice.deleted_at.is_(None),
             )
             # skip_locked so overlapping runs (scheduled + manual catch-up,
             # per this job's docstring) each claim disjoint sets of due
