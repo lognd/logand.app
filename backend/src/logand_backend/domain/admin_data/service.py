@@ -441,9 +441,10 @@ async def revert_change(
     if result.is_err:
         return result
 
+    revert_log_id = uuid4()
     db.add(
         AdminAuditLog(
-            id=uuid4(),
+            id=revert_log_id,
             admin_id=admin_id,
             action="data.revert",
             target_table=log.target_table,
@@ -453,4 +454,9 @@ async def revert_change(
         )
     )
     await db.flush()
-    return result
+    # Per L1 in FINDINGS.md: return the "data.revert" entry's own id, not
+    # the replayed write's (update_row/insert_row/delete_row) audit id --
+    # a caller looking this id up via GET /changes/{id} must see the
+    # revert entry itself, matching the data.update.noop branch's
+    # contract above.
+    return Ok(revert_log_id)
