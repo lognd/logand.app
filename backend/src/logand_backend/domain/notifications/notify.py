@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from decimal import Decimal
+from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -258,3 +259,37 @@ async def notify_dispute_updated(
                 extra={"invoice_id": str(invoice.id), "admin_id": str(admin.id)},
                 exc_info=exc,
             )
+
+
+async def notify_password_reset_requested(
+    cfg: AppConfig, *, to_email: str, to_user_id: UUID, reset_url: str
+) -> None:
+    """Deliberately does NOT check `emails_opted_out` -- unlike every
+    other notify_* here, this is a security-critical transactional email
+    the recipient just explicitly triggered by submitting the forgot-
+    password form themselves, not a marketing/informational send CAN-
+    SPAM's opt-out right is meant to cover. Takes email/user_id/reset_url
+    directly rather than a User row + db session, since the caller
+    (api/auth.py) already has both from
+    domain.auth.password_reset.request_password_reset's return value --
+    no reason to re-fetch here.
+    """
+    if not mailer.is_configured(cfg):
+        return
+
+    subject, html, text = templates.password_reset_requested(cfg, reset_url=reset_url)
+    try:
+        await mailer.send_email(
+            cfg,
+            to_email=to_email,
+            to_user_id=to_user_id,
+            subject=subject,
+            content_html=html,
+            content_text=text,
+        )
+    except Exception as exc:
+        _log.error(
+            "failed to send password-reset-requested notification",
+            extra={"user_id": str(to_user_id)},
+            exc_info=exc,
+        )

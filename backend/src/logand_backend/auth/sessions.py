@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import secrets
 from datetime import datetime, timedelta, timezone
 from typing import cast
@@ -12,6 +11,7 @@ from sqlalchemy import CursorResult, delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from typani.result import Err, Ok, Result
 
+from logand_backend.auth.tokens import hash_token
 from logand_backend.db.base import get_db
 from logand_backend.db.models.sessions import Session
 from logand_backend.db.models.users import User
@@ -33,10 +33,6 @@ class SessionInfo(BaseModel):
     expires_at: datetime
 
 
-def _hash_token(raw_token: str) -> str:
-    return hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
-
-
 def _idle_timeout_for(role: str) -> timedelta:
     return _ADMIN_IDLE_TIMEOUT if role == "admin" else _CUSTOMER_IDLE_TIMEOUT
 
@@ -55,7 +51,7 @@ async def create_session(
 
     row = Session(
         user_id=user_id,
-        token_hash=_hash_token(raw_token),
+        token_hash=hash_token(raw_token),
         csrf_secret=csrf_secret,
         expires_at=expires_at,
     )
@@ -75,7 +71,7 @@ async def create_session(
 async def validate_session(
     db: AsyncSession, raw_token: str
 ) -> Result[SessionInfo, AuthError]:
-    token_hash = _hash_token(raw_token)
+    token_hash = hash_token(raw_token)
 
     result = await db.execute(
         select(Session, User.role, User.disabled_at)

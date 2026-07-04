@@ -75,7 +75,7 @@ _PAYMENT_OPTIONS_TEMPLATE = (
 
 
 def _zelle_clause(zelle_handle: str | None, *, handle_markup: str = "{handle}") -> str:
-    """"Zelle (<handle>), " when configured, else bare "Zelle, " -- the
+    """ "Zelle (<handle>), " when configured, else bare "Zelle, " -- the
     one place that decision is made. `handle_markup` lets a caller wrap
     the handle in its own markup (e.g. HTML `<strong>`) without
     duplicating the surrounding "Zelle (...), "/"Zelle, " punctuation.
@@ -214,9 +214,7 @@ def invoice_sent(
     # alternative-method sentence, instead of the CTA, a separate "see
     # the PDF" pointer, and a separate attachment footnote as three
     # disconnected one-liners.
-    pay_online_html = (
-        f'{_cta(pay_url, "pay-invoice --online")}<br>' if pay_url else ""
-    )
+    pay_online_html = f"{_cta(pay_url, 'pay-invoice --online')}<br>" if pay_url else ""
     payment_html = (
         f'<p style="margin:16px 0;">{pay_online_html}'
         f'<span class="ln-muted" style="font-size:12px; color:{_MUTED_COLOR};">'
@@ -299,6 +297,41 @@ def refund_settled(
         f"Your refund of {amount} {currency.upper()} for "
         f"invoice {invoice_id} has been processed.\n\n"
         f"View your invoices: {invoices_url}\n"
+    )
+    return subject, html, text
+
+
+def password_reset_requested(
+    cfg: AppConfig,
+    *,
+    reset_url: str,
+) -> tuple[str, str, str]:
+    """The one-hour link itself is the whole message -- no account detail
+    (email, whether one even exists) is echoed back here, since this is
+    sent from within the same code path that already refuses to let
+    "account exists or not" leak into the HTTP response (see
+    domain/auth/password_reset.py::request_password_reset); the email
+    body must hold to that same discipline.
+    """
+    subject = f"Reset your password -- {cfg.invoice_business_name}"
+    html = (
+        '<p style="margin:0 0 16px;">Someone (hopefully you) requested a '
+        "password reset for your account. This link is valid for one "
+        "hour and can only be used once.</p>"
+        f'<p style="margin:0 0 16px;">{_cta(reset_url, "reset-password")}</p>'
+        '<p class="ln-muted" style="margin:0; font-size:12px; '
+        f'color:{_MUTED_COLOR};">'
+        "If you didn't request this, no action is needed -- your "
+        "password hasn't changed and this link will simply expire."
+        "</p>"
+    )
+    text = (
+        "Someone (hopefully you) requested a password reset for your "
+        "account. This link is valid for one hour and can only be used "
+        "once.\n\n"
+        f"Reset your password: {reset_url}\n\n"
+        "If you didn't request this, no action is needed -- your "
+        "password hasn't changed and this link will simply expire.\n"
     )
     return subject, html, text
 

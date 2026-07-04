@@ -21,6 +21,16 @@ PUBLIC = (60, 60)
 # rarer than login in legitimate use, so LOGIN's 5/15min is tight enough
 # without needing its own number to tune independently yet.
 REGISTER = LOGIN
+# Same reasoning as REGISTER: not in the original design doc, added with
+# the password-reset flow. Requesting a reset is IP-keyed same as LOGIN --
+# tight enough that mass-requesting reset emails at arbitrary addresses
+# (an abuse/nuisance vector, not an account-takeover one, since the
+# request itself never reveals whether the address has an account) isn't
+# cheap. Confirming a reset (spending a token) gets its own, tighter
+# bucket: unlike a login attempt, a wrong guess here is an attacker
+# testing token values directly, not a legitimate user's typo.
+PASSWORD_RESET_REQUEST = LOGIN
+PASSWORD_RESET_CONFIRM = (10, 15 * 60)
 
 
 class RateLimiter:

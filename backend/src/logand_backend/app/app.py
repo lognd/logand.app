@@ -18,6 +18,12 @@ _access_log = get_logger("logand_backend.access")
 # Routes exempt from the CSRF double-submit check in _csrf_middleware:
 # - /api/auth/login, /api/auth/register: no session cookie exists yet to
 #   carry a CSRF secret -- there's nothing to double-submit against.
+# - /api/auth/password-reset/request, /api/auth/password-reset/confirm: same
+#   reasoning -- a visitor who forgot their password has no session (and a
+#   confirm submission from a real email link couldn't carry today's
+#   session's CSRF cookie anyway, since it's a different browsing context).
+#   Both are rate-limited (auth/rate_limit.py's PASSWORD_RESET_REQUEST/
+#   PASSWORD_RESET_CONFIRM) as the actual abuse defense here instead.
 # - /api/webhooks/*: authenticated by Stripe signature verification instead
 #   (see api/webhooks.py), a browser-originated cookie/header pair is never
 #   present on a server-to-server webhook call.
@@ -26,7 +32,13 @@ _access_log = get_logger("logand_backend.access")
 #   an email client and a mail server's own RFC 8058 one-click POST have no
 #   session cookie/CSRF token to present at all.
 _CSRF_EXEMPT_PATHS = frozenset(
-    {"/api/auth/login", "/api/auth/register", "/api/unsubscribe"}
+    {
+        "/api/auth/login",
+        "/api/auth/register",
+        "/api/auth/password-reset/request",
+        "/api/auth/password-reset/confirm",
+        "/api/unsubscribe",
+    }
 )
 _CSRF_EXEMPT_PREFIXES = ("/api/webhooks",)
 

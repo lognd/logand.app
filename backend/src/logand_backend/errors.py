@@ -8,6 +8,7 @@ class AuthError(ErrorSet):
     SessionExpired = "session has expired and must be re-authenticated"
     SessionNotFound = "session token does not match any known session"
     EmailAlreadyRegistered = "an account with this email already exists"
+    PasswordResetTokenInvalid = "password reset link is invalid or has expired"
 
 
 class DataError(ErrorSet):

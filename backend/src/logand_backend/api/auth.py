@@ -9,16 +9,29 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from logand_backend.api.errors import to_http_exception
 from logand_backend.app.config import AppConfig
 from logand_backend.auth.csrf import CSRF_COOKIE_NAME
-from logand_backend.auth.rate_limit import LOGIN, REGISTER, rate_limit
+from logand_backend.auth.rate_limit import (
+    LOGIN,
+    PASSWORD_RESET_CONFIRM,
+    PASSWORD_RESET_REQUEST,
+    REGISTER,
+    rate_limit,
+)
 from logand_backend.auth.sessions import (
     SESSION_COOKIE_NAME,
     SessionInfo,
     _get_session_from_cookie,
 )
 from logand_backend.db.base import get_db
+from logand_backend.domain.auth.password_reset import (
+    request_password_reset,
+)
+from logand_backend.domain.auth.password_reset import (
+    reset_password as reset_password_domain,
+)
 from logand_backend.domain.auth.service import login as login_domain
 from logand_backend.domain.auth.service import logout as logout_domain
 from logand_backend.domain.auth.service import register as register_domain
+from logand_backend.domain.notifications.notify import notify_password_reset_requested
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -56,6 +69,22 @@ class RegisterRequest(BaseModel):
     # client input, so a minimum length is a real, not theoretical, weakness
     # to close here specifically.
     password: str = Field(min_length=8, max_length=128)
+
+
+class PasswordResetRequestInput(BaseModel):
+    model_config = {}
+
+    email: str
+
+
+class PasswordResetConfirmInput(BaseModel):
+    model_config = {}
+
+    token: str
+    # Same length rule as RegisterRequest.password (docs/design/02) --
+    # this is the one other path (besides self-registration) where a
+    # client controls the raw password value end to end.
+    new_password: str = Field(min_length=8, max_length=128)
 
 
 def _set_session_cookies(response: Response, raw_token: str, csrf_secret: str) -> None:
@@ -109,6 +138,61 @@ async def register(
         raise to_http_exception(result.danger_err)
     raw_token, session = result.danger_ok
     _set_session_cookies(response, raw_token, session.csrf_secret)
+    return {"status": "ok"}
+
+
+_PASSWORD_RESET_REQUESTED_MESSAGE = (
+    "If an account exists for that email, a password reset link has been sent."
+)
+
+
+@router.post("/password-reset/request")
+async def request_password_reset_route(
+    payload: PasswordResetRequestInput,
+    db: AsyncSession = Depends(get_db),
+    _rate_limit: None = Depends(
+        rate_limit(
+            "password_reset_request", *PASSWORD_RESET_REQUEST, redis_url=_cfg.redis_url
+        )
+    ),
+) -> dict[str, str]:
+    """ALWAYS returns the same 200 body regardless of whether the email
+    matches a real account -- see domain.auth.password_reset's own doc
+    comment on why letting that vary would turn this into an account-
+    enumeration oracle. The actual email send only happens when a real
+    account was found; both branches converge on the identical response
+    below.
+
+    Builds its own `cfg` fresh here (NOT the module-level `_cfg` above,
+    which is only for the rate-limiter's `Depends` default -- see this
+    module's own top-of-file NOTE) so a test that monkeypatches SMTP_HOST/
+    etc. at request time is actually honored, same as every route in
+    api/invoices.py.
+    """
+    cfg = AppConfig.from_external(argparse.Namespace())
+    result = await request_password_reset(db, payload.email)
+    if result is not None:
+        user, raw_token = result
+        reset_url = f"{cfg.public_base_url}/reset-password?token={raw_token}"
+        await notify_password_reset_requested(
+            cfg, to_email=user.email, to_user_id=user.id, reset_url=reset_url
+        )
+    return {"status": "ok", "detail": _PASSWORD_RESET_REQUESTED_MESSAGE}
+
+
+@router.post("/password-reset/confirm")
+async def confirm_password_reset(
+    payload: PasswordResetConfirmInput,
+    db: AsyncSession = Depends(get_db),
+    _rate_limit: None = Depends(
+        rate_limit(
+            "password_reset_confirm", *PASSWORD_RESET_CONFIRM, redis_url=_cfg.redis_url
+        )
+    ),
+) -> dict[str, str]:
+    result = await reset_password_domain(db, payload.token, payload.new_password)
+    if result.is_err:
+        raise to_http_exception(result.danger_err)
     return {"status": "ok"}
 
 
