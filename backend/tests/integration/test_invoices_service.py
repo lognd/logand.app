@@ -82,7 +82,11 @@ async def test_recompute_amount_total_quantizes_zero_decimal_currency(
 
     total = await recompute_amount_total(db_session, invoice_id)
 
+    # A 2dp-regression would yield Decimal("3000.00"), which is value-equal
+    # to Decimal("3000") -- assert the exponent too so this test cannot
+    # pass against a 2dp-hardcoded recompute. See FINDINGS.md L1.
     assert total == Decimal("3000")
+    assert total.as_tuple().exponent == 0, f"expected 0dp quantum, got {total!r}"
     await db_session.refresh(invoice)
     assert invoice.amount_total == Decimal("3000")
 
@@ -94,7 +98,7 @@ async def test_recompute_amount_total_quantizes_three_decimal_currency(
     of being rounded away at 2dp. See FINDINGS.md L1."""
     customer = await make_user(role="customer")
     line_items = [
-        LineItemInput(description="widget", quantity=Decimal(2), unit_price=Decimal(1)),
+        LineItemInput(description="widget", quantity=Decimal(1), unit_price=Decimal(1)),
     ]
     invoice_id = (await create_invoice(db_session, customer.id, line_items)).danger_ok
     invoice = await db_session.get(Invoice, invoice_id)
@@ -104,7 +108,10 @@ async def test_recompute_amount_total_quantizes_three_decimal_currency(
     # bypassing that quantization, so this test isolates
     # recompute_amount_total's OWN currency-aware rounding rather than
     # create_invoice's (a currency switch after creation doesn't happen in
-    # production; currency is hardcoded "usd" today).
+    # production; currency is hardcoded "usd" today). quantity=1 so the
+    # true 3dp total (1.005) is numerically DISTINCT from a 2dp-regressed
+    # total (1.00) -- with quantity=2 both are 2.01/2.010, which are
+    # Decimal-value-equal and can't distinguish the two (FINDINGS.md L1).
     line_item = (
         await db_session.execute(
             select(InvoiceLineItem).where(InvoiceLineItem.invoice_id == invoice_id)
@@ -115,9 +122,10 @@ async def test_recompute_amount_total_quantizes_three_decimal_currency(
 
     total = await recompute_amount_total(db_session, invoice_id)
 
-    assert total == Decimal("2.010")
+    assert total == Decimal("1.005")
+    assert total.as_tuple().exponent == -3, f"expected 3dp quantum, got {total!r}"
     await db_session.refresh(invoice)
-    assert invoice.amount_total == Decimal("2.010")
+    assert invoice.amount_total == Decimal("1.005")
 
 
 async def test_send_invoice_draft_to_sent(db_session, make_user) -> None:
