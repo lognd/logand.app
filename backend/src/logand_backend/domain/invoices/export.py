@@ -190,13 +190,13 @@ async def generate_invoice_pdf(
         invoice_id=str(data.invoice_id),
         status=data.status,
         currency=data.currency,
-        amount_total=data.amount_total,
+        amount_total=data.amount_total_display,
         due_date=data.due_date.isoformat() if data.due_date else None,
         created_at=data.created_at.isoformat(),
         memo=data.memo,
         customer_email=data.customer_email,
         line_items=[
-            (li.description, li.quantity, li.unit_price, li.line_total, li.unit)
+            (li.description, li.quantity, li.unit_price_display, li.line_total, li.unit)
             for li in data.line_items
         ],
         business_name=cfg.invoice_business_name,
