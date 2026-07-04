@@ -176,6 +176,15 @@ class App:
                 import logand_backend.db.base as db_base
 
                 if db_base._sessionmaker is not None:
+                    # Per M1: all session-bound work (validate, verify_csrf,
+                    # commit the idle-timeout slide) happens INSIDE this
+                    # `async with` block, but `call_next` (which runs the
+                    # downstream route, including any slow external I/O --
+                    # Stripe/PayPal/Gmail calls) is deliberately called
+                    # AFTER the block exits, so `csrf_db`'s pooled
+                    # connection is released before that I/O begins rather
+                    # than being held idle across it.
+                    early_response: JSONResponse | None = None
                     async with db_base._sessionmaker() as csrf_db:
                         result = await validate_session(csrf_db, session_token)
                         if result.is_ok:
@@ -191,13 +200,13 @@ class App:
                                 verify_csrf(request, expected_secret)
                             except HTTPException as exc:
                                 await csrf_db.rollback()
-                                return JSONResponse(
+                                early_response = JSONResponse(
                                     status_code=exc.status_code,
                                     content={"detail": exc.detail},
                                 )
-                            await csrf_db.commit()
-                            return await call_next(request)
-                        elif request.method not in _SAFE_METHODS:
+                            else:
+                                await csrf_db.commit()
+                        else:
                             # A session cookie is present but unresolvable
                             # (expired/unknown) on a mutating request --
                             # per L1, treat this distinctly from "no
@@ -207,10 +216,19 @@ class App:
                             # through below: the route's own auth
                             # dependency (if any) is what should reject
                             # it, not the CSRF layer.
-                            return JSONResponse(
+                            early_response = JSONResponse(
                                 status_code=401,
                                 content={"detail": result.danger_err.value},
                             )
+                    if early_response is not None:
+                        return early_response
+                    if expected_secret is not None:
+                        # verify_csrf already ran and passed above; the
+                        # csrf_db connection is now released. Proceed
+                        # straight to the route without re-checking CSRF
+                        # below (that path is for the no-session-token
+                        # case only).
+                        return await call_next(request)
             try:
                 verify_csrf(request, expected_secret)
             except HTTPException as exc:
