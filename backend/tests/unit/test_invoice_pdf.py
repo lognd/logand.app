@@ -6,6 +6,7 @@ from logand_backend.domain.invoices.pdf.renderer import (
     _template_env,
     build_invoice_pdf_data,
     latex_escape,
+    latex_escape_lines,
 )
 
 
@@ -40,6 +41,27 @@ def test_latex_escape_handles_non_string_input() -> None:
     # than requiring every call site to str() first.
     assert latex_escape(Decimal("10.00")) == "10.00"
     assert latex_escape(42) == "42"
+
+
+def test_latex_escape_lines_preserves_newlines_as_line_breaks() -> None:
+    # A bare newline is ordinary whitespace to LaTeX -- passing a
+    # multi-line business address through plain latex_escape alone would
+    # silently collapse it into one run-on line in the compiled PDF.
+    # latex_escape_lines must turn each real newline into an explicit
+    # LaTeX line break instead of losing it.
+    escaped = latex_escape_lines(
+        "123 Main Street\nSpringfield, IL 62704\nEIN: 12-3456789"
+    )
+    assert escaped == r"123 Main Street\\Springfield, IL 62704\\EIN: 12-3456789"
+
+
+def test_latex_escape_lines_still_escapes_special_characters_per_line() -> None:
+    escaped = latex_escape_lines("100% off\n$5 fee")
+    assert escaped == r"100\% off\\\$5 fee"
+
+
+def test_latex_escape_lines_single_line_matches_plain_escape() -> None:
+    assert latex_escape_lines("no newlines here") == latex_escape("no newlines here")
 
 
 def test_build_invoice_pdf_data_escapes_every_free_text_field() -> None:
