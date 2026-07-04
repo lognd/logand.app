@@ -199,7 +199,12 @@ function RefundForm({
           type="number"
           step={stepFor(currency)}
           min="0"
-          max={remaining}
+          // Currency-quantized string, not the raw float `remaining` --
+          // JS float subtraction can land just below the human-readable
+          // remainder the placeholder rounds up to, which would make
+          // native max validation reject the exact displayed amount
+          // (FINDINGS.md L3).
+          max={formatMajorUnits(remaining, currency)}
           placeholder={formatMajorUnits(remaining, currency)}
           value={amount}
           onChange={(e) => setAmount(e.target.value)}
@@ -760,6 +765,11 @@ function CreateInvoiceForm({ onCreated }: { onCreated: () => void }) {
               <input
                 id={`li-unit-price-${index}`}
                 type="number"
+                // TODO(FINDINGS L2): create endpoint has no currency arg and
+                // defaults to "usd" today, so step="0.01" is correct for
+                // every invoice this form can produce. Switch to
+                // step={stepFor(currency)} the moment invoice creation
+                // gains a currency selector.
                 step="0.01"
                 min="0"
                 value={item.unit_price}
