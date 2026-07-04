@@ -22,7 +22,7 @@ from logand_backend.domain.invoices.export import InvoiceLineItemView
 # correctly in a mail client that ignores class-based dark-mode overrides
 # (the .ln-cta class in the shell's <style> block still repaints it for
 # dark mode wherever that IS honored).
-_CTA_COLOR = "#79740e"
+_CTA_COLOR = "#66800b"
 
 
 def _cta(url: str, label: str) -> str:
