@@ -80,8 +80,7 @@ async def notify_invoice_sent(
             )
         except Exception as exc:
             _log.error(
-                "unexpected error generating invoice PDF for invoice-sent "
-                "notification",
+                "unexpected error generating invoice PDF for invoice-sent notification",
                 extra={"invoice_id": str(invoice.id)},
                 exc_info=exc,
             )
