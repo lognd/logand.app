@@ -52,7 +52,9 @@ def test_build_invoice_pdf_data_escapes_every_free_text_field() -> None:
         created_at="2026-07-01",
         memo="50% off & a $5 fee",
         customer_email="customer@example.com",
-        line_items=[("Widget & gadget", Decimal("2"), Decimal("25.00"), "ea")],
+        line_items=[
+            ("Widget & gadget", Decimal("2"), Decimal("25.00"), Decimal("50.00"), "ea")
+        ],
         business_name="logand.app",
         business_details="",
         contact_email="billing@logand.app",
@@ -128,7 +130,7 @@ def test_template_renders_without_compiling() -> None:
         created_at="2026-07-01",
         memo="Net 30",
         customer_email="customer@example.com",
-        line_items=[("Widget", Decimal("3"), Decimal("25.00"), None)],
+        line_items=[("Widget", Decimal("3"), Decimal("25.00"), Decimal("75.00"), None)],
         business_name="logand.app",
         business_details="123 Example St",
         contact_email="billing@logand.app",
@@ -161,7 +163,9 @@ def test_template_renders_unit_price_with_unit_suffix() -> None:
         created_at="2026-07-01",
         memo=None,
         customer_email="customer@example.com",
-        line_items=[("Consulting", Decimal("3"), Decimal("25.00"), "hr")],
+        line_items=[
+            ("Consulting", Decimal("3"), Decimal("25.00"), Decimal("75.00"), "hr")
+        ],
         business_name="logand.app",
         business_details="",
         contact_email="billing@logand.app",

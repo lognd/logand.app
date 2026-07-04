@@ -161,7 +161,7 @@ async def generate_invoice_pdf(
         memo=data.memo,
         customer_email=data.customer_email,
         line_items=[
-            (li.description, li.quantity, li.unit_price, li.unit)
+            (li.description, li.quantity, li.unit_price, li.line_total, li.unit)
             for li in data.line_items
         ],
         business_name=cfg.invoice_business_name,

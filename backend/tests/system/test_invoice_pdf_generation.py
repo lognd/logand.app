@@ -42,8 +42,20 @@ def test_render_invoice_pdf_produces_a_real_pdf() -> None:
         memo="Thanks! 50% off applied & a $5 fee_note.",
         customer_email="customer@example.com",
         line_items=[
-            ("Consulting (10 hrs)", Decimal("10"), Decimal("25.00")),
-            ("Rush fee & handling", Decimal("1"), Decimal("49.00")),
+            (
+                "Consulting (10 hrs)",
+                Decimal("10"),
+                Decimal("25.00"),
+                Decimal("250.00"),
+                "hr",
+            ),
+            (
+                "Rush fee & handling",
+                Decimal("1"),
+                Decimal("49.00"),
+                Decimal("49.00"),
+                None,
+            ),
         ],
         business_name="logand.app",
         business_details="123 Example St, Some City, ST 00000",

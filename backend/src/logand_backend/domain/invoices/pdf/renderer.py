@@ -112,7 +112,7 @@ def build_invoice_pdf_data(
     created_at: str,
     memo: str | None,
     customer_email: str,
-    line_items: list[tuple[str, Decimal, Decimal, str | None]],
+    line_items: list[tuple[str, Decimal, Decimal, Decimal, str | None]],
     business_name: str,
     business_details: str,
     contact_email: str,
@@ -128,16 +128,24 @@ def build_invoice_pdf_data(
     domain/invoices/service.py's TODO if one gets added later); a UUID is
     at least unique and unambiguous in the meantime, just not the neat
     incrementing "INV-0001" a formal accounting system would use.
+
+    `line_items` carries a pre-computed `line_total` (the 4th tuple
+    element) rather than this function recomputing `quantity * unit_price`
+    itself -- every caller already has one via
+    domain.invoices.export.InvoiceLineItemView.line_total, which is the
+    single place that rounding rule (quantize to 2dp) is defined. Having
+    this function re-derive its own amount independently is exactly how
+    FINDINGS.md's M1/L2 desync happened the first time.
     """
     line_item_data = [
         InvoiceLineItemData(
             description=latex_escape(description),
             quantity=latex_escape(str(quantity)),
             unit_price=latex_escape(f"{unit_price:.2f}"),
-            amount=latex_escape(f"{(quantity * unit_price):.2f}"),
+            amount=latex_escape(f"{line_total:.2f}"),
             unit=latex_escape(unit) if unit else "",
         )
-        for description, quantity, unit_price, unit in line_items
+        for description, quantity, unit_price, line_total, unit in line_items
     ]
     return InvoicePdfData(
         invoice_number=latex_escape(invoice_id),
