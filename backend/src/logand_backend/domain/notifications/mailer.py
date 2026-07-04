@@ -149,18 +149,23 @@ def _footer_text(cfg: AppConfig, unsubscribe_url: str) -> str:
 # only implements the dark palette so far (tokens.css: "Light theme is
 # deferred"); email dark-mode support is common enough in real mail
 # clients (Apple Mail, iOS Mail, Outlook.com) that shipping email-only
-# without waiting on the site's own light theme is worth doing now --
-# the light values below are the official Gruvbox Light palette, not
-# an invented one, so they're a real, correct pairing for the dark
-# palette already in use, not a mismatched guess.
+# without waiting on the site's own light theme is worth doing now.
+#
+# The light values are still real Gruvbox Light tokens (bg2/bg0/bg1/
+# fg0/bg4/bg3/faded-green -- see the official palette), just picked for
+# more separation between page/titlebar/card than the flattest official
+# assignment gives: the first pass used bg1 for both the page and the
+# titlebar (identical), which read as bland/washed-out in review. Using
+# bg2 (darker) for the page frame, bg1 for the titlebar, and bg0 for the
+# card gives three visibly distinct tan bands instead of two.
 _LIGHT = {
-    "page_bg": "#ebdbb2",
+    "page_bg": "#d5c4a1",
     "card_bg": "#fbf1c7",
     "titlebar_bg": "#ebdbb2",
-    "fg": "#3c3836",
-    "muted": "#7c6f64",
-    "border": "#d5c4a1",
-    "accent_green": "#79740e",
+    "fg": "#282828",
+    "muted": "#665c54",
+    "border": "#bdae93",
+    "accent_green": "#66800b",
 }
 _DARK = {
     "page_bg": "#1d2021",
