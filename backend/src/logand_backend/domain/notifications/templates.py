@@ -132,7 +132,7 @@ def dispute_updated(
         "under_review": "is under review by the cardholder's bank",
         "won": "was resolved in your favor",
         "lost": "was lost -- funds have been withdrawn",
-    }.get(dispute_status, dispute_status)
+    }.get(dispute_status, html_escape(dispute_status))
     subject = f"Stripe dispute update -- invoice {invoice_id}"
 
     html = (
