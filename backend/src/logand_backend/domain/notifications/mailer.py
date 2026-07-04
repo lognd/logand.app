@@ -242,9 +242,11 @@ def _wrap_terminal_shell(*, subject: str, content_html: str, footer_html: str) -
         f"    border-color: {_DARK['border']} !important; }}",
         f"  .ln-titlebar {{ background-color: {_DARK['titlebar_bg']} !important;",
         f"    border-color: {_DARK['border']} !important; }}",
-        f"  .ln-titlebar-text, .ln-dot {{ color: {_DARK['muted']} !important; }}",
-        f"  .ln-text {{ color: {_DARK['fg']} !important; }}",
+        f"  .ln-titlebar *, .ln-dot {{ color: {_DARK['muted']} !important; }}",
+        f"  .ln-text {{ color: {_DARK['fg']} !important;",
+        f"    background-color: {_DARK['card_bg']} !important; }}",
         f"  .ln-muted {{ color: {_DARK['muted']} !important; }}",
+        f"  .ln-footer {{ background-color: {_DARK['page_bg']} !important; }}",
         f"  .ln-cta {{ color: {_DARK['accent_green']} !important; }}",
         "}",
         "</style>",
@@ -255,15 +257,17 @@ def _wrap_terminal_shell(*, subject: str, content_html: str, footer_html: str) -
         '<tr><td align="center">',
         '<table role="presentation" width="600" cellpadding="0" '
         'cellspacing="0" border="0" style="max-width:600px; width:100%;">',
-        f'<tr><td class="ln-card" style="background-color:{_LIGHT["card_bg"]}; '
+        f'<tr><td class="ln-card" bgcolor="{_LIGHT["card_bg"]}" '
+        f'style="background-color:{_LIGHT["card_bg"]}; '
         f'border:1px solid {_LIGHT["border"]}; border-radius:6px;">',
         table_open,
-        f'<tr><td class="ln-titlebar" style="background-color:'
-        f"{_LIGHT['titlebar_bg']}; border-bottom:1px solid {_LIGHT['border']}; "
+        f'<tr><td class="ln-titlebar" bgcolor="{_LIGHT["titlebar_bg"]}" '
+        f'style="background-color:{_LIGHT["titlebar_bg"]}; '
+        f"border-bottom:1px solid {_LIGHT['border']}; "
         f'border-radius:6px 6px 0 0; padding:10px 16px;">',
         table_open,
         "<tr>",
-        f'<td class="ln-titlebar-text" style="font-family:{_MONO_STACK}; '
+        f'<td style="font-family:{_MONO_STACK}; '
         f'font-size:12px; color:{_LIGHT["muted"]};">{title}</td>',
         f'<td align="right" style="white-space:nowrap; '
         f'font-family:{_MONO_STACK}; font-size:13px; color:{_LIGHT["muted"]};">'
@@ -271,15 +275,17 @@ def _wrap_terminal_shell(*, subject: str, content_html: str, footer_html: str) -
         "</tr>",
         "</table>",
         "</td></tr>",
-        '<tr><td style="padding:24px 20px;">',
-        f'<div class="ln-text" style="font-family:{_MONO_STACK}; '
+        f'<tr><td class="ln-text" bgcolor="{_LIGHT["card_bg"]}" '
+        f'style="background-color:{_LIGHT["card_bg"]}; padding:24px 20px;">',
+        f'<div style="font-family:{_MONO_STACK}; '
         f'font-size:14px; line-height:1.6; color:{_LIGHT["fg"]};">',
         content_html,
         "</div>",
         "</td></tr>",
         "</table>",
         "</td></tr>",
-        '<tr><td style="padding:16px 8px 0;">',
+        f'<tr><td class="ln-footer" bgcolor="{_LIGHT["page_bg"]}" '
+        f'style="background-color:{_LIGHT["page_bg"]}; padding:16px 8px 0;">',
         f'<div class="ln-muted" style="font-family:{_MONO_STACK}; '
         f'font-size:11px; line-height:1.6; color:{_LIGHT["muted"]};">',
         footer_html,

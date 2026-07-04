@@ -256,11 +256,20 @@ def test_wrap_terminal_shell_includes_dark_mode_media_query_and_meta_tags() -> N
         "ln-page",
         "ln-card",
         "ln-titlebar",
-        "ln-titlebar-text",
         "ln-text",
         "ln-muted",
+        "ln-footer",
     ):
         assert f'class="{class_name}"' in result, f"{class_name} unused in body"
+    # ln-text/ln-titlebar/ln-footer must each carry their own explicit
+    # background-color, not just a text color -- an element that pairs
+    # `color` with no matching `background-color` is exactly what Gmail's
+    # per-element dark-mode heuristic independently re-colors, producing a
+    # visible "seam" against its (correctly dark-mode-aware) ancestors.
+    # See FINDINGS.md's audit of the terminal-shell email chrome.
+    assert 'class="ln-text" bgcolor=' in result
+    assert 'class="ln-titlebar" bgcolor=' in result
+    assert 'class="ln-footer" bgcolor=' in result
 
 
 def test_wrap_terminal_shell_embeds_content_and_footer_verbatim() -> None:
