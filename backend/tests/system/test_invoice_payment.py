@@ -381,9 +381,7 @@ async def test_pay_invoice_rate_limited_after_a_burst(
             )
             assert resp.status_code == 200, resp.text
 
-        stripe_calls_before_limit = (
-            mock_stripe_payment_intent_create.call_count
-        )
+        stripe_calls_before_limit = mock_stripe_payment_intent_create.call_count
         limited = await db_client.post(
             f"/api/invoices/{invoice_id}/pay", headers=headers
         )
@@ -391,6 +389,4 @@ async def test_pay_invoice_rate_limited_after_a_burst(
     assert limited.status_code == 429, limited.text
     assert "retry-after" in {k.lower() for k in limited.headers.keys()}
     # The limiter fired before the route touched Stripe again.
-    assert (
-        mock_stripe_payment_intent_create.call_count == stripe_calls_before_limit
-    )
+    assert mock_stripe_payment_intent_create.call_count == stripe_calls_before_limit

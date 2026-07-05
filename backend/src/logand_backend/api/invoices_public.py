@@ -576,9 +576,7 @@ async def pay_invoice(
     # route directly (stale page, crafted request), so it's re-checked here
     # rather than trusted from the earlier GET.
     if not stripe_provider.is_configured(cfg):
-        raise HTTPException(
-            status_code=503, detail="card payments are not configured"
-        )
+        raise HTTPException(status_code=503, detail="card payments are not configured")
     assert cfg.payment_processor_secret is not None
     stripe.api_key = cfg.payment_processor_secret
     # None in production (stripe-python's own default: real api.stripe.com)
