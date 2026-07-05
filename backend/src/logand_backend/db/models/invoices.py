@@ -245,6 +245,12 @@ class Payment(Base):
     # ever shows up in an invoice PDF, not this model's).
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
     amount: Mapped[Decimal] = mapped_column(Numeric(14, 3), nullable=False)
+    # Payer's billing postal code, retained for sales-tax jurisdiction and
+    # tax-audit purposes (US ZIP or other postal code). Populated from the
+    # Stripe charge's billing_details for card payments; nullable because
+    # manual payments (Zelle/cash/PayPal-direct) may be recorded without
+    # any address, and older rows predate this column.
+    zip_code: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(Text, nullable=False, default="pending")
     transaction_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(

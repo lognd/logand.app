@@ -91,6 +91,21 @@ async def retrieve_payment_intent(intent_id: str) -> dict:
     return _intents[intent_id]
 
 
+@app.get("/v1/charges/{charge_id}")
+async def retrieve_charge(charge_id: str) -> dict:
+    # api/webhooks.py::_charge_billing_postal_code retrieves the charge named
+    # by a payment_intent's latest_charge to pull billing_details.address.
+    # postal_code (retained on Payment.zip_code for tax/audit). This double
+    # doesn't simulate card entry, so it has no real billing address to
+    # return -- it returns a correctly-shaped charge with a null postal_code,
+    # which is exactly the "no address on file" branch that path handles.
+    return {
+        "id": charge_id,
+        "object": "charge",
+        "billing_details": {"address": {"postal_code": None}},
+    }
+
+
 @app.post("/v1/refunds")
 async def create_refund(request: Request) -> dict:
     # Used by domain/invoices/refunds.py::refund_payment's stripe.Refund.create

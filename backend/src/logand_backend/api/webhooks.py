@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 
 import stripe
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -153,6 +154,45 @@ async def _flag_if_already_covered(db: AsyncSession, invoice: Invoice) -> None:
         )
 
 
+async def _charge_billing_postal_code(charge_id: str | None) -> str | None:
+    """Best-effort billing ZIP/postal code for a Stripe charge, retained on
+    Payment.zip_code for sales-tax jurisdiction and tax-audit purposes.
+
+    The payment_intent webhook payload carries only `latest_charge` (an id),
+    not the expanded charge, so the billing address lives one retrieve away.
+    Deliberately best-effort: this is audit metadata, never a settlement
+    input, so any Stripe/network failure logs and yields None rather than
+    failing the webhook (which would make Stripe retry an otherwise-complete
+    payment just because an address lookup blipped).
+    """
+    if not charge_id:
+        return None
+    try:
+        charge = await asyncio.to_thread(stripe.Charge.retrieve, charge_id)
+    except stripe.error.StripeError as exc:
+        _log.warning(
+            "stripe webhook: could not retrieve charge for billing postal code",
+            extra={"charge": charge_id, "error": str(exc)},
+        )
+        return None
+    # StripeObject implements __contains__/__getitem__ but not .get() (see the
+    # latest_charge note below) -- walk the optional nesting with `in` guards.
+    billing = charge["billing_details"] if "billing_details" in charge else None
+    address = billing["address"] if billing and "address" in billing else None
+    postal = address["postal_code"] if address and "postal_code" in address else None
+    if postal:
+        _log.info(
+            "stripe webhook: captured billing postal code",
+            extra={"charge": charge_id, "zip_code": postal},
+        )
+    else:
+        _log.info(
+            "stripe webhook: charge has no billing postal code",
+            extra={"charge": charge_id},
+        )
+    return postal
+
+
 async def _handle_payment_intent_event(
     db: AsyncSession, event: dict, cfg: AppConfig
 ) -> None:
@@ -239,6 +279,17 @@ async def _handle_payment_intent_event(
             await notify_payment_received(db, cfg, invoice, existing.amount)
         return
 
+    # NOT intent.get(...) -- `intent` is a stripe.StripeObject, not a plain
+    # dict, and this SDK version's StripeObject doesn't implement .get()
+    # (only __getitem__/__contains__), so intent.get("latest_charge") raised
+    # AttributeError on every successful webhook delivery that reached here --
+    # found by tests/system/test_stripe_webhooks.py actually exercising this
+    # path instead of mocking it away.
+    charge_id = intent["latest_charge"] if "latest_charge" in intent else None
+    # Only a succeeded charge carries a real billing address worth retaining;
+    # a failed intent's zip is both usually absent and irrelevant for tax.
+    zip_code = await _charge_billing_postal_code(charge_id) if succeeded else None
+
     try:
         # A SAVEPOINT (nested transaction), not a bare flush -- if the
         # unique-index race above actually fires, we need to roll back
@@ -252,16 +303,8 @@ async def _handle_payment_intent_event(
                     stripe_payment_intent_id=intent_id,
                     amount=from_minor_units(intent["amount"], invoice.currency),
                     status="succeeded" if succeeded else "failed",
-                    # NOT intent.get(...) -- `intent` is a stripe.StripeObject,
-                    # not a plain dict, and this SDK version's StripeObject
-                    # doesn't implement .get() (only __getitem__/__contains__),
-                    # so intent.get("latest_charge") raised AttributeError on
-                    # every single successful webhook delivery that reached
-                    # this line -- found by tests/system/test_stripe_webhooks.py
-                    # actually exercising this path instead of mocking it away.
-                    transaction_id=intent["latest_charge"]
-                    if "latest_charge" in intent
-                    else None,
+                    transaction_id=charge_id,
+                    zip_code=zip_code,
                 )
             )
             await db.flush()
