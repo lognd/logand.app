@@ -561,9 +561,18 @@ export function CustomerPay() {
             Zelle: <span className="font-mono">{paymentMethods.data.zelle_handle}</span>
           </p>
         )}
+        {paymentMethods.data?.paypal_receive_email && (
+          <p className="mt-2 text-base text-fg-primary">
+            PayPal:{" "}
+            <span className="font-mono">
+              {paymentMethods.data.paypal_receive_email}
+            </span>
+          </p>
+        )}
         <p className="mt-2 text-base text-fg-muted">
-          PayPal sent directly or in person are also fine -- just contact us and
-          we&apos;ll mark your invoice paid once we receive it.
+          {paymentMethods.data?.paypal_receive_email
+            ? "Sent directly to that address, or in person, is also fine -- just contact us and we'll mark your invoice paid once we receive it."
+            : "PayPal sent directly or in person are also fine -- just contact us and we'll mark your invoice paid once we receive it."}
         </p>
 
         <div className="mt-4 border-t border-border pt-4">

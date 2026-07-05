@@ -58,6 +58,8 @@ just that something is set.
       "Turning on PayPal later" section. Falls back to Zelle/in-person/manual recording without it.
 - [ ] `ZELLE_HANDLE` -- shows a real Zelle option on the customer Pay page. See
       [that section](#zelle_handle).
+- [ ] `PAYPAL_RECEIVE_EMAIL` -- shows a "PayPal: <email>" direct-send option on the
+      Pay page (separate from the PayPal button above). See [that section](#paypal_receive_email).
 - [ ] `SMTP_HOST` and friends, OR `GMAIL_SERVICE_ACCOUNT_JSON`/`GMAIL_SENDER_EMAIL`
       (Google Workspace -- see that section, `SMTP_HOST` alone does NOT work for
       Workspace), plus `MAILING_ADDRESS` -- invoice-sent/payment-received email
@@ -216,6 +218,16 @@ Optional, not secret -- a phone number or email, whatever your Zelle
 account is registered under. Once set, a customer's Pay page shows it
 directly ("Zelle: <handle>") as a real payment option, instead of just
 generic "contact us" text. Leave unset if you don't want to offer Zelle.
+
+### `PAYPAL_RECEIVE_EMAIL`
+
+Optional, not secret -- the confirmed email on your PayPal account (e.g.
+`paypal@logand.app`). Once set, a customer's Pay page shows it directly
+("PayPal: <email>") for anyone who wants to send a manual payment, instead
+of only the generic "contact us" text. This is entirely separate from
+`PAYPAL_CLIENT_ID`/`PAYPAL_CLIENT_SECRET`: those drive the automated "Pay
+with PayPal" button (Orders API), while this is just the direct-send
+address shown for the manual fallback. Leave unset to omit the line.
 
 ### `SMTP_HOST` / `SMTP_PORT` / `SMTP_USERNAME` / `SMTP_PASSWORD` / `SMTP_USE_TLS` / `SMTP_FROM_ADDRESS`
 

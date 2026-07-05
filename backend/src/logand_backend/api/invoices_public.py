@@ -112,6 +112,10 @@ async def get_payment_methods(
         # comment) -- the pay page only renders a Zelle option once this
         # is a real value, not a blank placeholder.
         "zelle_handle": cfg.zelle_handle,
+        # None until configured (see AppConfig.paypal_receive_email) -- the
+        # direct-send PayPal address for the manual path, shown next to the
+        # Zelle handle. Independent of "paypal" above (the automated button).
+        "paypal_receive_email": cfg.paypal_receive_email,
     }
 
 

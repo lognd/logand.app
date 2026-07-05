@@ -87,6 +87,14 @@ class AppConfig(BaseModel):
     # admin's real Zelle account is registered under -- free-form, not
     # validated as either shape.
     zelle_handle: str | None = None
+    # The PayPal address a customer sends a MANUAL payment to (the confirmed
+    # email on the PayPal account, e.g. paypal@logand.app) -- shown on the
+    # Pay page's "Other ways to pay" box next to the Zelle handle. None (same
+    # "not configured yet" convention as zelle_handle above) so the pay page
+    # only renders it once it's a real value. Entirely separate from the
+    # automated "Pay with PayPal" button, which uses paypal_client_id/secret,
+    # not this; this is only the direct-send fallback address.
+    paypal_receive_email: str | None = None
     # SMTP is optional -- None (same "not configured" convention as
     # paypal_client_id above) means domain/notifications/mailer.py's
     # is_configured() is False, and every notification call becomes a
@@ -183,6 +191,7 @@ class AppConfig(BaseModel):
             "INVOICE_BUSINESS_DETAILS": "invoice_business_details",
             "INVOICE_CONTACT_EMAIL": "invoice_contact_email",
             "ZELLE_HANDLE": "zelle_handle",
+            "PAYPAL_RECEIVE_EMAIL": "paypal_receive_email",
             "SMTP_HOST": "smtp_host",
             "SMTP_PORT": "smtp_port",
             "SMTP_USERNAME": "smtp_username",

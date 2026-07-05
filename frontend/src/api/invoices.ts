@@ -204,6 +204,10 @@ export interface PaymentMethodsAvailability {
   // comment) -- Pay.tsx only shows a Zelle option once this is a real
   // value.
   zelle_handle: string | null;
+  // The direct-send PayPal address for the manual path -- null until
+  // configured (backend AppConfig.paypal_receive_email). Independent of
+  // "paypal" above, which gates the automated button.
+  paypal_receive_email: string | null;
 }
 
 export function getPaymentMethods(): Promise<PaymentMethodsAvailability> {
