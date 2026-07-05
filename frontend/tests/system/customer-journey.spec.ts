@@ -136,6 +136,18 @@ test.describe("customer journey", () => {
     const email = uniqueEmail("journey-payer");
     const password = "another-real-password";
 
+    // Block Stripe.js from loading. This test only asserts the pay page
+    // swaps in the card FORM (our own DOM) after a real intent round trip;
+    // the Payment Element iframe is out of scope (see the assertion block
+    // below). If js.stripe.com is allowed to load in CI, loadStripe
+    // resolves and PaymentElement tries to mount a real Elements group
+    // against the fake-stripe client_secret + pk_test_fake, which throws
+    // inside its mount effect and unmounts the whole React tree -- taking
+    // the very form this test waits for down with it. Aborting the script
+    // makes loadStripe reject, so <Elements> still renders its children
+    // (the form) while the Element itself simply never mounts.
+    await page.route(/js\.stripe\.com/, (route) => route.abort());
+
     await registerViaUi(page, email, password);
 
     // page.request (NOT the standalone `request` fixture) for THIS read --
