@@ -42,6 +42,7 @@ const PAYMENT_METHODS = {
   stripe_publishable_key: "pk_test_fake",
   paypal: false,
   zelle_handle: null,
+  paypal_receive_email: null,
 };
 
 const SENT_INVOICE = {
@@ -97,6 +98,47 @@ describe("CustomerPay (integration)", () => {
     renderPage();
 
     expect(await screen.findByText("logan@logand.app")).toBeInTheDocument();
+  });
+
+  it("shows the configured PayPal email, labeled distinctly from Zelle", async () => {
+    const fetchMock = vi.fn((url: string) => {
+      if (url === "/api/invoices/inv-1") {
+        return Promise.resolve(jsonResponse(SENT_INVOICE));
+      }
+      return Promise.resolve(
+        jsonResponse({
+          ...PAYMENT_METHODS,
+          zelle_handle: "logan@logand.app",
+          paypal_receive_email: "paypal@logand.app",
+        }),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderPage();
+
+    // Both are emails, so the "Zelle:" / "PayPal:" labels are what tell a
+    // customer which address goes with which service -- assert the labels
+    // sit with the right address, not just that the address appears.
+    const zelleLine = (await screen.findByText(/Zelle:/)).closest("p");
+    expect(zelleLine).toHaveTextContent("logan@logand.app");
+    const paypalLine = screen.getByText(/PayPal:/).closest("p");
+    expect(paypalLine).toHaveTextContent("paypal@logand.app");
+  });
+
+  it("does not show a PayPal line when the receive email is unconfigured", async () => {
+    const fetchMock = vi.fn((url: string) => {
+      if (url === "/api/invoices/inv-1") {
+        return Promise.resolve(jsonResponse(SENT_INVOICE));
+      }
+      return Promise.resolve(jsonResponse(PAYMENT_METHODS));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderPage();
+
+    await screen.findByText("Other ways to pay");
+    expect(screen.queryByText(/PayPal:/)).not.toBeInTheDocument();
   });
 
   it("does not show a Zelle line when unconfigured", async () => {

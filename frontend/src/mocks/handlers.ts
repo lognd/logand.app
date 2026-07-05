@@ -318,6 +318,7 @@ export const handlers = [
       stripe_publishable_key: null,
       paypal: false,
       zelle_handle: "logan@logand.app",
+      paypal_receive_email: "paypal@logand.app",
     });
   }),
 

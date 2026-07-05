@@ -57,11 +57,13 @@ function getStripeClient(publishableKey: string): Promise<StripeClient | null> {
 // mirror tokens.css's own current values for each variable so the
 // degraded case still looks like this app, not stock Stripe.
 const STRIPE_TOKEN_FALLBACKS: Record<string, string> = {
-  "--accent-orange": "#f97316",
-  "--bg-secondary": "#1a1a1a",
-  "--fg-primary": "#f5f5f5",
-  "--fg-muted": "#a3a3a3",
-  "--accent-red": "#ef4444",
+  "--accent-orange": "#fe8019",
+  "--bg-primary": "#282828",
+  "--bg-secondary": "#3c3836",
+  "--fg-primary": "#ebdbb2",
+  "--fg-muted": "#a89984",
+  "--accent-red": "#fb4934",
+  "--border": "#504945",
 };
 
 // Payment Element renders inside Stripe-hosted iframes that can't see
@@ -91,6 +93,42 @@ export function stripeAppearance(): Appearance {
       colorTextSecondary: token("--fg-muted"),
       colorDanger: token("--accent-red"),
       borderRadius: "4px",
+      // Stripe draws each method's brand logo itself and offers no hook to
+      // restyle them, so Cash App/Amazon Pay/etc. can't be made to match the
+      // clean card/bank marks. What we CAN do is make the CONTAINER they sit
+      // in read as this app's own -- tint the method icons toward the theme,
+      // and tighten spacing so the row of logos looks deliberate, not stock.
+      spacingUnit: "4px",
+      colorIconTab: token("--fg-muted"),
+      colorIconTabSelected: token("--accent-orange"),
+      colorIconTabHover: token("--fg-primary"),
+    },
+    // Style the tabs/accordion rows/inputs AROUND the (un-restylable) brand
+    // logos so the whole Payment Element matches the site's flat, orange-
+    // accented, gruvbox-bordered look instead of Stripe's default chrome.
+    rules: {
+      ".Tab, .AccordionItem, .PickerItem, .Block": {
+        border: `1px solid ${token("--border")}`,
+        boxShadow: "none",
+      },
+      ".Tab:hover, .AccordionItem:hover, .PickerItem:hover": {
+        borderColor: token("--accent-orange"),
+      },
+      ".Tab--selected, .AccordionItem--selected, .PickerItem--selected": {
+        borderColor: token("--accent-orange"),
+        boxShadow: `0 0 0 1px ${token("--accent-orange")}`,
+      },
+      ".Input": {
+        border: `1px solid ${token("--border")}`,
+        boxShadow: "none",
+      },
+      ".Input:focus": {
+        borderColor: token("--accent-orange"),
+        boxShadow: `0 0 0 1px ${token("--accent-orange")}`,
+      },
+      ".Label": {
+        color: token("--fg-muted"),
+      },
     },
   };
 }
@@ -523,9 +561,18 @@ export function CustomerPay() {
             Zelle: <span className="font-mono">{paymentMethods.data.zelle_handle}</span>
           </p>
         )}
+        {paymentMethods.data?.paypal_receive_email && (
+          <p className="mt-2 text-base text-fg-primary">
+            PayPal:{" "}
+            <span className="font-mono">
+              {paymentMethods.data.paypal_receive_email}
+            </span>
+          </p>
+        )}
         <p className="mt-2 text-base text-fg-muted">
-          PayPal sent directly or in person are also fine -- just contact us and
-          we&apos;ll mark your invoice paid once we receive it.
+          {paymentMethods.data?.paypal_receive_email
+            ? "Sent directly to that address, or in person, is also fine -- just contact us and we'll mark your invoice paid once we receive it."
+            : "PayPal sent directly or in person are also fine -- just contact us and we'll mark your invoice paid once we receive it."}
         </p>
 
         <div className="mt-4 border-t border-border pt-4">

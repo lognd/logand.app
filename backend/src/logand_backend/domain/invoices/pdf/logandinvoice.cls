@@ -36,6 +36,10 @@
 \RequirePackage{booktabs}
 \RequirePackage{array}
 \RequirePackage{fancyhdr}
+% lastpage exposes the LastPage label so the footer can print "page/total"
+% (e.g. 1/1) -- ships in texlive-latex-recommended (already installed, see
+% backend/Dockerfile), so no new package dependency.
+\RequirePackage{lastpage}
 % hyperref last (standard LaTeX convention: most packages need to be
 % loaded before hyperref to avoid it clobbering their own cross-reference
 % hooks) -- this is what gives the ELECTRONIC copy real clickable links
@@ -70,7 +74,11 @@
 \fancyhf{}
 \renewcommand{\headrulewidth}{0pt}
 \renewcommand{\footrulewidth}{0.4pt}
-\fancyfoot[C]{\small\color{invoicegray}Thank you for your business.\\[2pt]\thepage}
+% Right-aligned footer: the "thank you" line sits directly above the
+% page indicator, both flush to the right-hand margin. The page indicator
+% is current/total ("1/1") via lastpage's LastPage label, so a multi-page
+% invoice reads "1/2", "2/2", etc. rather than a bare page number.
+\fancyfoot[R]{\small\color{invoicegray}Thank you for your business.\\[2pt]\thepage/\pageref{LastPage}}
 
 % ---- Data commands -- renderer.py's Jinja2 template calls these once,
 % near the top of the document, before \begin{document}. Every value
