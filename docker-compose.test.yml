@@ -46,6 +46,12 @@ services:
       PAYMENT_PROCESSOR_SECRET: sk_test_fake
       STRIPE_WEBHOOK_SECRET: whsec_fake
       STRIPE_API_BASE: http://fake-stripe:12111
+      # Not a real key (payment-methods just echoes it) -- makes the pay
+      # page SHOW the card button so customer-journey.spec.ts can walk
+      # the real intent-minting round trip; the Payment Element iframe
+      # itself talks to Stripe's real servers and can't work against
+      # fake-stripe, which is exactly where that spec stops asserting.
+      STRIPE_PUBLISHABLE_KEY: pk_test_fake
       # Guarantees a known admin account exists before any system test
       # runs, without a separate seeding step in CI that could be
       # forgotten -- see app/app.py's _seed_admin_if_configured. Frontend

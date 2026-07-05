@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -8,7 +9,7 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from logand_backend.db.models.invoices import Invoice
+from logand_backend.db.models.invoices import Invoice, Payment
 
 # /pay calls the REAL Stripe API (stripe.PaymentIntent.create) by design --
 # card data never touches this server (see invoices_public.py's NOTE), so
@@ -275,3 +276,121 @@ async def test_pay_invoice_cannot_pay_another_customers_invoice(
     resp = await db_client.post(f"/api/invoices/{invoice_id}/pay", headers=headers)
     assert resp.status_code == 404
     mock_stripe_payment_intent_create.assert_not_called()
+
+
+async def test_pay_invoice_blocked_while_a_paypal_capture_is_pending(
+    db_client: AsyncClient,
+    make_user,
+    login_as,
+    db_session: AsyncSession,
+    mock_stripe_payment_intent_create,
+) -> None:
+    """The M1 guard in the STRIPE direction (test_paypal_flow.py covers
+    paypal-blocked-by-stripe, the M2 mirror): while a PayPal capture is
+    held pending review, amount_due still shows the full invoice as owed
+    (pending contributes nothing to settlement math), so starting a card
+    payment now could settle real money on top of what PayPal already
+    holds. /pay must refuse before ever talking to Stripe."""
+    invoice_id, customer = await _create_and_send_invoice(
+        db_client, make_user, login_as
+    )
+    db_session.add(
+        Payment(
+            invoice_id=invoice_id,
+            method="paypal",
+            amount=Decimal("99.00"),
+            status="pending",
+        )
+    )
+    await db_session.commit()
+
+    await login_as(db_client, customer.email, "pw")
+    headers = _csrf_headers(db_client)
+    resp = await db_client.post(f"/api/invoices/{invoice_id}/pay", headers=headers)
+
+    assert resp.status_code == 409, resp.text
+    assert "still being reviewed" in resp.json()["detail"]
+    mock_stripe_payment_intent_create.assert_not_called()
+
+
+async def test_pay_invoice_rejects_when_payments_already_cover_the_total(
+    db_client: AsyncClient,
+    make_user,
+    login_as,
+    db_session: AsyncSession,
+    mock_stripe_payment_intent_create,
+) -> None:
+    """The amount_due <= 0 guard: succeeded payments cover the full total
+    but the invoice's own status hasn't flipped to 'paid' yet (settlement
+    normally does both in one transaction, but a crash between the two --
+    or a webhook landing right now -- leaves exactly this window). A /pay
+    call in that window must 409, not mint an intent for a $0-or-negative
+    remainder."""
+    invoice_id, customer = await _create_and_send_invoice(
+        db_client, make_user, login_as
+    )
+    db_session.add(
+        Payment(
+            invoice_id=invoice_id,
+            method="zelle",
+            amount=Decimal("99.00"),
+            status="succeeded",
+        )
+    )
+    await db_session.commit()
+
+    await login_as(db_client, customer.email, "pw")
+    headers = _csrf_headers(db_client)
+    resp = await db_client.post(f"/api/invoices/{invoice_id}/pay", headers=headers)
+
+    assert resp.status_code == 409, resp.text
+    assert "fully paid pending settlement" in resp.json()["detail"]
+    mock_stripe_payment_intent_create.assert_not_called()
+
+
+async def test_pay_invoice_rate_limited_after_a_burst(
+    db_client: AsyncClient,
+    make_user,
+    login_as,
+    mock_stripe_payment_intent_create,
+) -> None:
+    """CUSTOMER_PAY is 20/60s per customer (auth/rate_limit.py) -- the
+    21st rapid /pay must 429 with a Retry-After, and must be refused
+    BEFORE any Stripe call. Keyed per user_id (each test makes a fresh
+    customer), so this can't contaminate other tests' buckets."""
+    invoice_id, customer = await _create_and_send_invoice(
+        db_client, make_user, login_as
+    )
+    await login_as(db_client, customer.email, "pw")
+    headers = _csrf_headers(db_client)
+
+    # Calls 2..20 take the reuse path (retrieve, not create) -- patch it
+    # to hand back the same live intent so every request is a real 200.
+    with patch(
+        "stripe.PaymentIntent.retrieve",
+        return_value=SimpleNamespace(
+            id=_FAKE_INTENT_ID,
+            status="requires_payment_method",
+            client_secret=_FAKE_CLIENT_SECRET,
+            amount=9900,
+        ),
+    ):
+        for _ in range(20):
+            resp = await db_client.post(
+                f"/api/invoices/{invoice_id}/pay", headers=headers
+            )
+            assert resp.status_code == 200, resp.text
+
+        stripe_calls_before_limit = (
+            mock_stripe_payment_intent_create.call_count
+        )
+        limited = await db_client.post(
+            f"/api/invoices/{invoice_id}/pay", headers=headers
+        )
+
+    assert limited.status_code == 429, limited.text
+    assert "retry-after" in {k.lower() for k in limited.headers.keys()}
+    # The limiter fired before the route touched Stripe again.
+    assert (
+        mock_stripe_payment_intent_create.call_count == stripe_calls_before_limit
+    )

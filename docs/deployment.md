@@ -38,9 +38,11 @@ cp backend/.env.example backend/.env
 Edit `backend/.env` and fill in real values -- see [secrets.md](secrets.md)
 for what each one is and how to generate it. At minimum for a first
 deploy you need: `DATABASE_URL` (a real password, not `changeme`),
-`SESSION_SECRET`, `PAYMENT_PROCESSOR_SECRET`, `STRIPE_WEBHOOK_SECRET`,
-`PUBLIC_BASE_URL` (your real domain). Leave `PAYPAL_*` unset for now --
-see "Turning on PayPal later" below.
+`SESSION_SECRET`, `PAYMENT_PROCESSOR_SECRET`, `STRIPE_PUBLISHABLE_KEY`
+(the pk_ key from the same Stripe account+mode -- without it the
+customer pay page hides the "Pay with card" option entirely),
+`STRIPE_WEBHOOK_SECRET`, `PUBLIC_BASE_URL` (your real domain). Leave
+`PAYPAL_*` unset for now -- see "Turning on PayPal later" below.
 
 ## 2. Build the frontend
 

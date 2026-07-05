@@ -29,7 +29,7 @@ from logand_backend.domain.invoices.service import (
 )
 from logand_backend.domain.notifications.notify import notify_payment_received
 from logand_backend.domain.payments.currency import quantize_to_currency, to_minor_units
-from logand_backend.domain.payments.providers import paypal
+from logand_backend.domain.payments.providers import paypal, stripe_provider
 from logand_backend.domain.storage.factory import get_storage_backend
 from logand_backend.logging import get_logger
 
@@ -93,7 +93,19 @@ async def get_payment_methods(
     """
     cfg = AppConfig.from_external(argparse.Namespace())
     return {
-        "stripe": True,
+        # Gated on BOTH the publishable key AND the secret key being set
+        # (stripe_provider.is_configured -- FINDINGS.md M1) -- the browser
+        # can't mount Stripe's Payment Element without the pk_, and /pay
+        # can't mint a PaymentIntent without a real secret, so gating on
+        # only one half let an operator set a real pk_ while the secret was
+        # still the unconfigured default, advertising a card button that
+        # would dead-end on every /pay call. Same hide-what-can't-work
+        # convention as "paypal" below.
+        "stripe": stripe_provider.is_configured(cfg),
+        # The frontend passes this straight to loadStripe(); pk_ keys are
+        # designed to be public (they can only tokenize, never charge or
+        # read), so returning it to an authenticated customer is fine.
+        "stripe_publishable_key": cfg.stripe_publishable_key,
         "paypal": paypal.is_configured(cfg),
         "manual_methods_available_via_admin": ["zelle", "in_person", "other", "paypal"],
         # None when unconfigured (see AppConfig.zelle_handle's own doc
@@ -269,6 +281,11 @@ async def pay_invoice_via_paypal(
     # would cancel a payment attempt the customer may currently be mid-way
     # through confirming -- out of scope for this bounded fix).
     if invoice.stripe_payment_intent_id:
+        # A live intent ID on the invoice only ever gets set by pay_invoice
+        # below, which refuses to run at all unless stripe_provider.
+        # is_configured(cfg) was true -- so payment_processor_secret is
+        # guaranteed set here too.
+        assert cfg.payment_processor_secret is not None
         stripe.api_key = cfg.payment_processor_secret
         if cfg.stripe_api_base:
             stripe.api_base = cfg.stripe_api_base
@@ -552,6 +569,17 @@ async def pay_invoice(
     # NOTE: card data never touches this server -- Stripe Checkout/PaymentIntents
     # handles capture entirely on Stripe's side, see docs/design/04.
     cfg = AppConfig.from_external(argparse.Namespace())
+    # FINDINGS.md M1: refuse outright (503, same convention as PayPal's
+    # NotConfigured) rather than proceeding with an unset/placeholder
+    # secret -- get_payment_methods above only advertises "stripe": True
+    # once this same predicate is true, but a client could still hit this
+    # route directly (stale page, crafted request), so it's re-checked here
+    # rather than trusted from the earlier GET.
+    if not stripe_provider.is_configured(cfg):
+        raise HTTPException(
+            status_code=503, detail="card payments are not configured"
+        )
+    assert cfg.payment_processor_secret is not None
     stripe.api_key = cfg.payment_processor_secret
     # None in production (stripe-python's own default: real api.stripe.com)
     # -- only set in test/CI, pointing at testing/fake_stripe.py's local

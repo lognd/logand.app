@@ -1,6 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useParams, useSearchParams } from "react-router-dom";
+import type { Appearance, Stripe as StripeClient } from "@stripe/stripe-js";
+import { loadStripe } from "@stripe/stripe-js";
+import {
+  Elements,
+  PaymentElement,
+  useElements,
+  useStripe,
+} from "@stripe/react-stripe-js";
 import { RateLimitedError } from "../../../api/client";
 import {
   capturePaypalPayment,
@@ -10,6 +18,7 @@ import {
   payInvoiceViaPaypal,
   uploadPaymentProof,
 } from "../../../api/invoices";
+import { logError, logInfo, logWarn } from "../../../lib/logging";
 import { BUTTON_CLASS } from "../../../styles/a11y";
 
 // Invoice statuses the pay endpoints will actually accept -- matches the
@@ -18,11 +27,155 @@ import { BUTTON_CLASS } from "../../../styles/a11y";
 // backend's own check is still the real enforcement.
 const PAYABLE_STATUSES = new Set(["sent", "overdue"]);
 
-// TODO(logan): swap the raw client_secret display for an actual Stripe
-// Elements/Checkout mount once @stripe/stripe-js + @stripe/react-stripe-js
-// are added to package.json -- this proves the data flow (real call to
-// POST /api/invoices/:id/pay, real client_secret round trip) without
-// pulling in Stripe's JS yet, see docs/design/04-invoices.md.
+// Memoized across the whole tab, not per mount -- loadStripe injects the
+// js.stripe.com script tag on first call, and calling it again with the
+// same key must reuse that one instance instead of re-injecting/re-
+// initializing on every visit to this page. Keyed so a (never expected
+// in practice) publishable-key change between fetches doesn't silently
+// keep using a client built for the old key.
+let stripeClientPromise: Promise<StripeClient | null> | null = null;
+let stripeClientKey: string | null = null;
+function getStripeClient(publishableKey: string): Promise<StripeClient | null> {
+  if (!stripeClientPromise || stripeClientKey !== publishableKey) {
+    stripeClientKey = publishableKey;
+    stripeClientPromise = loadStripe(publishableKey);
+  }
+  return stripeClientPromise;
+}
+
+// Payment Element renders inside Stripe-hosted iframes that can't see
+// this page's stylesheet -- feed it the SAME design tokens (tokens.css
+// CSS variables) at runtime rather than duplicating their hex values
+// here, so a future theme change can't desync the card form from the
+// rest of the page.
+// Fallback hex values for stripeAppearance()'s token() lookups below --
+// only ever used if a referenced CSS custom property resolves to "" (not
+// yet applied, or renamed in a future tokens.css refactor). Without a
+// fallback, an empty string fed into Stripe's `variables` is silently
+// ignored/warned by Stripe.js and the form just degrades to default
+// styling with no build-time or test signal (FINDINGS.md L1) -- these
+// mirror tokens.css's own current values for each variable so the
+// degraded case still looks like this app, not stock Stripe.
+const STRIPE_TOKEN_FALLBACKS: Record<string, string> = {
+  "--accent-orange": "#f97316",
+  "--bg-secondary": "#1a1a1a",
+  "--fg-primary": "#f5f5f5",
+  "--fg-muted": "#a3a3a3",
+  "--accent-red": "#ef4444",
+};
+
+// Payment Element renders inside Stripe-hosted iframes that can't see
+// this page's stylesheet -- feed it the SAME design tokens (tokens.css
+// CSS variables) at runtime rather than duplicating their hex values
+// here, so a future theme change can't desync the card form from the
+// rest of the page.
+export function stripeAppearance(): Appearance {
+  const css = getComputedStyle(document.documentElement);
+  const token = (name: string) => {
+    const value = css.getPropertyValue(name).trim();
+    if (value === "") {
+      logWarn(
+        "stripe appearance token missing",
+        `${name} resolved empty; falling back to hardcoded default`,
+      );
+      return STRIPE_TOKEN_FALLBACKS[name] ?? "";
+    }
+    return value;
+  };
+  return {
+    theme: "night",
+    variables: {
+      colorPrimary: token("--accent-orange"),
+      colorBackground: token("--bg-secondary"),
+      colorText: token("--fg-primary"),
+      colorTextSecondary: token("--fg-muted"),
+      colorDanger: token("--accent-red"),
+      borderRadius: "4px",
+    },
+  };
+}
+
+// The card form proper -- must be a separate component because
+// useStripe/useElements only work below an <Elements> provider, which
+// CustomerPay itself renders.
+function CardPaymentForm({
+  invoiceId,
+  onComplete,
+}: {
+  invoiceId: string;
+  onComplete: (status: "succeeded" | "processing") => void;
+}) {
+  const stripe = useStripe();
+  const elements = useElements();
+  const [submitting, setSubmitting] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  async function handleSubmit(event: React.FormEvent) {
+    event.preventDefault();
+    // Both are null only until Stripe.js finishes loading -- the submit
+    // button below is disabled until then, so this is just belt for the
+    // types, not a state a user can actually reach.
+    if (!stripe || !elements) return;
+    setSubmitting(true);
+    setErrorMessage(null);
+    logInfo("stripe confirm started", `invoice ${invoiceId}`);
+    // redirect: "if_required" -- plain card payments settle inline with
+    // no navigation; return_url only comes into play for redirect-based
+    // methods (3DS challenges etc.), which land back on this page with
+    // ?redirect_status=... (handled by CustomerPay's snapshot).
+    const { error, paymentIntent } = await stripe.confirmPayment({
+      elements,
+      confirmParams: {
+        return_url: `${window.location.origin}/invoices/${invoiceId}/pay`,
+      },
+      redirect: "if_required",
+    });
+    setSubmitting(false);
+    if (error) {
+      // card_error/validation_error messages are written by Stripe for
+      // customers ("Your card was declined.") -- show them verbatim;
+      // anything else (network, config) gets a generic retry line.
+      const friendly =
+        error.type === "card_error" || error.type === "validation_error"
+          ? (error.message ?? "Your card could not be charged. Try again.")
+          : "Something went wrong confirming your payment. Try again shortly.";
+      logWarn(
+        "stripe confirm failed",
+        `invoice ${invoiceId}: ${error.type}: ${error.message ?? "(no message)"}`,
+      );
+      setErrorMessage(friendly);
+      return;
+    }
+    // With redirect: "if_required" and no error, Stripe guarantees a
+    // paymentIntent; "processing" covers slow-settling methods, anything
+    // else here means the charge went through.
+    const status = paymentIntent.status === "processing" ? "processing" : "succeeded";
+    logInfo("stripe confirm settled", `invoice ${invoiceId}: ${paymentIntent.status}`);
+    onComplete(status);
+  }
+
+  return (
+    <form onSubmit={handleSubmit} aria-label="Card payment">
+      <PaymentElement />
+      <button
+        type="submit"
+        disabled={!stripe || !elements || submitting}
+        className={`${BUTTON_CLASS} mt-4`}
+      >
+        {submitting ? "Confirming..." : "Pay now"}
+      </button>
+      {errorMessage && (
+        <p role="alert" className="mt-4 text-base text-accent-red">
+          {errorMessage}
+        </p>
+      )}
+    </form>
+  );
+}
+
+// The customer-facing pay page: real Stripe card payments (Payment
+// Element, confirmed inline), the PayPal approval/capture round trip,
+// and the manual-payment escape hatches (Zelle handle, proof upload).
 export function CustomerPay() {
   const { id } = useParams<{ id: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -49,7 +202,54 @@ export function CustomerPay() {
       if (!id) throw new Error("missing invoice id");
       return payInvoice(id);
     },
+    // The client_secret itself is deliberately NOT logged -- whoever
+    // holds it can confirm (or cancel) the intent, so it stays out of
+    // the exportable client log buffer.
+    onSuccess: () => logInfo("stripe payment intent ready", `invoice ${id}`),
+    onError: (error) =>
+      logError("stripe payment intent request failed", `invoice ${id}: ${error}`),
   });
+
+  // Outcome of an INLINE confirmPayment (no redirect happened) -- set by
+  // CardPaymentForm once Stripe settles the charge. Held here (not in
+  // the form) so the success message survives the form unmounting.
+  const [cardOutcome, setCardOutcome] = useState<"succeeded" | "processing" | null>(
+    null,
+  );
+
+  // Redirect-based card flows (3DS challenges and friends) land back on
+  // this page with Stripe's own ?payment_intent=...&redirect_status=...
+  // appended to the return_url. Snapshotted once (lazy useState) and
+  // then stripped from the URL, for exactly the reasons documented on
+  // capturePaypalToken below -- and only treated as a Stripe return when
+  // payment_intent_client_secret is present too, so nothing else that
+  // happens to name a param "redirect_status" can trip this branch.
+  const [stripeRedirectStatus] = useState(() =>
+    searchParams.get("payment_intent_client_secret")
+      ? searchParams.get("redirect_status")
+      : null,
+  );
+  const hasStrippedStripeReturnRef = useRef(false);
+  useEffect(() => {
+    if (stripeRedirectStatus && !hasStrippedStripeReturnRef.current) {
+      hasStrippedStripeReturnRef.current = true;
+      const log = stripeRedirectStatus === "failed" ? logWarn : logInfo;
+      log("stripe redirect return", `invoice ${id}: ${stripeRedirectStatus}`);
+      // Strip Stripe's return params -- a reload/bookmark of the bare
+      // pay page URL must not keep re-showing a stale outcome (and the
+      // client_secret shouldn't linger in the address bar/history).
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          next.delete("payment_intent");
+          next.delete("payment_intent_client_secret");
+          next.delete("redirect_status");
+          return next;
+        },
+        { replace: true },
+      );
+    }
+  }, [stripeRedirectStatus, id, setSearchParams]);
 
   // GET /api/invoices/payment-methods -- "paypal" only comes back true
   // once real API credentials are actually configured (see backend's
@@ -174,6 +374,33 @@ export function CustomerPay() {
     );
   }
 
+  // Card payment settled (inline confirm or a redirect return) -- takes
+  // precedence over the isPayable branch below on purpose: right after a
+  // successful charge the webhook may not have marked the invoice paid
+  // yet, and this page must say "payment received", not still offer the
+  // pay buttons against a stale "sent" status. A FAILED redirect return
+  // deliberately falls through to the normal payable page (with an alert
+  // there) so the customer can immediately try again.
+  const cardResult =
+    cardOutcome ??
+    (stripeRedirectStatus === "succeeded" || stripeRedirectStatus === "processing"
+      ? stripeRedirectStatus
+      : null);
+  if (cardResult) {
+    return (
+      <main className="mx-auto w-full max-w-md px-4 py-8">
+        <h1 className="mb-6 text-2xl text-fg-primary">Pay invoice</h1>
+        {cardResult === "processing" ? (
+          <p className="text-base text-fg-primary">
+            Your payment is processing; we&apos;ll email you once it clears.
+          </p>
+        ) : (
+          <p className="text-base text-fg-primary">Payment received. Thank you!</p>
+        )}
+      </main>
+    );
+  }
+
   if (invoiceQuery.isLoading) {
     return (
       <main className="mx-auto w-full max-w-md px-4 py-8">
@@ -204,29 +431,66 @@ export function CustomerPay() {
     );
   }
 
+  // The card option needs BOTH flags: "stripe" says the backend can mint
+  // PaymentIntents, the pk_ is what the browser itself needs to mount the
+  // card form. The backend only ever sends them together (see
+  // get_payment_methods), so this is one condition, not a half-configured
+  // third state to design UI for.
+  const stripePublishableKey = paymentMethods.data?.stripe
+    ? paymentMethods.data.stripe_publishable_key
+    : null;
+
   return (
     <main className="mx-auto w-full max-w-md px-4 py-8">
       <h1 className="mb-6 text-2xl text-fg-primary">Pay invoice</h1>
-      <div className="flex flex-wrap gap-3">
-        <button
-          type="button"
-          disabled={mutation.isPending}
-          onClick={() => mutation.mutate()}
-          className={BUTTON_CLASS}
+
+      {stripeRedirectStatus === "failed" && (
+        <p role="alert" className="mb-4 text-base text-accent-red">
+          Your payment was not completed and you have not been charged. You can
+          try again below.
+        </p>
+      )}
+
+      {mutation.data && stripePublishableKey && id ? (
+        // The intent exists -- swap the pay buttons for the real card
+        // form. Payment Element renders inside Stripe-hosted iframes;
+        // card data never touches this app or its backend (see
+        // docs/design/04-invoices.md).
+        <Elements
+          stripe={getStripeClient(stripePublishableKey)}
+          options={{
+            clientSecret: mutation.data.client_secret,
+            appearance: stripeAppearance(),
+          }}
         >
-          {mutation.isPending ? "Starting payment..." : "Pay with card"}
-        </button>
-        {paymentMethods.data?.paypal && (
-          <button
-            type="button"
-            disabled={paypalMutation.isPending}
-            onClick={() => paypalMutation.mutate()}
-            className={BUTTON_CLASS}
-          >
-            {paypalMutation.isPending ? "Redirecting to PayPal..." : "Pay with PayPal"}
-          </button>
-        )}
-      </div>
+          <CardPaymentForm invoiceId={id} onComplete={setCardOutcome} />
+        </Elements>
+      ) : (
+        <div className="flex flex-wrap gap-3">
+          {stripePublishableKey && (
+            <button
+              type="button"
+              disabled={mutation.isPending}
+              onClick={() => mutation.mutate()}
+              className={BUTTON_CLASS}
+            >
+              {mutation.isPending ? "Starting payment..." : "Pay with card"}
+            </button>
+          )}
+          {paymentMethods.data?.paypal && (
+            <button
+              type="button"
+              disabled={paypalMutation.isPending}
+              onClick={() => paypalMutation.mutate()}
+              className={BUTTON_CLASS}
+            >
+              {paypalMutation.isPending
+                ? "Redirecting to PayPal..."
+                : "Pay with PayPal"}
+            </button>
+          )}
+        </div>
+      )}
 
       {mutation.isError &&
         (mutation.error instanceof RateLimitedError ? (
@@ -242,13 +506,6 @@ export function CustomerPay() {
       {paypalMutation.isError && (
         <p role="alert" className="mt-4 text-base text-accent-red">
           Could not start PayPal payment. Try again shortly.
-        </p>
-      )}
-
-      {mutation.data && (
-        <p className="mt-4 text-base text-fg-primary">
-          Payment intent ready (client_secret received) -- Stripe Elements mount
-          pending.
         </p>
       )}
 

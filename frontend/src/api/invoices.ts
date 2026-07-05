@@ -194,6 +194,11 @@ export function recordManualPayment(
 
 export interface PaymentMethodsAvailability {
   stripe: boolean;
+  // The pk_-prefixed browser key Stripe.js needs to mount the card form
+  // -- null when the backend has no STRIPE_PUBLISHABLE_KEY configured,
+  // in which case "stripe" above is also false and Pay.tsx hides the
+  // card option entirely (see backend get_payment_methods).
+  stripe_publishable_key: string | null;
   paypal: boolean;
   // null when unconfigured (see backend AppConfig.zelle_handle's own doc
   // comment) -- Pay.tsx only shows a Zelle option once this is a real

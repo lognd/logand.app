@@ -161,12 +161,28 @@ test.describe("customer journey", () => {
     await page.getByRole("link", { name: `Pay invoice ${invoiceId}` }).click();
 
     await expect(page).toHaveURL(new RegExp(`/invoices/${invoiceId}/pay$`));
+
+    // Waits registered BEFORE the click so a fast response can't slip
+    // past them.
+    const payResponse = page.waitForResponse(
+      (resp) =>
+        resp.url().endsWith(`/api/invoices/${invoiceId}/pay`) &&
+        resp.request().method() === "POST",
+    );
     await page.getByRole("button", { name: /pay with card/i }).click();
 
-    // No Stripe Elements mount yet (see CustomerPay.tsx's TODO) -- the
-    // real assertion here is that the real POST /api/invoices/:id/pay
-    // round trip completed and returned a client_secret, not that a card
-    // was actually charged (there is no card-entry UI to charge one yet).
-    await expect(page.getByText(/client_secret received/i)).toBeVisible({ timeout: 15_000 });
+    // The real assertions: POST /pay minted an intent against the
+    // fake-stripe double (a real client_secret round trip), and the page
+    // swapped the pay buttons for the card form. The Payment Element
+    // iframe INSIDE that form talks to Stripe's actual servers, so with
+    // pk_test_fake (see docker-compose.test.yml) it can never finish
+    // loading -- entering a card number and charging it is deliberately
+    // out of scope here; Pay.test.tsx covers everything past this
+    // boundary with the stripe-js layer mocked.
+    expect((await payResponse).status()).toBe(200);
+    await expect(page.getByRole("form", { name: "Card payment" })).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(page.getByRole("button", { name: "Pay now" })).toBeVisible();
   });
 });

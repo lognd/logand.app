@@ -305,13 +305,17 @@ export const handlers = [
   http.get("/api/invoices/payment-methods", () => {
     const denied = requireRole("customer");
     if (denied) return denied;
-    // PayPal always "unavailable" in mock mode -- there's no real
-    // provider to hook the fake create/capture flow up to here, so the
-    // mock UI shows only the always-real Stripe path plus the "contact
-    // us for Zelle/PayPal/in-person" messaging. A real-looking Zelle
-    // handle so the mock Pay page actually demos that display too.
+    // Stripe AND PayPal both "unavailable" in mock mode: Stripe's real
+    // Payment Element loads js.stripe.com and validates the intent's
+    // client_secret against Stripe's own servers, which the fake
+    // pi_mock_secret_* below could never survive -- advertising a card
+    // button here would mount a form that errors instead of demoing
+    // anything. The mock Pay page demos the "contact us for Zelle/
+    // PayPal/in-person" path, with a real-looking Zelle handle so that
+    // display is exercised too.
     return HttpResponse.json({
-      stripe: true,
+      stripe: false,
+      stripe_publishable_key: null,
       paypal: false,
       zelle_handle: "logan@logand.app",
     });

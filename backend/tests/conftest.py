@@ -27,6 +27,24 @@ def _isolated_local_storage_dir(
         yield
 
 
+@pytest.fixture(autouse=True)
+def _default_stripe_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    """AppConfig.payment_processor_secret defaults to None now, and
+    stripe_provider.is_configured (FINDINGS.md M1) requires BOTH it AND
+    stripe_publishable_key to be set before any Stripe-touching route
+    (GET /payment-methods, POST /pay) will do anything -- so every test
+    exercising the pay flow needs real-looking values for both in the
+    environment, or it 503s as "not configured" instead of reaching the
+    behavior under test. Autouse (not per-test monkeypatch.setenv) so no
+    test has to remember to opt in -- mirrors the previous universal
+    "sk_test_fake" AppConfig default this replaces. Tests that specifically
+    need to exercise the "unconfigured" path (e.g. test_stripe_config.py)
+    monkeypatch.delenv these back out.
+    """
+    monkeypatch.setenv("PAYMENT_PROCESSOR_SECRET", "sk_test_fake")
+    monkeypatch.setenv("STRIPE_PUBLISHABLE_KEY", "pk_test_fake")
+
+
 @pytest_asyncio.fixture(scope="session")
 async def postgres_url() -> AsyncIterator[str]:
     """Real Postgres via testcontainers, per docs/design/12-testing-strategy.md

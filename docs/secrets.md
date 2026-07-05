@@ -34,7 +34,8 @@ just that something is set.
 - [ ] `SESSION_SECRET` -- generate locally, see [its section](#session_secret) below.
 - [ ] `POSTGRES_PASSWORD` / `DATABASE_URL` -- pick a real password, see [DATABASE_URL](#database_url).
 - [ ] A Stripe account (test mode is fine to start) -- `PAYMENT_PROCESSOR_SECRET`,
-      `STRIPE_WEBHOOK_SECRET`. See [PAYMENT_PROCESSOR_SECRET](#payment_processor_secret-stripe-secret-key).
+      `STRIPE_PUBLISHABLE_KEY`, `STRIPE_WEBHOOK_SECRET`. See
+      [PAYMENT_PROCESSOR_SECRET](#payment_processor_secret-stripe-secret-key).
 - [ ] `PUBLIC_BASE_URL` -- your real domain, `https://...`.
 - [ ] `INVOICE_BUSINESS_NAME` / `INVOICE_BUSINESS_DETAILS` / `INVOICE_CONTACT_EMAIL` --
       real business info for the invoice PDF letterhead.
@@ -134,6 +135,20 @@ automatically revokes the old one after a grace period Stripe manages),
 update `backend/.env` and GitHub Actions, restart `backend`. Do this
 immediately if a key is ever exposed -- Stripe lets you roll keys
 without any other config changes.
+
+### `STRIPE_PUBLISHABLE_KEY`
+
+From the same [Stripe API keys page](https://dashboard.stripe.com/apikeys)
+as the secret key -- `pk_test_...` for test mode, `pk_live_...` for
+live; it MUST be from the same account+mode as
+`PAYMENT_PROCESSOR_SECRET` or Stripe rejects every confirm. Not
+actually a secret (publishable keys can only tokenize cards in the
+browser, never charge or read anything), but kept in `backend/.env`
+with the rest of the Stripe config because it's per-account: the
+backend serves it to the pay page via
+`GET /api/invoices/payment-methods`, and the customer-facing "Pay with
+card" option is hidden entirely while it's unset. Rotating: Stripe
+rolls it together with the secret key.
 
 ### `STRIPE_WEBHOOK_SECRET`
 

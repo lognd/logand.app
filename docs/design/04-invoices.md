@@ -25,6 +25,24 @@ wrong tradeoff for a personal/small-business site.
 `PAYMENT_PROCESSOR_SECRET` env var (see [02](02-auth-and-security.md))
 is the Stripe secret key; webhook signature verification uses a second
 env var `STRIPE_WEBHOOK_SECRET`. Both placeholders only in examples.
+A third env var, `STRIPE_PUBLISHABLE_KEY` (the `pk_...` key from the
+same account+mode), is what the BROWSER needs to mount Stripe's card
+form: `GET /api/invoices/payment-methods` hands it to the pay page,
+which passes it to `loadStripe()`. Publishable by design (it can only
+tokenize, never charge or read), but per-account, so it rides the env
+path instead of being baked into the frontend bundle. Unset means the
+card option is hidden entirely (`stripe: false`), same
+gracefully-unavailable convention as PayPal below.
+
+The customer card flow (`frontend/.../customer/Pay.tsx`): "Pay with
+card" POSTs `/api/invoices/{id}/pay`, then mounts a Stripe Payment
+Element (`@stripe/react-stripe-js`) with the returned `client_secret`
+and confirms inline (`redirect: "if_required"`). Plain cards settle
+with no navigation; redirect-based methods (3DS challenges) return to
+the same pay page with Stripe's `?redirect_status=...` params, which
+the page shows once and strips from the URL. The invoice itself is
+only ever marked paid by the `payment_intent.succeeded` webhook, never
+by the frontend's own success state.
 
 Beyond Stripe, a customer can also pay via:
 
@@ -164,10 +182,12 @@ invoice total is an obvious tamper vector.
   (20/min). Idempotent: if a still-live PaymentIntent already exists
   for this invoice, its `client_secret` is reused instead of creating a
   second one.
-- `GET /api/invoices/payment-methods` -- `{stripe: true, paypal: bool,
-  zelle_handle: string | null}`, reflecting whether PayPal/Zelle are
-  actually configured right now (`zelle_handle` is `None` until the
-  admin sets `ZELLE_HANDLE`, see `docs/secrets.md`).
+- `GET /api/invoices/payment-methods` -- `{stripe: bool,
+  stripe_publishable_key: string | null, paypal: bool, zelle_handle:
+  string | null}`, reflecting what's actually configured right now:
+  `stripe` is gated on `STRIPE_PUBLISHABLE_KEY` being set (the browser
+  can't mount a card form without the `pk_`), `zelle_handle` is `None`
+  until the admin sets `ZELLE_HANDLE` (see `docs/secrets.md`).
 - `POST /api/invoices/{id}/payment-proof` -- multipart upload of a
   screenshot/receipt as evidence of an out-of-band payment (Zelle, cash,
   etc.); ownership-checked, rejected for `draft`/`void` invoices.

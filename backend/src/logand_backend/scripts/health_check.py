@@ -15,6 +15,9 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from logand_backend.app.config import AppConfig
 from logand_backend.domain.notifications import mailer
 from logand_backend.domain.payments.providers import paypal
+from logand_backend.domain.payments.providers.stripe_provider import (
+    is_configured as stripe_is_configured,
+)
 from logand_backend.domain.storage.base import StorageObjectNotFound
 from logand_backend.domain.storage.factory import get_storage_backend
 from logand_backend.scripts._health_logging import get_health_logger
@@ -25,10 +28,12 @@ log = get_health_logger()
 # meant for local dev/tests. A deployment still running with one of
 # these is a real, loud problem (weak/shared secrets, talking to no
 # real payment processor), not a "gracefully unconfigured" state like
-# PayPal/SMTP being unset.
+# PayPal/SMTP being unset. payment_processor_secret is NOT here anymore
+# (FINDINGS.md M1) -- it now defaults to None, same "not configured"
+# convention as paypal_client_id, so its unset state is a normal,
+# expected state handled by check_stripe below, not a dev-default leak.
 _DEV_DEFAULTS = {
     "session_secret": "dev-only-insecure-secret",
-    "payment_processor_secret": "sk_test_fake",
     "stripe_webhook_secret": "whsec_fake",
 }
 
@@ -98,8 +103,14 @@ def check_dev_defaults(cfg: AppConfig) -> bool:
 
 
 async def check_stripe(cfg: AppConfig) -> bool:
-    if cfg.payment_processor_secret == _DEV_DEFAULTS["payment_processor_secret"]:
-        return True  # already reported loudly by check_dev_defaults
+    if not stripe_is_configured(cfg):
+        log.warn(
+            "stripe: not configured (PAYMENT_PROCESSOR_SECRET and/or "
+            "STRIPE_PUBLISHABLE_KEY unset) -- customers only see manual "
+            "payment methods (Zelle/in-person/PayPal). Expected if you "
+            "haven't set up card payments yet."
+        )
+        return True
     import stripe
 
     stripe.api_key = cfg.payment_processor_secret
@@ -112,6 +123,8 @@ async def check_stripe(cfg: AppConfig) -> bool:
         )
     try:
         await asyncio.to_thread(stripe.Balance.retrieve)
+        # stripe_is_configured (checked above) guarantees this is set.
+        assert cfg.payment_processor_secret is not None
         mode = "live" if cfg.payment_processor_secret.startswith("sk_live_") else "test"
         log.ok(f"stripe: credentials valid ({mode} mode)")
         return True

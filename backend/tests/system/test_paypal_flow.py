@@ -58,7 +58,10 @@ async def test_payment_methods_lists_paypal_unavailable_when_not_configured(
     resp = await db_client.get("/api/invoices/payment-methods")
     assert resp.status_code == 200
     body = resp.json()
-    assert body["stripe"] is True
+    # Stripe's own configured/unconfigured states are covered properly in
+    # test_stripe_config.py (both halves of the key pair, gated together --
+    # FINDINGS.md M1); this test only owns the paypal flag, so it doesn't
+    # assert on "stripe" at all here.
     assert body["paypal"] is False
 
 
