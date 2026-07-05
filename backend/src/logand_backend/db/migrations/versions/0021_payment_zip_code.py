@@ -1,7 +1,7 @@
 """add zip_code to payments
 
 Revision ID: 0021_payment_zip_code
-Revises: 0020_password_reset_tokens
+Revises: 0020_password_reset_tok
 Create Date: 2026-07-05
 
 Retain the payer's billing postal code on each payment for sales-tax
@@ -19,7 +19,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "0021_payment_zip_code"
-down_revision: Union[str, None] = "0020_password_reset_tokens"
+down_revision: Union[str, None] = "0020_password_reset_tok"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
