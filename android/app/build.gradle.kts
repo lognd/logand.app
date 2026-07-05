@@ -95,6 +95,21 @@ dependencies {
     testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
     testImplementation("org.robolectric:robolectric:4.13")
     testImplementation("androidx.test:core-ktx:1.6.1")
+    // Compose UI testing under Robolectric (NOT only androidTest scope --
+    // no emulator is available on this host, see README's aarch64
+    // section, so screen-level tests run as Robolectric unit tests).
+    // ui-test-manifest contributes the empty ComponentActivity
+    // createComposeRule() launches; isIncludeAndroidResources above is
+    // what lets Robolectric see it. Debug-variant ONLY (and the matching
+    // tests live in src/testDebug/): ui-test-manifest's activity never
+    // reaches the RELEASE test manifest, so under testReleaseUnitTest
+    // createComposeRule() dies with "Unable to resolve activity" --
+    // scoping both the deps and the tests to debug keeps `gradlew test`
+    // (which runs BOTH variants) green instead of double-running
+    // UI-shaped tests that can only ever work in one of them.
+    testDebugImplementation(platform("androidx.compose:compose-bom:2024.06.00"))
+    testDebugImplementation("androidx.compose.ui:ui-test-junit4")
+    testDebugImplementation("androidx.compose.ui:ui-test-manifest")
     // Robolectric's Android sandbox loads conscrypt (for TLS) at startup
     // regardless of whether a given test touches networking --
     // conscrypt-openjdk-uber only shipped a linux-aarch64 native build

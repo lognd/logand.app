@@ -131,17 +131,26 @@ tests caught before this was ever run on a device).
 Robolectric for the two places that genuinely need a simulated Android
 `Context` (DataStore, `FileProvider`).
 
-**Compose UI screens (`ui/*/​*Screen.kt`) are not covered by these unit
-tests** -- verifying an actual rendered UI needs either a connected
-device/emulator (`./gradlew :app:connectedAndroidTest`, using the
-`androidTest` dependencies already wired into `app/build.gradle.kts`)
-or a real device in Android Studio. No emulator was available in the
-environment this was built in (see "Building on aarch64 Linux" below),
-so screen-level UI tests were not added -- the business logic under
-every screen (ViewModel state transitions, the actual HTTP calls) is
-fully covered instead, which is where the real risk of a silent bug
-lives (the UI layer is thin, declarative, and mostly just renders that
-state).
+**Compose UI screens (`ui/*/*Screen.kt`) are mostly exercised through
+their ViewModels**, not rendered pixel-for-pixel: full instrumented UI
+tests need a connected device/emulator (`./gradlew
+:app:connectedAndroidTest`, using the `androidTest` dependencies
+already wired into `app/build.gradle.kts`), and no emulator was
+available in the environment this was built in (see "Building on
+aarch64 Linux" below). The business logic under every screen (ViewModel
+state transitions, the actual HTTP calls) is fully covered instead,
+which is where the real risk of a silent bug lives.
+
+The exception is `src/testDebug/.../ui/theme/LogandThemeTest.kt`:
+Compose UI tests that DO run headlessly, as Robolectric unit tests
+(`ui-test-junit4` + `ui-test-manifest`, debug-test scope only -- the
+test activity `createComposeRule()` needs never reaches the release
+test manifest, see `build.gradle.kts`'s comment). It pins the theme's
+content-color contract -- a regression test for the black-on-black
+login screen, where `MaterialTheme` without a root `Surface` left
+`LocalContentColor` at its `Color.Black` default on the dark window
+background (see `ui/theme/Theme.kt`'s comment) -- and smoke-renders the
+real `LoginScreen` under the real theme.
 
 ### Coverage
 
@@ -195,7 +204,9 @@ changes were needed to support this client; see design doc 14.
   rather than queueing for later sync. Worth adding if this app is used
   somewhere connectivity is routinely spotty (see design doc 14 for
   where this would slot in).
-- **No instrumented/UI tests** -- see the Testing section above.
+- **No instrumented (on-device) UI tests** -- see the Testing section
+  above; screen-level coverage exists only as Robolectric Compose tests
+  (`ui/theme/LogandThemeTest.kt`).
 
 ## Building on aarch64 Linux
 

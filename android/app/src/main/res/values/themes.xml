@@ -1,13 +1,24 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <!-- Theme.Material3.DayNight.NoActionBar as the parent — Compose owns
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- Theme.Material3.DayNight.NoActionBar as the parent; Compose owns
          all actual UI theming (see ui/theme/Theme.kt), this XML theme only
          needs to cover the tiny pre-Compose-content window (splash
          background) so it isn't a jarring white flash before Compose
-         takes over. -->
+         takes over. (XML comments cannot contain double hyphens, hence
+         the semicolons where prose would want a dash.) -->
     <style name="Theme.Logand" parent="Theme.Material3.DayNight.NoActionBar">
         <item name="android:windowBackground">@color/bg_primary</item>
         <item name="android:statusBarColor">@color/bg_primary</item>
         <item name="android:navigationBarColor">@color/bg_primary</item>
+        <!-- Both bars are FORCED dark (bg_primary above) regardless of the
+             device's day/night setting, but the DayNight parent's LIGHT
+             variant flips the system icons dark to match a light theme:
+             black clock/battery/gesture-pill sitting on a near-black bar.
+             Pin the icons light to match the always-dark bar color.
+             windowLightNavigationBar is API 27+; minSdk is 26, where the
+             attribute is simply ignored (nav bar icons stay light there
+             by default anyway). -->
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar" tools:targetApi="o_mr1">false</item>
     </style>
 </resources>
