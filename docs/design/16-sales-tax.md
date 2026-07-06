@@ -158,6 +158,19 @@ per-line figures shown on the PDF/email always sum to the stored rollups
      upstream of the deterministic lookup so a model hiccup can never perturb
      a rate already in the table. Refreshed on a schedule (the "keep up to
      date" job).
+- **Phase 5 - do-as-we-go per-item classification (built):** rather than a
+  batch job, items are classified lazily as they're invoiced. The first time
+  an item appears it is classified (Claude, or by hand) and cached in
+  `item_tax_classifications` by a normalized key; every later invoice reuses
+  it, so only genuinely-new items cost a model call (still one batched call
+  per invoice for all new lines). A Claude result is `pending` until an admin
+  confirms or overrides it (GET/POST /api/admin/tax/classifications); a human
+  decision is authoritative and never re-asked. Claude rate limits and errors
+  degrade gracefully -- the new item is deferred (no charges, retried next
+  time), never failing invoice creation. Claude also proposes an HTS code for
+  imported items, which the USITC duty adapter (a fetch_tax_rules source, to
+  be added) prices.
+
   2. **Claude matcher (categorizer).** Matches each item AND the assembly
      against the BoM, and emits the concrete taxes/duties for each line by
      querying component (1). Its output is CACHED WITH A TTL keyed on the
