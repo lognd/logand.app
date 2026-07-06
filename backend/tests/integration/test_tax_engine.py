@@ -118,8 +118,15 @@ async def test_categorize_and_price_end_to_end(
     assert [(c.tax_type, c.jurisdiction, c.rate) for c in by_index[1].charges] == [
         ("import_duty", "US-customs", Decimal("0.02"))
     ]
-    # The decision (with the model's rationale) is persisted for audit.
-    assert by_index[0].rationale == "a physical product"
+    # A fresh Claude classification is flagged pending (awaiting confirmation),
+    # and the decision (with the model's rationale) is persisted per item.
+    assert by_index[0].pending is True
+    from logand_backend.domain.invoices.tax import classification_store
+
+    row = await classification_store.get(
+        db_session, classification_store.normalize_key("Widget")
+    )
+    assert row is not None and row.rationale == "a physical product"
 
 
 async def test_categorize_and_price_caches_the_call(
@@ -212,3 +219,112 @@ async def test_build_tax_report_aggregates_by_jurisdiction_and_category(
         Decimal("7.00"),
     )
     assert report.by_category[0].category == "tangible-goods"
+
+
+async def test_confirmed_item_is_not_reclassified(
+    db_session, make_user, monkeypatch
+) -> None:
+    from logand_backend.domain.invoices.tax import classification_store
+
+    await _seed(db_session, "US-TN", "sales", "*", "0.07")
+    cfg = AppConfig(anthropic_api_key="sk-test-fake")
+    admin = await make_user(role="admin")
+
+    calls = {"n": 0}
+
+    async def fake_call(_cfg, _lines, _known, _kb):
+        calls["n"] += 1
+        return {
+            "decisions": [
+                {"line_index": 0, "category": "*", "taxable": True, "rationale": ""}
+            ]
+        }
+
+    monkeypatch.setattr(categorizer, "_call_claude", fake_call)
+    lines = [categorizer.LineInput(index=0, description="Bespoke thing")]
+
+    # First pass classifies (pending) and prices.
+    out = await categorizer.categorize_and_price(
+        db_session,
+        cfg,
+        lines=lines,
+        origin_jurisdiction="US-TN",
+        destination_jurisdiction=None,
+    )
+    assert out[0].pending is True
+    key = classification_store.normalize_key("Bespoke thing")
+    await classification_store.confirm(db_session, key, admin.id)
+
+    # Second pass: confirmed -> no Claude call, no longer pending.
+    out2 = await categorizer.categorize_and_price(
+        db_session,
+        cfg,
+        lines=lines,
+        origin_jurisdiction="US-TN",
+        destination_jurisdiction=None,
+    )
+    assert calls["n"] == 1
+    assert out2[0].pending is False
+
+
+async def test_override_outranks_claude(db_session, make_user, monkeypatch) -> None:
+    from logand_backend.domain.invoices.tax import classification_store
+
+    await _seed(db_session, "US-TN", "sales", "*", "0.07")
+    cfg = AppConfig(anthropic_api_key="sk-test-fake")
+    admin = await make_user(role="admin")
+
+    # Admin pre-classifies the item as exempt.
+    key = classification_store.normalize_key("Consulting")
+    await classification_store.override(
+        db_session,
+        key,
+        category="service",
+        taxable=False,
+        hts_code=None,
+        admin_id=admin.id,
+    )
+
+    async def boom(*_a, **_k):  # Claude must not be called
+        raise AssertionError("Claude was called for an overridden item")
+
+    monkeypatch.setattr(categorizer, "_call_claude", boom)
+    out = await categorizer.categorize_and_price(
+        db_session,
+        cfg,
+        lines=[categorizer.LineInput(index=0, description="Consulting")],
+        origin_jurisdiction="US-TN",
+        destination_jurisdiction=None,
+    )
+    # Exempt -> no charges even though a TN sales rule exists.
+    assert out[0].taxable is False
+    assert out[0].charges == []
+
+
+async def test_rate_limit_defers_new_item_without_failing(
+    db_session, monkeypatch
+) -> None:
+    from logand_backend.domain.invoices.tax import classification_store
+
+    await _seed(db_session, "US-TN", "sales", "*", "0.07")
+    cfg = AppConfig(anthropic_api_key="sk-test-fake")
+
+    async def rate_limited(*_a, **_k):
+        raise categorizer.RateLimited()
+
+    monkeypatch.setattr(categorizer, "_call_claude", rate_limited)
+    out = await categorizer.categorize_and_price(
+        db_session,
+        cfg,
+        lines=[categorizer.LineInput(index=0, description="New gizmo")],
+        origin_jurisdiction="US-TN",
+        destination_jurisdiction=None,
+    )
+    # Deferred: no charges, no crash, and nothing persisted (retried later).
+    assert out == []
+    assert (
+        await classification_store.get(
+            db_session, classification_store.normalize_key("New gizmo")
+        )
+        is None
+    )
