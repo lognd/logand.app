@@ -304,6 +304,21 @@ async def _load_rate_index(db: AsyncSession, jurisdictions: list[str], at: datet
     return _load_rate_index_from_rules(list(rules))
 
 
+def _all_jurisdictions(
+    origin_jurisdiction: str,
+    destination_jurisdiction: str | None,
+    extra_jurisdictions: list[str] | None,
+) -> list[str]:
+    """Union of origin, destination, and any extras (e.g. "US-customs" for
+    import duty), in order, de-duplicated -- shared by the classification
+    (kb_context) and pricing passes so both ever see the exact same set."""
+    jurisdictions = [origin_jurisdiction]
+    for jur in [destination_jurisdiction, *(extra_jurisdictions or [])]:
+        if jur and jur not in jurisdictions:
+            jurisdictions.append(jur)
+    return jurisdictions
+
+
 async def categorize_and_price(
     db: AsyncSession,
     cfg: AppConfig,
@@ -311,11 +326,18 @@ async def categorize_and_price(
     lines: list[LineInput],
     origin_jurisdiction: str,
     destination_jurisdiction: str | None,
+    extra_jurisdictions: list[str] | None = None,
 ) -> list[LinePricing]:
     """Classify each line (per-item cache first, Claude only for new items),
     then price from the knowledge base. Returns per-line pricing the caller
     writes as InvoiceLineItemTax rows. Unconfigured / rate-limited / unknown
-    lines return no charges (retried next time)."""
+    lines return no charges (retried next time).
+
+    `extra_jurisdictions` lets a caller price additional jurisdictions
+    alongside origin/destination in the SAME batched Claude call and the
+    same batched knowledge-base query -- e.g. "US-customs" for import duty,
+    which applies regardless of the customer's own destination state.
+    """
     if not lines:
         return []
 
@@ -330,9 +352,9 @@ async def categorize_and_price(
     if unknown and is_configured(cfg):
         known_cats = await _known_categories(db)
         line_indexes = {li.index for li in unknown}
-        jurisdictions = [origin_jurisdiction]
-        if destination_jurisdiction and destination_jurisdiction != origin_jurisdiction:
-            jurisdictions.append(destination_jurisdiction)
+        jurisdictions = _all_jurisdictions(
+            origin_jurisdiction, destination_jurisdiction, extra_jurisdictions
+        )
         kb_context = await _kb_context(db, jurisdictions)
         try:
             raw = await _call_claude(cfg, unknown, known_cats, kb_context)
@@ -373,9 +395,9 @@ async def categorize_and_price(
 
     # Price every line that now has a classification, from one batched
     # knowledge-base query.
-    jurisdictions = [origin_jurisdiction]
-    if destination_jurisdiction and destination_jurisdiction != origin_jurisdiction:
-        jurisdictions.append(destination_jurisdiction)
+    jurisdictions = _all_jurisdictions(
+        origin_jurisdiction, destination_jurisdiction, extra_jurisdictions
+    )
     resolve = await _load_rate_index(db, jurisdictions, now)
 
     pricing: list[LinePricing] = []

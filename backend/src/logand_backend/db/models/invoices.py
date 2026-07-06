@@ -216,6 +216,13 @@ class InvoiceLineItemTax(Base):
     # The rate actually charged, snapshotted. 8,5 (not 6,4) so a small/
     # precise duty rate fits.
     rate: Mapped[Decimal] = mapped_column(Numeric(8, 5), nullable=False, default=0)
+    # True for a charge written by domain/invoices/tax/apply.py's
+    # apply_auto_tax, False (default) for one an admin entered by hand
+    # (either through create_invoice's taxes input or added directly).
+    # apply_auto_tax only ever deletes+replaces its OWN auto=True rows on a
+    # line -- never a hand-entered one -- so a human-entered charge can
+    # never be silently clobbered by a later re-run of the categorizer.
+    auto: Mapped[bool] = mapped_column(default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

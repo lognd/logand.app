@@ -35,6 +35,8 @@ from logand_backend.domain.invoices.service import (
     void_invoice,
 )
 from logand_backend.domain.invoices.stats import InvoiceStats, get_invoice_stats
+from logand_backend.domain.invoices.tax import categorizer
+from logand_backend.domain.invoices.tax.apply import apply_auto_tax
 from logand_backend.domain.invoices.tax.report import build_tax_report
 from logand_backend.domain.notifications.notify import (
     notify_invoice_sent,
@@ -132,7 +134,20 @@ async def create(
     )
     if result.is_err:
         raise to_http_exception(result.danger_err)
-    return {"id": str(result.danger_ok)}
+    invoice_id = result.danger_ok
+
+    # Best-effort auto-classification (docs/design/16-sales-tax.md Phase 6)
+    # -- never let a Claude/categorizer failure fail invoice creation itself.
+    if categorizer.is_configured(cfg):
+        try:
+            await apply_auto_tax(db, cfg, invoice_id)
+        except Exception as exc:  # noqa: BLE001 -- best-effort, see apply.py
+            _log.warning(
+                "create invoice: apply_auto_tax failed, invoice created anyway",
+                extra={"invoice_id": str(invoice_id), "error": str(exc)},
+            )
+
+    return {"id": str(invoice_id)}
 
 
 @router.post("/{invoice_id}/send")
