@@ -27,9 +27,7 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     op.add_column(
         "invoice_line_item_taxes",
-        sa.Column(
-            "auto", sa.Boolean(), nullable=False, server_default=sa.false()
-        ),
+        sa.Column("auto", sa.Boolean(), nullable=False, server_default=sa.false()),
     )
 
 
