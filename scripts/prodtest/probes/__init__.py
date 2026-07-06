@@ -17,6 +17,7 @@ from scripts.prodtest.probes.notification_flow import (
     RefundSettlementNotificationProbe,
 )
 from scripts.prodtest.probes.payment_provider_health import (
+    PaypalLiveCredentialsProbe,
     SmtpReachabilityProbe,
     StripeLiveCredentialsProbe,
 )
@@ -35,6 +36,7 @@ ALL_PROBES = [
     DocumentUploadDeleteProbe(),
     ReceiptUploadDeleteProbe(),
     StripeLiveCredentialsProbe(),
+    PaypalLiveCredentialsProbe(),
     SmtpReachabilityProbe(),
     InvoiceNotificationEmailProbe(),
     RefundSettlementNotificationProbe(),

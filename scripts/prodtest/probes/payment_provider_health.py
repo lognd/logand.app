@@ -36,6 +36,37 @@ class StripeLiveCredentialsProbe(Probe):
         )
 
 
+class PaypalLiveCredentialsProbe(Probe):
+    name = "payment_providers.paypal_live_credentials"
+    description = (
+        "SSH + `python -m logand_backend.scripts.health_check` on the real "
+        "backend container, confirms the report's Payment providers section "
+        "shows PayPal credentials valid in LIVE mode (not sandbox, not "
+        "rejected). Zero mutation -- health_check.py's own check_paypal() is "
+        "a single read-only OAuth2 client-credentials token exchange "
+        "(paypal._get_access_token); no order is created, captured, or "
+        "charged. Mirrors StripeLiveCredentialsProbe: requiring '(live "
+        "mode)' specifically (not just 'no FAIL for paypal') is deliberate "
+        "-- check_paypal() returns True and logs no FAIL when PayPal is "
+        "simply unconfigured, which would otherwise let this probe pass on "
+        "a deployment that never had PayPal set up, and it also catches a "
+        "deployment still left pointing at PAYPAL_MODE=sandbox."
+    )
+
+    def check_capability(self, env: ProdEnv) -> bool | str:
+        return True
+
+    def execute(self, env: ProdEnv, cleanup: Cleanup) -> None:
+        output = run_health_check(env)
+        # Exact string health_check.py's check_paypal() logs on success --
+        # see that function's `log.ok(f"paypal: credentials valid
+        # ({cfg.paypal_mode} mode)")` line.
+        assert "paypal: credentials valid (live mode)" in output, (
+            "expected health_check.py to report "
+            "'paypal: credentials valid (live mode)' -- got:\n" + output
+        )
+
+
 class SmtpReachabilityProbe(Probe):
     name = "notifications.smtp_reachable"
     description = (
