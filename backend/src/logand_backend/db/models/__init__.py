@@ -29,7 +29,11 @@ from logand_backend.db.models.mileage import MileageEntry
 from logand_backend.db.models.password_reset_tokens import PasswordResetToken
 from logand_backend.db.models.receipts import Receipt
 from logand_backend.db.models.sessions import Session
-from logand_backend.db.models.tax import TaxCategorizationCache, TaxRule
+from logand_backend.db.models.tax import (
+    ItemTaxClassification,
+    TaxCategorizationCache,
+    TaxRule,
+)
 from logand_backend.db.models.users import User
 
 __all__ = [
@@ -51,6 +55,7 @@ __all__ = [
     "Receipt",
     "TaxRule",
     "TaxCategorizationCache",
+    "ItemTaxClassification",
     "Session",
     "User",
 ]
