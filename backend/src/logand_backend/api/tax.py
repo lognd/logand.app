@@ -2,17 +2,23 @@ from __future__ import annotations
 
 import argparse
 from datetime import date
+from decimal import Decimal, InvalidOperation
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from logand_backend.app.config import AppConfig
 from logand_backend.auth.sessions import SessionInfo, require_admin
 from logand_backend.db.base import get_db
-from logand_backend.db.models.tax import ItemTaxClassification
+from logand_backend.db.models.tax import ItemTaxClassification, TaxRule
 from logand_backend.domain.invoices.tax import classification_store
 from logand_backend.domain.invoices.tax.stripe_reconcile import reconcile_stripe_tax
+from logand_backend.logging import get_logger
+from logand_backend.scripts.fetch_tax_rules import RuleInput, add_tax_rule
+
+_log = get_logger(__name__)
 
 # Admin review surface for the do-as-we-go item tax classifications
 # (docs/design/16-sales-tax.md Phase 5). Claude-produced classifications land
@@ -108,3 +114,99 @@ async def stripe_reconcile(
         "by_jurisdiction": {k: str(v) for k, v in summary.by_jurisdiction.items()},
         "transaction_count": summary.transaction_count,
     }
+
+
+def _serialize_rule(row: TaxRule) -> dict:
+    return {
+        "id": str(row.id),
+        "jurisdiction": row.jurisdiction,
+        "tax_type": row.tax_type,
+        "category": row.category,
+        "rate": str(row.rate),
+        "source": row.source,
+        "citation_url": row.citation_url,
+        "effective_from": row.effective_from.isoformat(),
+    }
+
+
+@router.get("/rules")
+async def list_tax_rules(
+    _admin: SessionInfo = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+) -> list[dict]:
+    """Lists the current (effective_to IS NULL) tax_rules knowledge-base
+    rows, for the admin rates page (docs/design/16-sales-tax.md)."""
+    rows = (
+        (
+            await db.execute(
+                select(TaxRule)
+                .where(TaxRule.effective_to.is_(None))
+                .order_by(TaxRule.jurisdiction, TaxRule.tax_type, TaxRule.category)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return [_serialize_rule(r) for r in rows]
+
+
+class TaxRuleCreateInput(BaseModel):
+    """Admin-entered rate. Rate accepted as a decimal string or number
+    (e.g. "0.07"); citation_url must be a government source -- see
+    domain/invoices/tax/citation.py. Claude never sets rates; an admin
+    always enters and cites them."""
+
+    jurisdiction: str = Field(min_length=1)
+    tax_type: str = Field(min_length=1)
+    category: str = "*"
+    rate: str
+    source: str = Field(min_length=1)
+    citation_url: str = Field(min_length=1)
+
+
+@router.post("/rules")
+async def create_tax_rule(
+    body: TaxRuleCreateInput,
+    admin: SessionInfo = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Adds an admin-entered rate to the tax_rules knowledge base. Requires a
+    government-source citation URL; rejects anything else with a 400."""
+    try:
+        rate = Decimal(body.rate)
+    except InvalidOperation as exc:
+        raise HTTPException(
+            status_code=400, detail="rate must be a decimal number"
+        ) from exc
+    try:
+        rule = RuleInput(
+            jurisdiction=body.jurisdiction,
+            tax_type=body.tax_type,
+            category=body.category,
+            rate=rate,
+            source=body.source,
+            citation_url=body.citation_url,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    cfg = AppConfig.from_external(argparse.Namespace())
+    result = await add_tax_rule(db, cfg, rule)
+    if result.is_err:
+        _log.info(
+            "create_tax_rule: rejected",
+            extra={"admin_id": str(admin.user_id), "error": result.danger_err},
+        )
+        raise HTTPException(status_code=400, detail=result.danger_err)
+    await db.commit()
+    row = result.danger_ok
+    _log.info(
+        "create_tax_rule: added",
+        extra={
+            "admin_id": str(admin.user_id),
+            "jurisdiction": row.jurisdiction,
+            "tax_type": row.tax_type,
+            "category": row.category,
+        },
+    )
+    return _serialize_rule(row)
