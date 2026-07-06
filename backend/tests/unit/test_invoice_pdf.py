@@ -129,6 +129,45 @@ def test_build_invoice_pdf_data_zelle_handle_defaults_to_none() -> None:
     assert data.zelle_handle is None
 
 
+def test_build_invoice_pdf_data_carries_paypal_receive_email_when_configured() -> None:
+    data = build_invoice_pdf_data(
+        invoice_id="abc-123",
+        status="sent",
+        currency="usd",
+        amount_total=Decimal("50.00"),
+        due_date=None,
+        created_at="2026-07-01",
+        memo=None,
+        customer_email="customer@example.com",
+        line_items=[],
+        business_name="logand.app",
+        business_details="",
+        contact_email="billing@logand.app",
+        paypal_receive_email="pay@example.com",
+        pay_url=None,
+    )
+    assert data.paypal_receive_email == "pay@example.com"
+
+
+def test_build_invoice_pdf_data_paypal_receive_email_defaults_to_none() -> None:
+    data = build_invoice_pdf_data(
+        invoice_id="abc-123",
+        status="sent",
+        currency="usd",
+        amount_total=Decimal("50.00"),
+        due_date=None,
+        created_at="2026-07-01",
+        memo=None,
+        customer_email="customer@example.com",
+        line_items=[],
+        business_name="logand.app",
+        business_details="",
+        contact_email="billing@logand.app",
+        pay_url=None,
+    )
+    assert data.paypal_receive_email is None
+
+
 def test_build_invoice_pdf_data_zero_decimal_currency_has_no_fractional_digits() -> (
     None
 ):
@@ -279,13 +318,18 @@ def test_template_mentions_real_zelle_handle_when_configured() -> None:
         business_details="",
         contact_email="billing@logand.app",
         zelle_handle="logan@example.com",
+        paypal_receive_email="pay@example.com",
         pay_url=None,
     )
     env = _template_env()
     template = env.get_template("invoice.tex.jinja")
     tex_source = template.render(**data.__dict__)
 
-    assert "Zelle (logan@example.com)" in tex_source
+    # Each configured handle is rendered as a bold method label with the
+    # handle set off in monospace (\texttt), distinct from prose -- see the
+    # template's own KEEP IN SYNC note tying this to Pay.tsx's font-mono.
+    assert r"\textbf{Zelle:}\quad\texttt{logan@example.com}" in tex_source
+    assert r"\textbf{PayPal:}\quad\texttt{pay@example.com}" in tex_source
     assert tex_source.count("{") == tex_source.count("}")
 
 
@@ -309,7 +353,12 @@ def test_template_falls_back_to_bare_zelle_when_not_configured() -> None:
     template = env.get_template("invoice.tex.jinja")
     tex_source = template.render(**data.__dict__)
 
-    assert "Zelle, PayPal" in tex_source
+    # No handles configured -> bare bold labels (no colon, since the colon
+    # only prefixes a handle), no monospace handle set off after them.
+    assert r"\textbf{Zelle}" in tex_source
+    assert r"\textbf{PayPal}" in tex_source
+    assert r"\textbf{In-Person:}" in tex_source
+    assert r"\texttt{" not in tex_source
     assert tex_source.count("{") == tex_source.count("}")
 
 
@@ -358,4 +407,56 @@ def test_template_omits_pay_online_line_when_pay_url_is_none() -> None:
     template = env.get_template("invoice.tex.jinja")
     tex_source = template.render(**data.__dict__)
 
-    assert "Pay online" not in tex_source
+    assert "pay this invoice online" not in tex_source
+
+
+def _pdf_data_with_tax(subtotal, tax_amount, amount_total):
+    return build_invoice_pdf_data(
+        invoice_id="abc-123",
+        status="sent",
+        currency="usd",
+        amount_total=Decimal(amount_total),
+        subtotal=Decimal(subtotal),
+        tax_amount=Decimal(tax_amount),
+        due_date=None,
+        created_at="2026-07-01",
+        memo=None,
+        customer_email="customer@example.com",
+        line_items=[],
+        business_name="logand.app",
+        business_details="",
+        contact_email="billing@logand.app",
+        pay_url=None,
+    )
+
+
+def test_build_invoice_pdf_data_sets_has_tax_when_tax_present() -> None:
+    data = _pdf_data_with_tax("480.00", "33.60", "513.60")
+    assert data.has_tax is True
+    assert data.subtotal == "480.00"
+    assert data.tax_amount == "33.60"
+
+
+def test_build_invoice_pdf_data_no_tax_flag_when_zero() -> None:
+    # A zero-tax invoice keeps the single Total row (has_tax False), the same
+    # as before the tax feature existed.
+    data = _pdf_data_with_tax("480.00", "0.00", "480.00")
+    assert data.has_tax is False
+
+
+def test_template_shows_subtotal_and_tax_rows_when_taxed() -> None:
+    data = _pdf_data_with_tax("480.00", "33.60", "513.60")
+    env = _template_env()
+    tex = env.get_template("invoice.tex.jinja").render(**data.__dict__)
+    assert "Subtotal:" in tex
+    assert "Tax:" in tex
+    assert "480.00" in tex and "33.60" in tex and "513.60" in tex
+    assert tex.count("{") == tex.count("}")
+
+
+def test_template_omits_subtotal_tax_rows_when_no_tax() -> None:
+    data = _pdf_data_with_tax("480.00", "0.00", "480.00")
+    env = _template_env()
+    tex = env.get_template("invoice.tex.jinja").render(**data.__dict__)
+    assert "Subtotal:" not in tex
+    assert "Tax:" not in tex

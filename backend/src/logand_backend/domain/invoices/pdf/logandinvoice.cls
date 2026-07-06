@@ -73,15 +73,14 @@
 \pagestyle{fancy}
 \fancyhf{}
 \renewcommand{\headrulewidth}{0pt}
+% Footer: "thank you" centered, current/total page indicator flush right
+% ("1/1", "1/2", etc. via lastpage's LastPage label), divided from the page
+% body by a thin rule. \pageref*{} (starred) is deliberate: the plain
+% \pageref{} makes a hyperref link, which colorlinks/linkcolor then tints
+% invoiceaccent (navy) -- so the total rendered a different color than the
+% invoicegray current page. The starred form emits the number without a
+% link, so both halves stay the same invoicegray.
 \renewcommand{\footrulewidth}{0.4pt}
-% Footer: "thank you" centered, page indicator flush right. The indicator
-% is current/total ("1/1") via lastpage's LastPage label, so a multi-page
-% invoice reads "1/2", "2/2", etc. rather than a bare page number.
-% \pageref*{} (starred) is deliberate: the plain \pageref{} makes a
-% hyperref link, which colorlinks/linkcolor then tints invoiceaccent (navy)
-% -- so the total rendered a different color than the invoicegray current
-% page. The starred form emits the number without a link, so both halves
-% stay the same invoicegray.
 \fancyfoot[C]{\small\color{invoicegray}Thank you for your business.}
 \fancyfoot[R]{\small\color{invoicegray}\thepage/\pageref*{LastPage}}
 
@@ -146,9 +145,11 @@
   \par\vspace{14pt}
 }
 
+% Inline label + value ("Bill To: <email>") on a single line, matching the
+% Invoice #/Date/Due/Status metadata style up in the header rather than a
+% stacked header over a lone email.
 \newcommand{\billtoblock}{%
-  \textbf{\color{invoiceaccent}Bill To}\par\vspace{2pt}
-  \@billto\par\vspace{16pt}
+  \textbf{\color{invoiceaccent}Bill To:} \@billto\par\vspace{16pt}
 }
 
 % Deliberately NOT a \newenvironment wrapping tabularx (tried first) --

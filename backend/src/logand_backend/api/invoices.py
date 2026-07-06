@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 from datetime import date
+from decimal import Decimal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -13,7 +14,13 @@ from logand_backend.api.errors import to_http_exception
 from logand_backend.app.config import AppConfig
 from logand_backend.auth.sessions import SessionInfo, require_admin
 from logand_backend.db.base import get_db
-from logand_backend.db.models.invoices import Invoice, InvoiceLineItem, Payment, Refund
+from logand_backend.db.models.invoices import (
+    Invoice,
+    InvoiceLineItem,
+    InvoiceLineItemTax,
+    Payment,
+    Refund,
+)
 from logand_backend.domain.invoices.export import generate_invoice_pdf
 from logand_backend.domain.invoices.pdf.renderer import PdfRenderError
 from logand_backend.domain.invoices.refunds import RefundInput, refund_payment
@@ -28,6 +35,9 @@ from logand_backend.domain.invoices.service import (
     void_invoice,
 )
 from logand_backend.domain.invoices.stats import InvoiceStats, get_invoice_stats
+from logand_backend.domain.invoices.tax import categorizer
+from logand_backend.domain.invoices.tax.apply import apply_auto_tax
+from logand_backend.domain.invoices.tax.report import build_tax_report
 from logand_backend.domain.notifications.notify import (
     notify_invoice_sent,
     notify_payment_received,
@@ -41,6 +51,45 @@ _log = get_logger(__name__)
 router = APIRouter(prefix="/api/admin/invoices", tags=["admin", "invoices"])
 
 
+def _line_item_dict(
+    li: InvoiceLineItem, charges: list[InvoiceLineItemTax], currency: str
+) -> dict:
+    """Serialize a line item with its tax charges. Charge amounts and the
+    per-line tax total are DERIVED here with the same quantize rule as
+    recompute_amount_total/InvoiceLineItemView, so the admin view agrees with
+    the PDF/exports (see docs/design/16-sales-tax.md)."""
+    line_total = quantize_to_currency(li.quantity * li.unit_price, currency)
+    zero = quantize_to_currency(Decimal(0), currency)
+    tax_amount = Decimal(0)
+    taxes: list[dict] = []
+    for c in charges:
+        amount = (
+            quantize_to_currency(line_total * c.rate, currency) if li.taxable else zero
+        )
+        if li.taxable:
+            tax_amount += amount
+        taxes.append(
+            {
+                "tax_type": c.tax_type,
+                "jurisdiction": c.jurisdiction,
+                "rate": str(c.rate),
+                "amount": str(amount),
+            }
+        )
+    return {
+        "id": str(li.id),
+        "description": li.description,
+        "quantity": str(li.quantity),
+        "unit_price": str(quantize_to_currency(li.unit_price, currency)),
+        "unit": li.unit,
+        "line_total": str(line_total),
+        "taxable": li.taxable,
+        "tax_category": li.tax_category,
+        "tax_amount": str(tax_amount if li.taxable else zero),
+        "taxes": taxes,
+    }
+
+
 def _invoice_summary(invoice: Invoice) -> dict:
     return {
         "id": str(invoice.id),
@@ -49,6 +98,13 @@ def _invoice_summary(invoice: Invoice) -> dict:
         "amount_total": str(
             quantize_to_currency(invoice.amount_total, invoice.currency)
         ),
+        "tax_amount": str(quantize_to_currency(invoice.tax_amount, invoice.currency)),
+        "subtotal": str(
+            quantize_to_currency(
+                invoice.amount_total - invoice.tax_amount, invoice.currency
+            )
+        ),
+        "tax_origin_state": invoice.tax_origin_state,
         "currency": invoice.currency,
         "memo": invoice.memo,
         "due_date": invoice.due_date.isoformat() if invoice.due_date else None,
@@ -65,10 +121,33 @@ async def create(
     _admin: SessionInfo = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, str]:
-    result = await create_invoice(db, customer_id, line_items, memo)
+    # Snapshot the seller's current tax jurisdiction onto the invoice, so a
+    # later move (TN -> FL) never rewrites this one. See
+    # docs/design/16-sales-tax.md.
+    cfg = AppConfig.from_external(argparse.Namespace())
+    result = await create_invoice(
+        db,
+        customer_id,
+        line_items,
+        memo,
+        tax_origin_state=cfg.invoice_tax_origin_state,
+    )
     if result.is_err:
         raise to_http_exception(result.danger_err)
-    return {"id": str(result.danger_ok)}
+    invoice_id = result.danger_ok
+
+    # Best-effort auto-classification (docs/design/16-sales-tax.md Phase 6)
+    # -- never let a Claude/categorizer failure fail invoice creation itself.
+    if categorizer.is_configured(cfg):
+        try:
+            await apply_auto_tax(db, cfg, invoice_id)
+        except Exception as exc:  # noqa: BLE001 -- best-effort, see apply.py
+            _log.warning(
+                "create invoice: apply_auto_tax failed, invoice created anyway",
+                extra={"invoice_id": str(invoice_id), "error": str(exc)},
+            )
+
+    return {"id": str(invoice_id)}
 
 
 @router.post("/{invoice_id}/send")
@@ -139,6 +218,56 @@ async def get_stats(
     return await get_invoice_stats(db)
 
 
+@router.get("/tax-report")
+async def get_tax_report(
+    from_date: date,
+    to_date: date,
+    currency: str = "usd",
+    _admin: SessionInfo = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Tax-filing breakdown over [from_date, to_date): sales by category, tax
+    collected by jurisdiction + type, and which jurisdictions you must file
+    for. Also declared before GET /{invoice_id} (see get_stats). See
+    docs/design/16-sales-tax.md."""
+    from datetime import datetime, time, timezone
+
+    report = await build_tax_report(
+        db,
+        from_date=datetime.combine(from_date, time.min, tzinfo=timezone.utc),
+        to_date=datetime.combine(to_date, time.min, tzinfo=timezone.utc),
+        currency=currency,
+    )
+    return {
+        "from_date": report.from_date.date().isoformat(),
+        "to_date": report.to_date.date().isoformat(),
+        "currency": report.currency,
+        "invoice_count": report.invoice_count,
+        "total_sales": str(quantize_to_currency(report.total_sales, currency)),
+        "total_tax_collected": str(
+            quantize_to_currency(report.total_tax_collected, currency)
+        ),
+        "filing_jurisdictions": report.filing_jurisdictions,
+        "by_jurisdiction": [
+            {
+                "jurisdiction": r.jurisdiction,
+                "tax_type": r.tax_type,
+                "taxable_base": str(quantize_to_currency(r.taxable_base, currency)),
+                "tax_collected": str(quantize_to_currency(r.tax_collected, currency)),
+            }
+            for r in report.by_jurisdiction
+        ],
+        "by_category": [
+            {
+                "category": r.category,
+                "gross": str(quantize_to_currency(r.gross, currency)),
+                "taxable_gross": str(quantize_to_currency(r.taxable_gross, currency)),
+            }
+            for r in report.by_category
+        ],
+    }
+
+
 @router.get("/{invoice_id}")
 async def get_invoice(
     invoice_id: UUID,
@@ -160,6 +289,26 @@ async def get_invoice(
         .scalars()
         .all()
     )
+    # Tax charges for these lines (see docs/design/16-sales-tax.md), grouped
+    # by line -- one query, no N+1.
+    charges_by_line: dict[UUID, list[InvoiceLineItemTax]] = {}
+    if line_items:
+        for charge in (
+            (
+                await db.execute(
+                    select(InvoiceLineItemTax)
+                    .where(
+                        InvoiceLineItemTax.line_item_id.in_(
+                            [li.id for li in line_items]
+                        )
+                    )
+                    .order_by(InvoiceLineItemTax.created_at)
+                )
+            )
+            .scalars()
+            .all()
+        ):
+            charges_by_line.setdefault(charge.line_item_id, []).append(charge)
     payments = (
         (await db.execute(select(Payment).where(Payment.invoice_id == invoice_id)))
         .scalars()
@@ -188,15 +337,7 @@ async def get_invoice(
     return {
         **_invoice_summary(invoice),
         "line_items": [
-            {
-                "id": str(li.id),
-                "description": li.description,
-                "quantity": str(li.quantity),
-                "unit_price": str(
-                    quantize_to_currency(li.unit_price, invoice.currency)
-                ),
-                "unit": li.unit,
-            }
+            _line_item_dict(li, charges_by_line.get(li.id, []), invoice.currency)
             for li in line_items
         ],
         "payments": [

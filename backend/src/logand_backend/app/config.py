@@ -80,6 +80,28 @@ class AppConfig(BaseModel):
     # content that could be mistaken for real business info.
     invoice_business_details: str = ""
     invoice_contact_email: str = "billing@logand.app"
+    # The seller's sales-tax jurisdiction (US state code) in effect right
+    # now. Snapshotted onto each invoice at creation as tax_origin_state, so
+    # moving the business (e.g. TN -> FL) is just changing this value: only
+    # invoices created afterward carry the new state, historical ones keep
+    # what they were actually filed under. See docs/design/16-sales-tax.md.
+    invoice_tax_origin_state: str = "TN"
+    # Phase 4 tax categorizer (docs/design/16-sales-tax.md). ANTHROPIC_API_KEY
+    # gates the whole categorizer: unset (None) means the Claude call is never
+    # made and invoices fall back to whatever charges an admin entered by
+    # hand. Model + cache TTL are tunable; the model default follows the
+    # claude-api skill (latest Opus).
+    anthropic_api_key: str | None = None
+    tax_categorizer_model: str = "claude-opus-4-8"
+    # How long a categorization result is trusted before it is re-derived
+    # (seconds). Lets a rate change in the knowledge base flow through
+    # without re-calling Claude on every invoice for the same parts.
+    tax_categorizer_cache_ttl_seconds: int = 60 * 60 * 24 * 30
+    # Extra domains (comma-separated, beyond the built-in .gov/.mil/.us
+    # suffixes) that count as a government source when an admin cites a
+    # tax_rules rate -- e.g. state revenue sites that don't sit under .gov,
+    # such as floridarevenue.com. See domain/invoices/tax/citation.py.
+    tax_citation_allowed_domains: str = "floridarevenue.com"
     # None (not "") -- same "not configured yet" convention as
     # paypal_client_id below: a customer's Pay page only shows Zelle as an
     # option once this is actually set, rather than always showing a
@@ -157,6 +179,15 @@ class AppConfig(BaseModel):
     host: str = "127.0.0.1"
     port: int = 8000
 
+    @property
+    def citation_allowed_domains(self) -> list[str]:
+        """Parses tax_citation_allowed_domains into a clean domain list."""
+        return [
+            d.strip().lower()
+            for d in self.tax_citation_allowed_domains.split(",")
+            if d.strip()
+        ]
+
     @classmethod
     def from_external(cls, args: argparse.Namespace) -> Self:
         # NOTE: load_dotenv() reads .env into os.environ for us -- we never
@@ -190,6 +221,10 @@ class AppConfig(BaseModel):
             "INVOICE_BUSINESS_NAME": "invoice_business_name",
             "INVOICE_BUSINESS_DETAILS": "invoice_business_details",
             "INVOICE_CONTACT_EMAIL": "invoice_contact_email",
+            "INVOICE_TAX_ORIGIN_STATE": "invoice_tax_origin_state",
+            "ANTHROPIC_API_KEY": "anthropic_api_key",
+            "TAX_CATEGORIZER_MODEL": "tax_categorizer_model",
+            "TAX_CITATION_ALLOWED_DOMAINS": "tax_citation_allowed_domains",
             "ZELLE_HANDLE": "zelle_handle",
             "PAYPAL_RECEIVE_EMAIL": "paypal_receive_email",
             "SMTP_HOST": "smtp_host",

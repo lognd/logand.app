@@ -381,3 +381,67 @@ async def test_mark_overdue_invoices_skips_draft_and_paid(
     assert updated == []
     await db_session.refresh(draft)
     assert draft.status == "draft"
+
+
+async def test_create_invoice_computes_tax_from_per_line_charges(
+    db_session, make_user
+) -> None:
+    # A line can owe several taxes at once (import duty + sales tax); tax is
+    # summed per charge, and amount_total = subtotal + tax. See
+    # docs/design/16-sales-tax.md.
+    from logand_backend.domain.invoices.service import LineItemTaxInput
+
+    customer = await make_user(role="customer")
+    line_items = [
+        LineItemInput(
+            description="PCB (imported)",
+            quantity=Decimal(2),
+            unit_price=Decimal("100.00"),  # line_total 200.00
+            taxes=[
+                LineItemTaxInput(
+                    tax_type="import_duty",
+                    jurisdiction="US-customs",
+                    rate=Decimal("0.02"),
+                ),
+                LineItemTaxInput(
+                    tax_type="sales", jurisdiction="US-TN", rate=Decimal("0.07")
+                ),
+            ],
+        ),
+        LineItemInput(
+            description="exempt service",
+            quantity=Decimal(1),
+            unit_price=Decimal("50.00"),
+            taxable=False,
+            taxes=[
+                LineItemTaxInput(
+                    tax_type="sales", jurisdiction="US-TN", rate=Decimal("0.07")
+                )
+            ],
+        ),
+    ]
+
+    result = await create_invoice(
+        db_session, customer.id, line_items, tax_origin_state="TN"
+    )
+    assert result.is_ok
+
+    invoice = await db_session.get(Invoice, result.danger_ok)
+    # Taxed line: 200.00 * (0.02 + 0.07) = 18.00. Exempt line: 0.
+    assert invoice.tax_amount == Decimal("18.00")
+    # subtotal 250.00 + tax 18.00
+    assert invoice.amount_total == Decimal("268.00")
+    assert invoice.tax_origin_state == "TN"
+
+
+async def test_create_invoice_no_taxes_is_zero_tax(db_session, make_user) -> None:
+    customer = await make_user(role="customer")
+    line_items = [
+        LineItemInput(
+            description="widget", quantity=Decimal(1), unit_price=Decimal("10.00")
+        )
+    ]
+    invoice_id = (await create_invoice(db_session, customer.id, line_items)).danger_ok
+    invoice = await db_session.get(Invoice, invoice_id)
+    assert invoice.tax_amount == Decimal("0.000")
+    assert invoice.amount_total == Decimal("10.00")

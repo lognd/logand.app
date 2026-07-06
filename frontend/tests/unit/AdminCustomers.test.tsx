@@ -41,6 +41,11 @@ describe("AdminCustomers (integration)", () => {
       emails_opted_out: false,
       disabled_at: null,
       created_at: "2026-01-01T00:00:00Z",
+      address_line1: null,
+      address_city: null,
+      address_state: null,
+      address_postal_code: null,
+      address_country: null,
     };
     const fetchMock = vi.fn((url: string) => {
       if (url.startsWith("/api/admin/customers/cust-1/deactivate")) {
@@ -84,5 +89,66 @@ describe("AdminCustomers (integration)", () => {
         expect.objectContaining({ method: "POST" }),
       );
     });
+  });
+
+  it("saves an address edit via PUT with the entered values", async () => {
+    const customer = { id: "cust-1", email: "alice@example.com" };
+    const detail = {
+      id: "cust-1",
+      email: "alice@example.com",
+      role: "customer",
+      emails_opted_out: false,
+      disabled_at: null,
+      created_at: "2026-01-01T00:00:00Z",
+      address_line1: null,
+      address_city: null,
+      address_state: null,
+      address_postal_code: null,
+      address_country: null,
+    };
+    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+      if (
+        url === "/api/admin/customers/cust-1/address" &&
+        init?.method === "PUT"
+      ) {
+        return Promise.resolve(
+          jsonResponse({ ...detail, address_line1: "123 Main St", address_city: "Nashville" }),
+        );
+      }
+      if (url === "/api/admin/customers/cust-1") {
+        return Promise.resolve(jsonResponse(detail));
+      }
+      if (url.startsWith("/api/admin/customers")) {
+        return Promise.resolve(jsonResponse([customer]));
+      }
+      return Promise.resolve(jsonResponse({}));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    document.cookie = "csrf_token=test-csrf";
+
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: "alice@example.com" }));
+    await screen.findByText("Address (for tax sourcing)");
+
+    await user.type(screen.getByLabelText("Address line 1"), "123 Main St");
+    await user.type(screen.getByLabelText("City"), "Nashville");
+
+    await user.click(screen.getByRole("button", { name: "Save address" }));
+
+    await waitFor(() => {
+      const call = fetchMock.mock.calls.find(
+        ([url, init]) =>
+          url === "/api/admin/customers/cust-1/address" &&
+          (init as RequestInit | undefined)?.method === "PUT",
+      );
+      expect(call).toBeDefined();
+      const body = JSON.parse((call?.[1] as RequestInit).body as string);
+      expect(body.address_line1).toBe("123 Main St");
+      expect(body.address_city).toBe("Nashville");
+    });
+
+    expect(await screen.findByText("Address saved.")).toBeInTheDocument();
   });
 });

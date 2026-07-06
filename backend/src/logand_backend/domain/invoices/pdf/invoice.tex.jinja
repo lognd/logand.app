@@ -25,8 +25,14 @@
 \bottomrule
 \end{tabularx}}
 
+\#{ Break the totals into Subtotal / Tax / Total only when there is tax
+(has_tax); a zero-tax invoice keeps the single Total row it always had. }
 \invoicetotals{%
 \begin{tabular}{@{}r r@{}}
+\BLOCK{ if has_tax }
+Subtotal: & \VAR{currency_symbol}\VAR{subtotal} \\
+Tax: & \VAR{currency_symbol}\VAR{tax_amount} \\
+\BLOCK{ endif }
 \textbf{Total (\VAR{currency_upper}):} & \textbf{\VAR{currency_symbol}\VAR{amount_total}} \\
 \end{tabular}%
 }
@@ -34,22 +40,37 @@
 \vspace{24pt}
 
 \textbf{\color{invoiceaccent}Payment}
-
-\vspace{6pt}
+\par\vspace{2pt}
 \noindent
+\#{ KEEP IN SYNC: this list of ways to pay and the customer Pay page's
+"Other ways to pay" box (frontend/src/app/routes/customer/Pay.tsx) show
+the SAME manual payment methods (Zelle handle, PayPal receive email,
+in-person) in the SAME style -- a bold method label, its handle/email
+set off in monospace, distinct from surrounding prose. Whenever you
+change one -- add a method, reword it, restyle how a handle is shown --
+update the other in the same change so a customer sees consistent options
+on the PDF and the Pay page. }
 \BLOCK{ if pay_url }
-Pay online: \href{\VAR{pay_url}}{\VAR{pay_url}}\\[6pt]
+You can pay this invoice online at \href{\VAR{pay_url}}{\VAR{pay_url}}, which
+is the fastest and easiest way to take care of it. If you would rather not
+pay online, you are also welcome to settle it in any of the ways listed
+below.
+\BLOCK{ else }
+You are welcome to pay this invoice in any of the ways listed below.
 \BLOCK{ endif }
-Alternative payment methods accepted: \BLOCK{ if zelle_handle }Zelle (\VAR{zelle_handle})\BLOCK{ else }Zelle\BLOCK{ endif }, PayPal, or in
-person by prior arrangement -- contact
-\href{mailto:\VAR{contact_email}}{\VAR{contact_email}} to arrange one of
-these instead.
+\begin{itemize}
+\setlength{\itemsep}{2pt}\setlength{\parskip}{0pt}\setlength{\topsep}{2pt}\setlength{\partopsep}{0pt}
+  \item \textbf{Zelle\BLOCK{ if zelle_handle }:\BLOCK{ endif }}\BLOCK{ if zelle_handle }\quad\texttt{\VAR{zelle_handle}}\BLOCK{ endif }
+  \item \textbf{PayPal\BLOCK{ if paypal_receive_email }:\BLOCK{ endif }}\BLOCK{ if paypal_receive_email }\quad\texttt{\VAR{paypal_receive_email}}\BLOCK{ endif }
+  \item \textbf{In-Person:}\quad by prior arrangement
+\end{itemize}
+If you pay one of these ways, \textbf{please contact \underline{\VAR{contact_email}}}, so
+I know to mark your invoice paid.
 
 \BLOCK{ if memo }
-\vspace{18pt}
+\vspace{16pt}
 \textbf{\color{invoiceaccent}Notes}
-
-\vspace{6pt}
+\par\vspace{2pt}
 \noindent \VAR{memo}
 \BLOCK{ endif }
 

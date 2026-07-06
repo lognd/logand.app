@@ -7,7 +7,11 @@ from uuid import UUID, uuid4
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from logand_backend.db.models.invoices import Invoice, InvoiceLineItem
+from logand_backend.db.models.invoices import (
+    Invoice,
+    InvoiceLineItem,
+    InvoiceLineItemTax,
+)
 from logand_backend.domain.invoices.service import recompute_amount_total
 
 _MONTH_STEPS = {"monthly": 1, "quarterly": 3, "yearly": 12}
@@ -96,6 +100,11 @@ async def generate_due_recurring_invoices(db: AsyncSession, as_of: date) -> list
                 is_recurring=True,
                 recurrence_interval=invoice.recurrence_interval,
                 due_date=next_due,
+                # Carry the series' established tax jurisdiction forward
+                # rather than re-snapshotting current config, so a recurring
+                # invoice's origin stays continuous with its parent's. See
+                # docs/design/16-sales-tax.md.
+                tax_origin_state=invoice.tax_origin_state,
             )
         )
         # The parent has now generated its successor -- stop it from
@@ -105,21 +114,50 @@ async def generate_due_recurring_invoices(db: AsyncSession, as_of: date) -> list
         await db.flush()
 
         line_items = (
-            await db.execute(
-                select(InvoiceLineItem).where(InvoiceLineItem.invoice_id == invoice.id)
+            (
+                await db.execute(
+                    select(InvoiceLineItem).where(
+                        InvoiceLineItem.invoice_id == invoice.id
+                    )
+                )
             )
-        ).scalars()
+            .scalars()
+            .all()
+        )
         for li in line_items:
+            new_line_id = uuid4()
             db.add(
                 InvoiceLineItem(
-                    id=uuid4(),
+                    id=new_line_id,
                     invoice_id=new_id,
                     description=li.description,
                     quantity=li.quantity,
                     unit_price=li.unit_price,
                     unit=li.unit,
+                    taxable=li.taxable,
+                    tax_category=li.tax_category,
                 )
             )
+            # Copy the parent line's tax charges onto the new line so the
+            # recurring invoice carries the same taxes (see
+            # docs/design/16-sales-tax.md).
+            charges = (
+                await db.execute(
+                    select(InvoiceLineItemTax).where(
+                        InvoiceLineItemTax.line_item_id == li.id
+                    )
+                )
+            ).scalars()
+            for charge in charges:
+                db.add(
+                    InvoiceLineItemTax(
+                        id=uuid4(),
+                        line_item_id=new_line_id,
+                        tax_type=charge.tax_type,
+                        jurisdiction=charge.jurisdiction,
+                        rate=charge.rate,
+                    )
+                )
         await db.flush()
         await recompute_amount_total(db, new_id)
         created.append(new_id)

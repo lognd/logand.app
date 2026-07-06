@@ -80,6 +80,19 @@ class Invoice(Base):
     amount_total: Mapped[Decimal] = mapped_column(
         Numeric(14, 3), nullable=False, default=0
     )
+    # Denormalized sum of the per-line sales tax, recomputed server-side by
+    # recompute_amount_total alongside amount_total (which now equals
+    # subtotal + tax_amount). Never trusted from client input, same as
+    # amount_total. See docs/design/16-sales-tax.md.
+    tax_amount: Mapped[Decimal] = mapped_column(
+        Numeric(14, 3), nullable=False, default=0
+    )
+    # The seller's sales-tax jurisdiction (US state code) snapshotted at
+    # creation from AppConfig.invoice_tax_origin_state -- kept per invoice so
+    # a later move (TN -> FL) never rewrites a historical invoice's origin.
+    # Nullable: pre-tax-feature rows and any invoice created with no origin
+    # configured have none.
+    tax_origin_state: Mapped[str | None] = mapped_column(Text, nullable=True)
     currency: Mapped[str] = mapped_column(Text, nullable=False, default="usd")
     memo: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_recurring: Mapped[bool] = mapped_column(default=False)
@@ -153,6 +166,63 @@ class InvoiceLineItem(Base):
     # label says).
     unit: Mapped[str | None] = mapped_column(Text, nullable=True)
     unit_price: Mapped[Decimal] = mapped_column(Numeric(14, 3), nullable=False)
+    # --- Tax classification (per line). The actual charges are rows in
+    # invoice_line_item_taxes below, because one line can owe several taxes
+    # at once (a PCB owes import duty AND sales/use tax). Different items are
+    # taxed differently, and a BOM's components and its finished product are
+    # each their own line, taxed independently. See docs/design/16-sales-tax.md.
+    # Master gate: whether this line is subject to ANY tax. False = exempt,
+    # no charge rows apply regardless. The Phase 4 Claude categorizer flips
+    # this per item.
+    taxable: Mapped[bool] = mapped_column(default=True, nullable=False)
+    # Optional classification the categorizer writes (e.g. "tangible-goods",
+    # "imported-component", "service", "exempt-resale"); drives which charges
+    # attach. Null today, carried now so that phase needs no migration.
+    tax_category: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class InvoiceLineItemTax(Base):
+    """One tax charge applied to one line item -- a line can have several
+    (import duty + sales tax + use tax). The charge amount is DERIVED
+    (quantize(line_total * rate)), never stored, so it can't desync from the
+    snapshotted rate; only the auditable inputs live here. See
+    docs/design/16-sales-tax.md.
+    """
+
+    __tablename__ = "invoice_line_item_taxes"
+    __table_args__ = (
+        CheckConstraint(
+            "rate >= 0", name="ck_invoice_line_item_taxes_rate_nonnegative"
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    line_item_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("invoice_line_items.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    # Open vocabulary ("sales", "use", "import_duty", ...) so a new tax type
+    # is data, not a migration.
+    tax_type: Mapped[str] = mapped_column(Text, nullable=False)
+    # Who levies it ("US-TN", "US-FL", "US-customs"), for remittance/audit.
+    jurisdiction: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # The rate actually charged, snapshotted. 8,5 (not 6,4) so a small/
+    # precise duty rate fits.
+    rate: Mapped[Decimal] = mapped_column(Numeric(8, 5), nullable=False, default=0)
+    # True for a charge written by domain/invoices/tax/apply.py's
+    # apply_auto_tax, False (default) for one an admin entered by hand
+    # (either through create_invoice's taxes input or added directly).
+    # apply_auto_tax only ever deletes+replaces its OWN auto=True rows on a
+    # line -- never a hand-entered one -- so a human-entered charge can
+    # never be silently clobbered by a later re-run of the categorizer.
+    auto: Mapped[bool] = mapped_column(default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

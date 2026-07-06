@@ -334,3 +334,43 @@ export function getInvoiceStats(): Promise<InvoiceStats> {
   // api/invoices.py's get_stats doc comment.
   return apiGet<InvoiceStats>("/api/admin/invoices/stats");
 }
+
+// Matches domain/invoices/tax/report.py::TaxReport (serialized in
+// api/invoices.py::get_tax_report). Money fields are decimal strings.
+export interface TaxReportJurisdictionRow {
+  jurisdiction: string;
+  tax_type: string;
+  taxable_base: string;
+  tax_collected: string;
+}
+
+export interface TaxReportCategoryRow {
+  category: string;
+  gross: string;
+  taxable_gross: string;
+}
+
+export interface TaxReport {
+  from_date: string;
+  to_date: string;
+  currency: string;
+  invoice_count: number;
+  total_sales: string;
+  total_tax_collected: string;
+  filing_jurisdictions: string[];
+  by_jurisdiction: TaxReportJurisdictionRow[];
+  by_category: TaxReportCategoryRow[];
+}
+
+export function getTaxReport(
+  fromDate: string,
+  toDate: string,
+  currency = "usd",
+): Promise<TaxReport> {
+  const params = new URLSearchParams({
+    from_date: fromDate,
+    to_date: toDate,
+    currency,
+  });
+  return apiGet<TaxReport>(`/api/admin/invoices/tax-report?${params.toString()}`);
+}
