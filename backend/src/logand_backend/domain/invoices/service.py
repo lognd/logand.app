@@ -15,6 +15,7 @@ from logand_backend.app.config import AppConfig
 from logand_backend.db.models.invoices import (
     Invoice,
     InvoiceLineItem,
+    InvoiceLineItemTax,
     Payment,
     PaymentProof,
     Refund,
@@ -51,6 +52,18 @@ class ManualPaymentInput(BaseModel):
     note: str | None = None
 
 
+class LineItemTaxInput(BaseModel):
+    """One tax charge on a line (see docs/design/16-sales-tax.md). rate is
+    check-constrained >= 0 in the DB too; Field(ge=0) is the same M-2
+    anti-tamper guard as unit_price."""
+
+    model_config = {}
+
+    tax_type: str
+    jurisdiction: str | None = None
+    rate: Decimal = Field(ge=0)
+
+
 class LineItemInput(BaseModel):
     model_config = {}
 
@@ -61,6 +74,12 @@ class LineItemInput(BaseModel):
     quantity: Decimal = Field(default=Decimal(1), gt=0)
     unit_price: Decimal = Field(ge=0)
     unit: str | None = None
+    # Tax (per line -- see docs/design/16-sales-tax.md). Defaults keep every
+    # existing/zero-tax caller a no-op: taxable defaults on but with no tax
+    # charges nothing is added.
+    taxable: bool = True
+    tax_category: str | None = None
+    taxes: list[LineItemTaxInput] = Field(default_factory=list)
 
 
 async def lock_invoice_for_update(db: AsyncSession, invoice_id: UUID) -> Invoice | None:
@@ -88,36 +107,69 @@ async def lock_invoice_for_update(db: AsyncSession, invoice_id: UUID) -> Invoice
 
 
 async def recompute_amount_total(db: AsyncSession, invoice_id: UUID) -> Decimal:
-    """Sums invoice_line_items for invoice_id and writes it back to
-    invoices.amount_total in the same transaction. Called on every write
-    path -- amount_total must never be trusted from client input
-    (docs/design/04, the tamper vector this exists to close)."""
+    """Recomputes invoices.tax_amount and amount_total from the line items
+    and writes both back in the same transaction. Called on every write
+    path -- these must never be trusted from client input (docs/design/04,
+    the tamper vector this exists to close). Returns amount_total (subtotal
+    + tax). See docs/design/16-sales-tax.md for the tax model.
+    """
     invoice = await db.get(Invoice, invoice_id)
     if invoice is None:
         return Decimal(0)
 
     line_items = (
-        await db.execute(
-            select(InvoiceLineItem).where(InvoiceLineItem.invoice_id == invoice_id)
-        )
-    ).scalars()
-    # Quantize each line total to the invoice's OWN currency's real
-    # precision (0dp for JPY/KRW/..., 3dp for BHD/KWD/..., 2dp otherwise)
-    # before summing -- must match InvoiceLineItemView.line_total's
-    # rounding rule (export.py) exactly, otherwise amount_total (this
-    # column) can disagree with the sum of the per-line totals shown in
-    # the PDF/email/attachments. See FINDINGS.md M1/L1.
-    total = sum(
         (
-            currency.quantize_to_currency(li.quantity * li.unit_price, invoice.currency)
-            for li in line_items
-        ),
-        Decimal(0),
+            await db.execute(
+                select(InvoiceLineItem).where(InvoiceLineItem.invoice_id == invoice_id)
+            )
+        )
+        .scalars()
+        .all()
     )
+    # One query for every charge on this invoice's lines, grouped by line --
+    # avoids an N+1 over line items.
+    charges_by_line: dict[UUID, list[InvoiceLineItemTax]] = {}
+    if line_items:
+        charge_rows = (
+            (
+                await db.execute(
+                    select(InvoiceLineItemTax).where(
+                        InvoiceLineItemTax.line_item_id.in_(
+                            [li.id for li in line_items]
+                        )
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for charge in charge_rows:
+            charges_by_line.setdefault(charge.line_item_id, []).append(charge)
 
-    invoice.amount_total = total
+    # Quantize each line total (and each individual tax charge) to the
+    # invoice's OWN currency's real precision (0dp for JPY/KRW/..., 3dp for
+    # BHD/KWD/..., 2dp otherwise) BEFORE summing -- must match
+    # InvoiceLineItemView's line_total/tax_amount rounding (export.py)
+    # exactly, otherwise these rollups can disagree with the per-line figures
+    # shown in the PDF/email/attachments. See FINDINGS.md M1/L1 and
+    # docs/design/16-sales-tax.md.
+    subtotal = Decimal(0)
+    tax_amount = Decimal(0)
+    for li in line_items:
+        line_total = currency.quantize_to_currency(
+            li.quantity * li.unit_price, invoice.currency
+        )
+        subtotal += line_total
+        if li.taxable:
+            for charge in charges_by_line.get(li.id, []):
+                tax_amount += currency.quantize_to_currency(
+                    line_total * charge.rate, invoice.currency
+                )
+
+    invoice.tax_amount = tax_amount
+    invoice.amount_total = subtotal + tax_amount
     await db.flush()
-    return total
+    return invoice.amount_total
 
 
 async def create_invoice(
@@ -125,9 +177,21 @@ async def create_invoice(
     customer_id: UUID,
     line_items: list[LineItemInput],
     memo: str | None = None,
+    tax_origin_state: str | None = None,
 ) -> Result[UUID, InvoiceError]:
+    """`tax_origin_state` is the seller's sales-tax jurisdiction snapshot
+    (from AppConfig.invoice_tax_origin_state at the API layer) frozen onto
+    this invoice at creation, so a later business move never rewrites it.
+    See docs/design/16-sales-tax.md.
+    """
     invoice_id = uuid4()
-    invoice = Invoice(id=invoice_id, customer_id=customer_id, memo=memo, status="draft")
+    invoice = Invoice(
+        id=invoice_id,
+        customer_id=customer_id,
+        memo=memo,
+        status="draft",
+        tax_origin_state=tax_origin_state,
+    )
     db.add(invoice)
     # Flush now so the model's `currency` column default ("usd") is
     # actually populated on the instance -- it's a Python-side default
@@ -135,9 +199,10 @@ async def create_invoice(
     # invoice.currency before this point would be None.
     await db.flush()
     for item in line_items:
+        line_item_id = uuid4()
         db.add(
             InvoiceLineItem(
-                id=uuid4(),
+                id=line_item_id,
                 invoice_id=invoice_id,
                 description=item.description,
                 quantity=item.quantity,
@@ -149,8 +214,20 @@ async def create_invoice(
                     item.unit_price, invoice.currency
                 ),
                 unit=item.unit,
+                taxable=item.taxable,
+                tax_category=item.tax_category,
             )
         )
+        for tax in item.taxes:
+            db.add(
+                InvoiceLineItemTax(
+                    id=uuid4(),
+                    line_item_id=line_item_id,
+                    tax_type=tax.tax_type,
+                    jurisdiction=tax.jurisdiction,
+                    rate=tax.rate,
+                )
+            )
     await db.flush()
     await recompute_amount_total(db, invoice_id)
     return Ok(invoice_id)

@@ -80,6 +80,12 @@ class AppConfig(BaseModel):
     # content that could be mistaken for real business info.
     invoice_business_details: str = ""
     invoice_contact_email: str = "billing@logand.app"
+    # The seller's sales-tax jurisdiction (US state code) in effect right
+    # now. Snapshotted onto each invoice at creation as tax_origin_state, so
+    # moving the business (e.g. TN -> FL) is just changing this value: only
+    # invoices created afterward carry the new state, historical ones keep
+    # what they were actually filed under. See docs/design/16-sales-tax.md.
+    invoice_tax_origin_state: str = "TN"
     # None (not "") -- same "not configured yet" convention as
     # paypal_client_id below: a customer's Pay page only shows Zelle as an
     # option once this is actually set, rather than always showing a
@@ -190,6 +196,7 @@ class AppConfig(BaseModel):
             "INVOICE_BUSINESS_NAME": "invoice_business_name",
             "INVOICE_BUSINESS_DETAILS": "invoice_business_details",
             "INVOICE_CONTACT_EMAIL": "invoice_contact_email",
+            "INVOICE_TAX_ORIGIN_STATE": "invoice_tax_origin_state",
             "ZELLE_HANDLE": "zelle_handle",
             "PAYPAL_RECEIVE_EMAIL": "paypal_receive_email",
             "SMTP_HOST": "smtp_host",
