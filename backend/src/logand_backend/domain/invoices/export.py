@@ -155,9 +155,7 @@ class InvoiceExportData:
         # Pre-tax subtotal = total minus tax, both re-quantized to the
         # currency. Derived rather than stored so it can never disagree with
         # the two persisted rollups it sits between.
-        return quantize_to_currency(
-            self.amount_total - self.tax_amount, self.currency
-        )
+        return quantize_to_currency(self.amount_total - self.tax_amount, self.currency)
 
 
 async def load_invoice_export_data(
@@ -394,12 +392,10 @@ def build_invoice_plaintext(data: InvoiceExportData, cfg: AppConfig) -> str:
     # lands on the same column as "Line total" above.
     if data.tax_amount_display > 0:
         lines.append(
-            f"{'Subtotal':<60} {str(data.subtotal_display):>12} "
-            f"{data.currency.upper()}"
+            f"{'Subtotal':<60} {str(data.subtotal_display):>12} {data.currency.upper()}"
         )
         lines.append(
-            f"{'Tax':<60} {str(data.tax_amount_display):>12} "
-            f"{data.currency.upper()}"
+            f"{'Tax':<60} {str(data.tax_amount_display):>12} {data.currency.upper()}"
         )
     lines.append(
         f"{'Total':<60} {str(data.amount_total_display):>12} {data.currency.upper()}"
