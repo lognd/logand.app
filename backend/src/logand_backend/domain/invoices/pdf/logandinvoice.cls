@@ -145,9 +145,11 @@
   \par\vspace{14pt}
 }
 
+% Inline label + value ("Bill To: <email>") on a single line, matching the
+% Invoice #/Date/Due/Status metadata style up in the header rather than a
+% stacked header over a lone email.
 \newcommand{\billtoblock}{%
-  \textbf{\color{invoiceaccent}Bill To}\par\vspace{2pt}
-  \@billto\par\vspace{16pt}
+  \textbf{\color{invoiceaccent}Bill To:} \@billto\par\vspace{16pt}
 }
 
 % Deliberately NOT a \newenvironment wrapping tabularx (tried first) --
