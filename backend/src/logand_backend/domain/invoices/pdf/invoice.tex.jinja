@@ -25,8 +25,14 @@
 \bottomrule
 \end{tabularx}}
 
+\#{ Break the totals into Subtotal / Tax / Total only when there is tax
+(has_tax); a zero-tax invoice keeps the single Total row it always had. }
 \invoicetotals{%
 \begin{tabular}{@{}r r@{}}
+\BLOCK{ if has_tax }
+Subtotal: & \VAR{currency_symbol}\VAR{subtotal} \\
+Tax: & \VAR{currency_symbol}\VAR{tax_amount} \\
+\BLOCK{ endif }
 \textbf{Total (\VAR{currency_upper}):} & \textbf{\VAR{currency_symbol}\VAR{amount_total}} \\
 \end{tabular}%
 }
