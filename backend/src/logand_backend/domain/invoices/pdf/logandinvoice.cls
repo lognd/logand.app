@@ -73,18 +73,15 @@
 \pagestyle{fancy}
 \fancyhf{}
 \renewcommand{\headrulewidth}{0pt}
-% No footrule and no centered footer message -- the invoice's own Notes/
-% letter body carries any thank-you, so a standing footer line just repeats
-% it on every page; without a message there's nothing for a rule to divide
-% off, so it's dropped too. Only the current/total page indicator remains,
-% flush right ("1/1", "1/2", etc. via lastpage's LastPage label).
-% \pageref*{} (starred) is deliberate: the plain \pageref{} makes a
-% hyperref link, which colorlinks/linkcolor then tints invoiceaccent (navy)
-% -- so the total rendered a different color than the invoicegray current
-% page. The starred form emits the number without a link, so both halves
-% stay the same invoicegray.
-\renewcommand{\footrulewidth}{0pt}
-\fancyfoot[C]{}
+% Footer: "thank you" centered, current/total page indicator flush right
+% ("1/1", "1/2", etc. via lastpage's LastPage label), divided from the page
+% body by a thin rule. \pageref*{} (starred) is deliberate: the plain
+% \pageref{} makes a hyperref link, which colorlinks/linkcolor then tints
+% invoiceaccent (navy) -- so the total rendered a different color than the
+% invoicegray current page. The starred form emits the number without a
+% link, so both halves stay the same invoicegray.
+\renewcommand{\footrulewidth}{0.4pt}
+\fancyfoot[C]{\small\color{invoicegray}Thank you for your business.}
 \fancyfoot[R]{\small\color{invoicegray}\thepage/\pageref*{LastPage}}
 
 % ---- Data commands -- renderer.py's Jinja2 template calls these once,
