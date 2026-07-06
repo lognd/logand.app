@@ -269,6 +269,7 @@ class App:
             mileage,
             notifications,
             receipts,
+            tax,
             webhooks,
         )
 
@@ -288,6 +289,7 @@ class App:
         app.include_router(admin_data.router)
         app.include_router(admin_logs.router)
         app.include_router(admin_version.router)
+        app.include_router(tax.router)
 
     @asynccontextmanager
     async def _lifespan(self, _app: FastAPI) -> AsyncIterator[None]:
