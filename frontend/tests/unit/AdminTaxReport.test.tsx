@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, expect, it, vi } from "vitest";
 import { AdminTaxReport } from "../../src/app/routes/admin/TaxReport";
 import type { TaxReport } from "../../src/api/invoices";
+import type { StripeTaxReconcile } from "../../src/api/tax";
 
 // Integration-layer test (docs/design/12): real api/invoices.ts, only fetch()
 // mocked -- proves the page, TanStack Query wiring, and the tax-report request
@@ -36,6 +37,12 @@ const report: TaxReport = {
   ],
 };
 
+const stripeReconcile: StripeTaxReconcile = {
+  total_tax_collected: "40.00",
+  by_jurisdiction: { "US-TN": "40.00" },
+  transaction_count: 2,
+};
+
 function jsonResponse(body: unknown): Response {
   return new Response(JSON.stringify(body), {
     status: 200,
@@ -59,9 +66,13 @@ afterEach(() => {
 });
 
 it("requests the tax-report endpoint with the date range and renders it", async () => {
-  let calledUrl = "";
+  const urlsCalled: string[] = [];
   const fetchMock = vi.fn((input: unknown) => {
-    calledUrl = String(input);
+    const calledUrl = String(input);
+    urlsCalled.push(calledUrl);
+    if (calledUrl.includes("/api/admin/tax/stripe-reconcile")) {
+      return Promise.resolve(jsonResponse(stripeReconcile));
+    }
     return Promise.resolve(jsonResponse(report));
   });
   vi.stubGlobal("fetch", fetchMock);
@@ -81,7 +92,14 @@ it("requests the tax-report endpoint with the date range and renders it", async 
   expect(screen.getByText("tangible-goods")).toBeInTheDocument();
 
   // The request hit the tax-report endpoint with the date params.
-  expect(calledUrl).toContain("/api/admin/invoices/tax-report");
-  expect(calledUrl).toContain("from_date=");
-  expect(calledUrl).toContain("to_date=");
+  const taxReportUrl = urlsCalled.find((u) => u.includes("/api/admin/invoices/tax-report"));
+  expect(taxReportUrl).toBeDefined();
+  expect(taxReportUrl).toContain("from_date=");
+  expect(taxReportUrl).toContain("to_date=");
+
+  // Stripe's own reconciliation figures are also queried and rendered.
+  expect((await screen.findAllByText("40.00")).length).toBeGreaterThan(0);
+  expect(
+    urlsCalled.some((u) => u.includes("/api/admin/tax/stripe-reconcile")),
+  ).toBe(true);
 });

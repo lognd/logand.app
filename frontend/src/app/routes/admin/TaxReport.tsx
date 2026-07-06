@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { getTaxReport } from "../../../api/invoices";
+import { getStripeReconcile } from "../../../api/tax";
 import { BUTTON_CLASS } from "../../../styles/a11y";
 
 // Default the range to the current calendar year -- the usual filing window.
@@ -39,6 +40,14 @@ export function AdminTaxReport() {
   });
 
   const report = reportQuery.data;
+
+  const stripeReconcileQuery = useQuery({
+    queryKey: ["admin", "tax", "stripe-reconcile", range.from, range.to],
+    queryFn: () => getStripeReconcile(range.from, range.to),
+    enabled: !!range.from && !!range.to,
+  });
+
+  const stripeReconcile = stripeReconcileQuery.data;
 
   return (
     <main className="mx-auto w-full max-w-4xl px-4 py-8">
@@ -179,6 +188,65 @@ export function AdminTaxReport() {
               </tbody>
             </table>
           </div>
+
+          <h2 className="mb-2 text-lg text-fg-primary">
+            Stripe-collected tax (for comparison)
+          </h2>
+          <p className="mb-2 text-sm text-fg-muted">
+            This is Stripe's own recorded figure for cross-checking against the
+            report above -- it only covers payments processed through Stripe,
+            not Zelle/PayPal/in-person/other manual payments.
+          </p>
+          {stripeReconcileQuery.isLoading && (
+            <p className="text-base text-fg-muted">Loading...</p>
+          )}
+          {stripeReconcileQuery.isError && (
+            <p role="alert" className="text-base text-accent-red">
+              Failed to load Stripe's reconciliation figures.
+            </p>
+          )}
+          {stripeReconcile && (
+            <div className="mb-8">
+              <div className="mb-4 grid grid-cols-2 gap-4 sm:grid-cols-3">
+                <StatTile
+                  label="Stripe tax collected"
+                  value={stripeReconcile.total_tax_collected}
+                />
+                <StatTile
+                  label="Stripe transactions"
+                  value={String(stripeReconcile.transaction_count)}
+                />
+              </div>
+              <div className="w-full overflow-x-auto">
+                <table className="w-full min-w-[420px] text-base text-fg-primary">
+                  <thead>
+                    <tr className="border-b border-border text-left">
+                      <th className="p-2">Jurisdiction</th>
+                      <th className="p-2">Tax collected</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {Object.keys(stripeReconcile.by_jurisdiction).length === 0 ? (
+                      <tr>
+                        <td className="p-2 text-fg-muted" colSpan={2}>
+                          No Stripe-collected tax in this range.
+                        </td>
+                      </tr>
+                    ) : (
+                      Object.entries(stripeReconcile.by_jurisdiction).map(
+                        ([jurisdiction, amount]) => (
+                          <tr key={jurisdiction} className="border-b border-border">
+                            <td className="p-2 font-mono">{jurisdiction}</td>
+                            <td className="p-2 tabular-nums">{amount}</td>
+                          </tr>
+                        ),
+                      )
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
         </>
       )}
     </main>
