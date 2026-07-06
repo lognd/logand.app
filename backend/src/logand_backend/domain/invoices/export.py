@@ -203,6 +203,7 @@ async def generate_invoice_pdf(
         business_details=cfg.invoice_business_details,
         contact_email=cfg.invoice_contact_email,
         zelle_handle=cfg.zelle_handle,
+        paypal_receive_email=cfg.paypal_receive_email,
         pay_url=data.pay_url,
     )
     # render_invoice_pdf shells out to latexmk -- real (if brief) CPU/IO

@@ -118,6 +118,10 @@ class InvoicePdfData(BaseModel):
     # whether to mention the real handle or fall back to bare "Zelle"
     # without a separate "is Zelle even offered" flag.
     zelle_handle: str | None = None
+    # None means no PayPal receive email is configured (cfg.paypal_receive
+    # _email unset) -- like zelle_handle, the template then shows a bare
+    # "PayPal" without a handle rather than needing a separate flag.
+    paypal_receive_email: str | None = None
     pay_url: str | None = None
     memo: str | None = None
 
@@ -137,6 +141,7 @@ def build_invoice_pdf_data(
     business_details: str,
     contact_email: str,
     zelle_handle: str | None = None,
+    paypal_receive_email: str | None = None,
     pay_url: str | None,
 ) -> InvoicePdfData:
     """Assembles + LaTeX-escapes everything the template needs from raw
@@ -190,6 +195,9 @@ def build_invoice_pdf_data(
         line_items=line_item_data,
         contact_email=latex_escape(contact_email),
         zelle_handle=latex_escape(zelle_handle) if zelle_handle else None,
+        paypal_receive_email=(
+            latex_escape(paypal_receive_email) if paypal_receive_email else None
+        ),
         pay_url=pay_url,
         memo=latex_escape(memo) if memo else None,
     )

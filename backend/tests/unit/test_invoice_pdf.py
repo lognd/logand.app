@@ -129,6 +129,45 @@ def test_build_invoice_pdf_data_zelle_handle_defaults_to_none() -> None:
     assert data.zelle_handle is None
 
 
+def test_build_invoice_pdf_data_carries_paypal_receive_email_when_configured() -> None:
+    data = build_invoice_pdf_data(
+        invoice_id="abc-123",
+        status="sent",
+        currency="usd",
+        amount_total=Decimal("50.00"),
+        due_date=None,
+        created_at="2026-07-01",
+        memo=None,
+        customer_email="customer@example.com",
+        line_items=[],
+        business_name="logand.app",
+        business_details="",
+        contact_email="billing@logand.app",
+        paypal_receive_email="pay@example.com",
+        pay_url=None,
+    )
+    assert data.paypal_receive_email == "pay@example.com"
+
+
+def test_build_invoice_pdf_data_paypal_receive_email_defaults_to_none() -> None:
+    data = build_invoice_pdf_data(
+        invoice_id="abc-123",
+        status="sent",
+        currency="usd",
+        amount_total=Decimal("50.00"),
+        due_date=None,
+        created_at="2026-07-01",
+        memo=None,
+        customer_email="customer@example.com",
+        line_items=[],
+        business_name="logand.app",
+        business_details="",
+        contact_email="billing@logand.app",
+        pay_url=None,
+    )
+    assert data.paypal_receive_email is None
+
+
 def test_build_invoice_pdf_data_zero_decimal_currency_has_no_fractional_digits() -> (
     None
 ):
@@ -279,13 +318,18 @@ def test_template_mentions_real_zelle_handle_when_configured() -> None:
         business_details="",
         contact_email="billing@logand.app",
         zelle_handle="logan@example.com",
+        paypal_receive_email="pay@example.com",
         pay_url=None,
     )
     env = _template_env()
     template = env.get_template("invoice.tex.jinja")
     tex_source = template.render(**data.__dict__)
 
-    assert "Zelle (logan@example.com)" in tex_source
+    # Each configured handle is rendered as a bold method label with the
+    # handle set off in monospace (\texttt), distinct from prose -- see the
+    # template's own KEEP IN SYNC note tying this to Pay.tsx's font-mono.
+    assert r"\textbf{Zelle}\quad\texttt{logan@example.com}" in tex_source
+    assert r"\textbf{PayPal}\quad\texttt{pay@example.com}" in tex_source
     assert tex_source.count("{") == tex_source.count("}")
 
 
@@ -309,7 +353,12 @@ def test_template_falls_back_to_bare_zelle_when_not_configured() -> None:
     template = env.get_template("invoice.tex.jinja")
     tex_source = template.render(**data.__dict__)
 
-    assert "Zelle, PayPal" in tex_source
+    # No handles configured -> bare bold labels, no monospace handle set off
+    # after them.
+    assert r"\textbf{Zelle}" in tex_source
+    assert r"\textbf{PayPal}" in tex_source
+    assert r"\textbf{In person}" in tex_source
+    assert r"\texttt{" not in tex_source
     assert tex_source.count("{") == tex_source.count("}")
 
 
