@@ -13,6 +13,7 @@ import { AdminPortal } from "./app/routes/admin/Portal";
 import { AdminInvoices } from "./app/routes/admin/Invoices";
 import { AdminStats } from "./app/routes/admin/Stats";
 import { AdminTaxReport } from "./app/routes/admin/TaxReport";
+import { AdminTaxClassifications } from "./app/routes/admin/TaxClassifications";
 import { AdminBudget } from "./app/routes/admin/Budget";
 import { AdminInventory } from "./app/routes/admin/Inventory";
 import { AdminBom } from "./app/routes/admin/Bom";
@@ -65,6 +66,14 @@ export function App() {
           element={
             <AdminGuard>
               <AdminTaxReport />
+            </AdminGuard>
+          }
+        />
+        <Route
+          path="/admin/tax/classifications"
+          element={
+            <AdminGuard>
+              <AdminTaxClassifications />
             </AdminGuard>
           }
         />

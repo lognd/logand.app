@@ -39,6 +39,14 @@ export function AdminPortal() {
           </p>
         </li>
         <li>
+          <Link to="/admin/tax/classifications" className={LINK_CLASS}>
+            Tax classifications
+          </Link>
+          <p className="text-base text-fg-muted">
+            Review and confirm how items are categorized for tax.
+          </p>
+        </li>
+        <li>
           <Link to="/admin/budget" className={LINK_CLASS}>
             Budget
           </Link>
