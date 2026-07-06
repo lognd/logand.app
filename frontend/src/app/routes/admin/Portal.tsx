@@ -30,6 +30,15 @@ export function AdminPortal() {
           </p>
         </li>
         <li>
+          <Link to="/admin/invoices/tax-report" className={LINK_CLASS}>
+            Tax report
+          </Link>
+          <p className="text-base text-fg-muted">
+            Sales and tax collected by jurisdiction and category for a date
+            range -- the breakdown needed to file.
+          </p>
+        </li>
+        <li>
           <Link to="/admin/budget" className={LINK_CLASS}>
             Budget
           </Link>

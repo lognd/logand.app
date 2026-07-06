@@ -12,6 +12,7 @@ import { ResetPassword } from "./app/routes/public/ResetPassword";
 import { AdminPortal } from "./app/routes/admin/Portal";
 import { AdminInvoices } from "./app/routes/admin/Invoices";
 import { AdminStats } from "./app/routes/admin/Stats";
+import { AdminTaxReport } from "./app/routes/admin/TaxReport";
 import { AdminBudget } from "./app/routes/admin/Budget";
 import { AdminInventory } from "./app/routes/admin/Inventory";
 import { AdminBom } from "./app/routes/admin/Bom";
@@ -56,6 +57,14 @@ export function App() {
           element={
             <AdminGuard>
               <AdminStats />
+            </AdminGuard>
+          }
+        />
+        <Route
+          path="/admin/invoices/tax-report"
+          element={
+            <AdminGuard>
+              <AdminTaxReport />
             </AdminGuard>
           }
         />
