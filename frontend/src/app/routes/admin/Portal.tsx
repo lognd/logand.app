@@ -47,6 +47,14 @@ export function AdminPortal() {
           </p>
         </li>
         <li>
+          <Link to="/admin/tax/rates" className={LINK_CLASS}>
+            Tax rates
+          </Link>
+          <p className="text-base text-fg-muted">
+            Enter and cite the sales/use tax rates you collect.
+          </p>
+        </li>
+        <li>
           <Link to="/admin/budget" className={LINK_CLASS}>
             Budget
           </Link>

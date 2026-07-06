@@ -74,3 +74,35 @@ export function getStripeReconcile(
     `/api/admin/tax/stripe-reconcile?${params.toString()}`,
   );
 }
+
+// One rate row in the tax_rules knowledge base (docs/design/16-sales-tax.md)
+// -- admin-entered and government-cited. Claude only ever classifies items
+// into a category; it never sets or approves the rate itself, so every row
+// here traces back to a real citation_url an admin typed in.
+export interface TaxRule {
+  id: string;
+  jurisdiction: string;
+  tax_type: string;
+  category: string;
+  rate: string;
+  source: string;
+  citation_url: string | null;
+  effective_from: string;
+}
+
+export function listTaxRules(): Promise<TaxRule[]> {
+  return apiGet<TaxRule[]>("/api/admin/tax/rules");
+}
+
+export interface TaxRuleInput {
+  jurisdiction: string;
+  tax_type: string;
+  category?: string;
+  rate: string;
+  source: string;
+  citation_url: string;
+}
+
+export function addTaxRule(input: TaxRuleInput): Promise<TaxRule> {
+  return apiPost<TaxRule>("/api/admin/tax/rules", input);
+}
