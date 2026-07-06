@@ -1,9 +1,26 @@
 # 16 - Taxes (sales, use, import duty, ...)
 
-Status: design + Phase 1 foundation in progress. The model below is
-normalized to support ARBITRARY tax types per line (not just sales tax),
-because the business also owes import duty/customs on parts (e.g. PCBs) and
-use tax, and "extensibility is the key idea."
+Status: Phase 1 built; Phase 3/4 engine scaffolding built and KEY-READY
+(inert until a Claude key + rate data are supplied). The model is normalized
+to support ARBITRARY tax types per line (not just sales tax), because the
+business also owes import duty/customs on parts (e.g. PCBs) and use tax, and
+"extensibility is the key idea."
+
+## What is built vs. what needs data (be honest)
+
+Built and tested: the per-line charge model + computation + PDF/exports/API
+(Phase 1); the `tax_rules` knowledge base + deterministic rate lookup; the
+Claude categorizer (pydantic-enforced, DB-vocabulary-constrained, TTL-cached
+and persisted for audit in `tax_categorization_cache`); the
+`scripts/fetch_tax_rules.py` loader; and the admin tax-filing report
+(`build_tax_report` + GET /api/admin/invoices/tax-report).
+
+Not built, and NOT fakeable in code: authoritative rate/duty DATA. Correct US
+sales/use tax needs a live per-jurisdiction feed (thousands of jurisdictions,
+constantly changing) and import duty needs HTS classification. Point
+`fetch_tax_rules.py` at a real source (commercial API, government tables, or a
+curated file) before trusting any number. Tax filings still need professional
+review -- the report is an aid, not advice.
 
 ## Why
 
