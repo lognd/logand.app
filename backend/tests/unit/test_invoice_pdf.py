@@ -408,3 +408,55 @@ def test_template_omits_pay_online_line_when_pay_url_is_none() -> None:
     tex_source = template.render(**data.__dict__)
 
     assert "pay this invoice online" not in tex_source
+
+
+def _pdf_data_with_tax(subtotal, tax_amount, amount_total):
+    return build_invoice_pdf_data(
+        invoice_id="abc-123",
+        status="sent",
+        currency="usd",
+        amount_total=Decimal(amount_total),
+        subtotal=Decimal(subtotal),
+        tax_amount=Decimal(tax_amount),
+        due_date=None,
+        created_at="2026-07-01",
+        memo=None,
+        customer_email="customer@example.com",
+        line_items=[],
+        business_name="logand.app",
+        business_details="",
+        contact_email="billing@logand.app",
+        pay_url=None,
+    )
+
+
+def test_build_invoice_pdf_data_sets_has_tax_when_tax_present() -> None:
+    data = _pdf_data_with_tax("480.00", "33.60", "513.60")
+    assert data.has_tax is True
+    assert data.subtotal == "480.00"
+    assert data.tax_amount == "33.60"
+
+
+def test_build_invoice_pdf_data_no_tax_flag_when_zero() -> None:
+    # A zero-tax invoice keeps the single Total row (has_tax False), the same
+    # as before the tax feature existed.
+    data = _pdf_data_with_tax("480.00", "0.00", "480.00")
+    assert data.has_tax is False
+
+
+def test_template_shows_subtotal_and_tax_rows_when_taxed() -> None:
+    data = _pdf_data_with_tax("480.00", "33.60", "513.60")
+    env = _template_env()
+    tex = env.get_template("invoice.tex.jinja").render(**data.__dict__)
+    assert "Subtotal:" in tex
+    assert "Tax:" in tex
+    assert "480.00" in tex and "33.60" in tex and "513.60" in tex
+    assert tex.count("{") == tex.count("}")
+
+
+def test_template_omits_subtotal_tax_rows_when_no_tax() -> None:
+    data = _pdf_data_with_tax("480.00", "0.00", "480.00")
+    env = _template_env()
+    tex = env.get_template("invoice.tex.jinja").render(**data.__dict__)
+    assert "Subtotal:" not in tex
+    assert "Tax:" not in tex

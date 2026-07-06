@@ -95,6 +95,9 @@ def test_render_invoice_pdf_raises_on_genuinely_broken_input() -> None:
         currency_upper="USD",
         currency_symbol="$",  # deliberately unescaped
         amount_total="10.00",
+        subtotal="10.00",
+        tax_amount="0.00",
+        has_tax=False,
         line_items=[],
         contact_email="billing@logand.app",
     )
