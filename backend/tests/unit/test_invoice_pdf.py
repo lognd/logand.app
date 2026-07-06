@@ -328,8 +328,8 @@ def test_template_mentions_real_zelle_handle_when_configured() -> None:
     # Each configured handle is rendered as a bold method label with the
     # handle set off in monospace (\texttt), distinct from prose -- see the
     # template's own KEEP IN SYNC note tying this to Pay.tsx's font-mono.
-    assert r"\textbf{Zelle}\quad\texttt{logan@example.com}" in tex_source
-    assert r"\textbf{PayPal}\quad\texttt{pay@example.com}" in tex_source
+    assert r"\textbf{Zelle:}\quad\texttt{logan@example.com}" in tex_source
+    assert r"\textbf{PayPal:}\quad\texttt{pay@example.com}" in tex_source
     assert tex_source.count("{") == tex_source.count("}")
 
 
@@ -353,11 +353,11 @@ def test_template_falls_back_to_bare_zelle_when_not_configured() -> None:
     template = env.get_template("invoice.tex.jinja")
     tex_source = template.render(**data.__dict__)
 
-    # No handles configured -> bare bold labels, no monospace handle set off
-    # after them.
+    # No handles configured -> bare bold labels (no colon, since the colon
+    # only prefixes a handle), no monospace handle set off after them.
     assert r"\textbf{Zelle}" in tex_source
     assert r"\textbf{PayPal}" in tex_source
-    assert r"\textbf{In person}" in tex_source
+    assert r"\textbf{In-Person:}" in tex_source
     assert r"\texttt{" not in tex_source
     assert tex_source.count("{") == tex_source.count("}")
 
@@ -407,4 +407,4 @@ def test_template_omits_pay_online_line_when_pay_url_is_none() -> None:
     template = env.get_template("invoice.tex.jinja")
     tex_source = template.render(**data.__dict__)
 
-    assert "Pay online" not in tex_source
+    assert "pay this invoice online" not in tex_source
