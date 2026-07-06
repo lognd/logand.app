@@ -86,6 +86,17 @@ class AppConfig(BaseModel):
     # invoices created afterward carry the new state, historical ones keep
     # what they were actually filed under. See docs/design/16-sales-tax.md.
     invoice_tax_origin_state: str = "TN"
+    # Phase 4 tax categorizer (docs/design/16-sales-tax.md). ANTHROPIC_API_KEY
+    # gates the whole categorizer: unset (None) means the Claude call is never
+    # made and invoices fall back to whatever charges an admin entered by
+    # hand. Model + cache TTL are tunable; the model default follows the
+    # claude-api skill (latest Opus).
+    anthropic_api_key: str | None = None
+    tax_categorizer_model: str = "claude-opus-4-8"
+    # How long a categorization result is trusted before it is re-derived
+    # (seconds). Lets a rate change in the knowledge base flow through
+    # without re-calling Claude on every invoice for the same parts.
+    tax_categorizer_cache_ttl_seconds: int = 60 * 60 * 24 * 30
     # None (not "") -- same "not configured yet" convention as
     # paypal_client_id below: a customer's Pay page only shows Zelle as an
     # option once this is actually set, rather than always showing a
@@ -197,6 +208,8 @@ class AppConfig(BaseModel):
             "INVOICE_BUSINESS_DETAILS": "invoice_business_details",
             "INVOICE_CONTACT_EMAIL": "invoice_contact_email",
             "INVOICE_TAX_ORIGIN_STATE": "invoice_tax_origin_state",
+            "ANTHROPIC_API_KEY": "anthropic_api_key",
+            "TAX_CATEGORIZER_MODEL": "tax_categorizer_model",
             "ZELLE_HANDLE": "zelle_handle",
             "PAYPAL_RECEIVE_EMAIL": "paypal_receive_email",
             "SMTP_HOST": "smtp_host",
