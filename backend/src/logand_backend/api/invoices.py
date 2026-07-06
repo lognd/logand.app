@@ -35,6 +35,7 @@ from logand_backend.domain.invoices.service import (
     void_invoice,
 )
 from logand_backend.domain.invoices.stats import InvoiceStats, get_invoice_stats
+from logand_backend.domain.invoices.tax.report import build_tax_report
 from logand_backend.domain.notifications.notify import (
     notify_invoice_sent,
     notify_payment_received,
@@ -95,9 +96,7 @@ def _invoice_summary(invoice: Invoice) -> dict:
         "amount_total": str(
             quantize_to_currency(invoice.amount_total, invoice.currency)
         ),
-        "tax_amount": str(
-            quantize_to_currency(invoice.tax_amount, invoice.currency)
-        ),
+        "tax_amount": str(quantize_to_currency(invoice.tax_amount, invoice.currency)),
         "subtotal": str(
             quantize_to_currency(
                 invoice.amount_total - invoice.tax_amount, invoice.currency
@@ -202,6 +201,56 @@ async def get_stats(
     # registration order, and "/{invoice_id}" would otherwise swallow
     # "/stats" as a literal (invalid) invoice_id first.
     return await get_invoice_stats(db)
+
+
+@router.get("/tax-report")
+async def get_tax_report(
+    from_date: date,
+    to_date: date,
+    currency: str = "usd",
+    _admin: SessionInfo = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Tax-filing breakdown over [from_date, to_date): sales by category, tax
+    collected by jurisdiction + type, and which jurisdictions you must file
+    for. Also declared before GET /{invoice_id} (see get_stats). See
+    docs/design/16-sales-tax.md."""
+    from datetime import datetime, time, timezone
+
+    report = await build_tax_report(
+        db,
+        from_date=datetime.combine(from_date, time.min, tzinfo=timezone.utc),
+        to_date=datetime.combine(to_date, time.min, tzinfo=timezone.utc),
+        currency=currency,
+    )
+    return {
+        "from_date": report.from_date.date().isoformat(),
+        "to_date": report.to_date.date().isoformat(),
+        "currency": report.currency,
+        "invoice_count": report.invoice_count,
+        "total_sales": str(quantize_to_currency(report.total_sales, currency)),
+        "total_tax_collected": str(
+            quantize_to_currency(report.total_tax_collected, currency)
+        ),
+        "filing_jurisdictions": report.filing_jurisdictions,
+        "by_jurisdiction": [
+            {
+                "jurisdiction": r.jurisdiction,
+                "tax_type": r.tax_type,
+                "taxable_base": str(quantize_to_currency(r.taxable_base, currency)),
+                "tax_collected": str(quantize_to_currency(r.tax_collected, currency)),
+            }
+            for r in report.by_jurisdiction
+        ],
+        "by_category": [
+            {
+                "category": r.category,
+                "gross": str(quantize_to_currency(r.gross, currency)),
+                "taxable_gross": str(quantize_to_currency(r.taxable_gross, currency)),
+            }
+            for r in report.by_category
+        ],
+    }
 
 
 @router.get("/{invoice_id}")
