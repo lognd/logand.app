@@ -58,6 +58,11 @@ class TaxRule(Base):
     category: Mapped[str] = mapped_column(Text, nullable=False, default="*")
     rate: Mapped[Decimal] = mapped_column(Numeric(8, 5), nullable=False, default=0)
     source: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Government-source citation URL for this rate (docs/design/16-sales-tax
+    # .md) -- required on every admin-entered rule at the domain layer
+    # (see domain/invoices/tax/citation.py); nullable here only so older
+    # rows loaded before this field existed remain valid.
+    citation_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     effective_from: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

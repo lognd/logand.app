@@ -41,9 +41,13 @@ perturb a rate already in the table.
     python -m logand_backend.scripts.fetch_tax_rules --source file --path rules.json
     python -m logand_backend.scripts.fetch_tax_rules --source hts_file --path hts.csv
 
-`rules.json` is a list of objects:
+`rules.json` is a list of objects. `source` and `citation_url` are required
+-- citation_url must be a government source (.gov/.mil/.us, or an
+allowlisted domain like floridarevenue.com; see
+domain/invoices/tax/citation.py):
     [{"jurisdiction": "US-TN", "tax_type": "sales", "category": "*",
-      "rate": "0.07", "source": "TN DOR 2026"}, ...]
+      "rate": "0.07", "source": "TN DOR 2026",
+      "citation_url": "https://www.tn.gov/revenue.html"}, ...]
 
 `hts.csv`/`hts.json` is a USITC-style tariff export -- see `_parse_hts_file`
 below for the columns it understands.
@@ -61,25 +65,38 @@ from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import or_, select
+from typani.result import Err, Ok, Result
 
 from logand_backend.app.config import AppConfig
 from logand_backend.db import base as db_base
 from logand_backend.db.models.tax import TaxRule
+from logand_backend.domain.invoices.tax.citation import assert_government_citation
 from logand_backend.logging import get_logger
 
 _log = get_logger(__name__)
 
 
 class RuleInput(BaseModel):
-    """A rate rule to load. Validated before it touches the DB."""
+    """A rate rule to load. Validated before it touches the DB. Every rule
+    must carry a citation_url -- the government-source policy
+    (domain/invoices/tax/citation.py) is enforced separately, at the point a
+    rule is about to be written, so this only checks basic URL shape."""
 
     jurisdiction: str
     tax_type: str
     category: str = "*"
     rate: Decimal = Field(ge=0)
-    source: str | None = None
+    source: str = Field(min_length=1)
+    citation_url: str
+
+    @field_validator("citation_url")
+    @classmethod
+    def _validate_citation_url_shape(cls, v: str) -> str:
+        if not v or not (v.startswith("http://") or v.startswith("https://")):
+            raise ValueError("citation_url must be a non-empty http(s) URL")
+        return v
 
 
 def _load_file(path: Path) -> list[RuleInput]:
@@ -187,6 +204,10 @@ def _parse_hts_file(path: Path, year: str | None = None) -> list[RuleInput]:
                 category=code,
                 rate=rate,
                 source=source,
+                # The USITC HTS export itself is the government source for
+                # every row it yields -- hts.usitc.gov is the canonical HTS
+                # landing page (a .gov host).
+                citation_url="https://hts.usitc.gov/",
             )
         )
     return rules
@@ -200,6 +221,48 @@ _PROVIDERS = {
 }
 
 
+async def _upsert_one_rule(
+    session, r: RuleInput, now: datetime
+) -> tuple[TaxRule | None, int]:
+    """Effective-dates out any superseded current rule for the same
+    (jurisdiction, tax_type, category) whose rate actually changed, and
+    inserts a new current row. Returns (new row, superseded count); the row
+    is None if the rate was unchanged (idempotent no-op -- no new row,
+    nothing closed out)."""
+    current = (
+        (
+            await session.execute(
+                select(TaxRule).where(
+                    TaxRule.jurisdiction == r.jurisdiction,
+                    TaxRule.tax_type == r.tax_type,
+                    TaxRule.category == r.category,
+                    TaxRule.effective_to.is_(None),
+                    or_(TaxRule.effective_from <= now, TaxRule.effective_from > now),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    # A single "current" (open-ended) rule is expected; if the rate is
+    # unchanged, leave it alone (idempotent). Otherwise close it out.
+    if any(c.rate == r.rate for c in current):
+        return None, 0
+    for c in current:
+        c.effective_to = now
+    row = TaxRule(
+        jurisdiction=r.jurisdiction,
+        tax_type=r.tax_type,
+        category=r.category,
+        rate=r.rate,
+        source=r.source,
+        citation_url=r.citation_url,
+        effective_from=now,
+    )
+    session.add(row)
+    return row, len(current)
+
+
 async def upsert_rules(session, rules: Iterable[RuleInput]) -> tuple[int, int]:
     """Insert new rules, effective-dating out any superseded current rule for
     the same (jurisdiction, tax_type, category) whose rate actually changed.
@@ -209,44 +272,74 @@ async def upsert_rules(session, rules: Iterable[RuleInput]) -> tuple[int, int]:
     inserted = 0
     superseded = 0
     for r in rules:
-        current = (
+        row, closed = await _upsert_one_rule(session, r, now)
+        if row is None:
+            continue
+        inserted += 1
+        superseded += closed
+    await session.flush()
+    return inserted, superseded
+
+
+async def add_tax_rule(
+    session, cfg: AppConfig, rule: RuleInput
+) -> Result[TaxRule, str]:
+    """Adds one admin-entered tax rule to the knowledge base. Rejects any
+    rule whose citation_url isn't a recognized government source (see
+    domain/invoices/tax/citation.py) -- Claude only ever classifies items
+    into categories; a human enters and cites the rate itself. Reuses the
+    same effective-dating logic as the bulk loader (upsert_rules) so a
+    manually-entered rate change supersedes the prior rule the same way."""
+    try:
+        assert_government_citation(rule.citation_url, cfg.citation_allowed_domains)
+    except ValueError as exc:
+        _log.info(
+            "add_tax_rule: rejected non-government citation",
+            extra={"citation_url": rule.citation_url},
+        )
+        return Err(str(exc))
+    now = datetime.now(timezone.utc)
+    row, _closed = await _upsert_one_rule(session, rule, now)
+    if row is None:
+        # Rate unchanged from the current rule -- fetch and return it so the
+        # caller still gets a row back rather than an ambiguous no-op.
+        existing = (
             (
                 await session.execute(
                     select(TaxRule).where(
-                        TaxRule.jurisdiction == r.jurisdiction,
-                        TaxRule.tax_type == r.tax_type,
-                        TaxRule.category == r.category,
+                        TaxRule.jurisdiction == rule.jurisdiction,
+                        TaxRule.tax_type == rule.tax_type,
+                        TaxRule.category == rule.category,
                         TaxRule.effective_to.is_(None),
-                        or_(
-                            TaxRule.effective_from <= now, TaxRule.effective_from > now
-                        ),
                     )
                 )
             )
             .scalars()
-            .all()
+            .first()
         )
-        # A single "current" (open-ended) rule is expected; if the rate is
-        # unchanged, leave it alone (idempotent). Otherwise close it out.
-        unchanged = any(c.rate == r.rate for c in current)
-        if unchanged:
-            continue
-        for c in current:
-            c.effective_to = now
-            superseded += 1
-        session.add(
-            TaxRule(
-                jurisdiction=r.jurisdiction,
-                tax_type=r.tax_type,
-                category=r.category,
-                rate=r.rate,
-                source=r.source,
-                effective_from=now,
+        if existing is None:
+            # Shouldn't happen: _upsert_one_rule only returns None when it
+            # found a current rule with the same rate, so one must exist.
+            _log.error(
+                "add_tax_rule: unchanged rate but no current rule found",
+                extra={
+                    "jurisdiction": rule.jurisdiction,
+                    "tax_type": rule.tax_type,
+                    "category": rule.category,
+                },
             )
-        )
-        inserted += 1
+            return Err("internal error: could not resolve the current rule")
+        row = existing
     await session.flush()
-    return inserted, superseded
+    _log.info(
+        "add_tax_rule: rule added",
+        extra={
+            "jurisdiction": rule.jurisdiction,
+            "tax_type": rule.tax_type,
+            "category": rule.category,
+        },
+    )
+    return Ok(row)
 
 
 async def _amain() -> int:
@@ -269,6 +362,13 @@ async def _amain() -> int:
         rules = _load_file(args.path)
 
     cfg = AppConfig.from_external(argparse.Namespace())
+
+    # Every rule must cite a government source before it ever touches the
+    # DB -- fail the whole run rather than partially loading rates that
+    # can't be traced back to an authoritative source.
+    for r in rules:
+        assert_government_citation(r.citation_url, cfg.citation_allowed_domains)
+
     db_base.init_engine(cfg.database_url)
     session = db_base.get_session()
     try:

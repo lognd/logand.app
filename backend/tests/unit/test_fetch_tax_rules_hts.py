@@ -27,6 +27,7 @@ def test_parse_hts_file_csv_free_percent_and_skips_compound(tmp_path: Path) -> N
     assert free_rule.jurisdiction == "US-customs"
     assert free_rule.tax_type == "import_duty"
     assert free_rule.source == "USITC HTS 2026"
+    assert free_rule.citation_url == "https://hts.usitc.gov/"
 
     pct_rule = by_code["8542.31.00"]
     assert pct_rule.rate == Decimal("0.026")

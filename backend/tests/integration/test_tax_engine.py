@@ -45,7 +45,15 @@ async def test_lookup_rate_none_when_no_rule(db_session) -> None:
 
 
 async def test_upsert_rules_is_idempotent_and_supersedes(db_session) -> None:
-    rules = [RuleInput(jurisdiction="US-TN", tax_type="sales", rate=Decimal("0.07"))]
+    rules = [
+        RuleInput(
+            jurisdiction="US-TN",
+            tax_type="sales",
+            rate=Decimal("0.07"),
+            source="TN DOR 2026",
+            citation_url="https://www.tn.gov/revenue.html",
+        )
+    ]
     inserted, superseded = await upsert_rules(db_session, rules)
     assert (inserted, superseded) == (1, 0)
 
@@ -56,7 +64,15 @@ async def test_upsert_rules_is_idempotent_and_supersedes(db_session) -> None:
     # A changed rate closes out the old rule and inserts a new current one.
     inserted, superseded = await upsert_rules(
         db_session,
-        [RuleInput(jurisdiction="US-TN", tax_type="sales", rate=Decimal("0.08"))],
+        [
+            RuleInput(
+                jurisdiction="US-TN",
+                tax_type="sales",
+                rate=Decimal("0.08"),
+                source="TN DOR 2026",
+                citation_url="https://www.tn.gov/revenue.html",
+            )
+        ],
     )
     assert (inserted, superseded) == (1, 1)
     hit = await knowledge_base.lookup_rate(
