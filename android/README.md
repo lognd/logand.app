@@ -62,22 +62,90 @@ the repo root's `make install`/`make test` delegate to) wrap the same
 automatically when it's needed -- see "Building on aarch64 Linux" below.
 Prefer them unless you need a specific Gradle task directly.
 
-## Installing on a real device (e.g. Pixel 7a)
+## Release signing
 
-Every push of a `vX.Y.Z` tag builds a debug-signed APK and attaches it
-to a GitHub Release automatically (`.github/workflows/release-android.yml`)
--- **that's the easiest path**: grab `app-debug.apk` from
-[the latest release](../../releases/latest) instead of building it
-yourself. It's debug-signed (this project has no Play-Store-grade
-release keystore), which just means Android will label it as coming
-from an unverified developer during install -- expected, not a warning
-to work around.
+Every push of a `vX.Y.Z` tag builds a **release**-signed APK and
+attaches it to a GitHub Release automatically
+(`.github/workflows/release-android.yml`) -- **grabbing `app-release.apk`
+from [the latest release](../../releases/latest)** is the easiest way
+to install it, and also what makes in-app auto-update (`ui/update/` in
+`:app`) possible at all: Android refuses to install an APK over an
+existing install that was signed with a DIFFERENT key, so every release
+must be signed with the exact same stable key or updating over a
+previous install fails with a signature-mismatch error instead of
+silently reinstalling.
+
+`app/build.gradle.kts`'s `release` signing config reads the keystore
+and its passwords from environment variables -- it is NEVER hardcoded
+and the keystore itself is NEVER committed. If none of these env vars
+are set (any local dev checkout), the `release` build type falls back
+to AGP's own auto-generated debug signing config and still builds fine
+-- it just won't be installable as an update over a real release build
+signed with the real key.
+
+### Generating the release keystore (do this once, keep the file safe)
+
+```
+keytool -genkeypair \
+  -v \
+  -keystore logand-release.jks \
+  -alias logand \
+  -keyalg RSA \
+  -keysize 2048 \
+  -validity 10000
+```
+
+`keytool` will prompt for a keystore password and a key password (they
+may be the same value) and some certificate identity fields (name,
+org, etc. -- any values are fine, none of this is checked by Android).
+**Back this file up somewhere durable and private** -- if it's lost,
+no future release can ever update past whatever was last installed
+with it; the only fix at that point is asking every user to uninstall
+and reinstall.
+
+### GitHub secrets to set (Settings -> Secrets and variables -> Actions)
+
+| Secret name                 | Value                                                              |
+|------------------------------|---------------------------------------------------------------------|
+| `LOGAND_KEYSTORE_B64`        | `base64 -w0 logand-release.jks` (the whole keystore file, base64-encoded, no line wraps) |
+| `LOGAND_KEYSTORE_PASSWORD`   | the keystore password entered above (`-storepass`)                  |
+| `LOGAND_KEY_ALIAS`           | the `-alias` used above (`logand`, if you copied the command as-is) |
+| `LOGAND_KEY_PASSWORD`        | the key password entered above (`-keypass`)                         |
+
+To produce the `LOGAND_KEYSTORE_B64` value:
+
+```
+base64 -w0 logand-release.jks > logand-release.jks.b64
+```
+
+then paste the contents of `logand-release.jks.b64` as the secret's
+value. (`-w0` disables line-wrapping -- some base64 implementations
+default to wrapping at 76 columns, which is harmless for decoding but
+easy to paste wrong; `-w0` avoids the question entirely.)
+
+To build a signed release APK locally instead of through CI (e.g. to
+test the signing config itself), export the same four variables and
+run `assembleRelease` directly:
+
+```
+export LOGAND_KEYSTORE_PATH=/path/to/logand-release.jks
+export LOGAND_KEYSTORE_PASSWORD=...
+export LOGAND_KEY_ALIAS=logand
+export LOGAND_KEY_PASSWORD=...
+./gradlew :app:assembleRelease
+```
+
+(`LOGAND_KEYSTORE_PATH` -- a real path on disk -- is preferred over
+`LOGAND_KEYSTORE_B64` for local use; CI uses `_B64` because a GitHub
+secret is text, not a file.)
+
+## Installing on a real device (e.g. Pixel 7a)
 
 Steps on a Pixel 7a (stock Android 14, but this is the same on any
 modern Android device -- menu wording may vary slightly by OS version):
 
 1. **Download the APK directly on the phone.** Open the release page's
-   `app-debug.apk` link in Chrome (or transfer the file over any other
+   `app-release.apk` link in Chrome (or transfer the file over any other
    way -- `adb push`, a cable, a cloud drive -- and open it from Files).
 2. **Allow installs from this source, when prompted.** The first time
    you open a downloaded APK, Android blocks it and offers a link to
@@ -87,12 +155,34 @@ modern Android device -- menu wording may vary slightly by OS version):
 3. **Tap Install**, then **Open**.
 
 To reinstall a newer version later, repeat with the new release's APK
--- Android treats a debug-signed APK with a matching `applicationId`
+-- Android treats a release-signed APK with a matching `applicationId`
 (`app.logand.mobile`) as an update over the previous install as long as
-it's signed with the exact same debug key, which it always will be
-here (AGP's own generated debug keystore, not a per-machine one, since
-every build in this repo's CI runs through the same checked-in Gradle
-config).
+it's signed with the exact same key, which every CI-built release now
+is (see "Release signing" above). The in-app update banner (see
+"In-app auto-update" below) automates this download step for you.
+
+## In-app auto-update
+
+On launch (once logged in), the app queries GitHub's public Releases
+API (`https://api.github.com/repos/lognd/logand.app/releases/latest`,
+see `core/.../update/UpdateChecker.kt`) and compares the latest
+release's tag against its own running version
+(`BuildConfig.VERSION_NAME`, generated from `versionName` in
+`app/build.gradle.kts`). If a newer release with an attached `.apk`
+asset exists, a banner offers to download and install it -- tapping
+**Update** downloads the APK, then hands it to the system package
+installer via `Intent.ACTION_VIEW` (see `ui/update/ApkInstaller.kt`).
+Nothing installs silently: the system installer always shows its own
+confirmation screen, and if this app isn't currently allowed to prompt
+installs (`REQUEST_INSTALL_PACKAGES` + the per-app "install unknown
+apps" toggle, API 26+), the user is routed to the settings screen that
+grants it instead of the install silently failing.
+
+This only works because every release shares the one stable signing
+key described above -- an update download signed with a different key
+than the currently-installed app fails to install with a
+signature-mismatch error (a real Android OS behavior, not something
+this app can catch or work around).
 
 ### Installing over USB (`adb`) instead
 

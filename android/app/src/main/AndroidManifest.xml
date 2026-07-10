@@ -2,13 +2,23 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- Talks to the real backend over HTTPS — INTERNET is the only
+    <!-- Talks to the real backend over HTTPS - INTERNET is the only
          permission needed for that. CAMERA is requested at runtime (not
          declared as a hard requirement) since receipt capture also
          supports picking an existing photo, so the app should still be
          usable on a device with no camera or with the permission denied. -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.CAMERA" />
+    <!-- Auto-update (ui/update/ApkInstaller.kt) hands a downloaded APK
+         to the system package installer via ACTION_VIEW; this
+         permission is what lets that Intent actually prompt an install
+         rather than being silently blocked. It does NOT grant silent
+         install: the system installer always shows its own confirmation
+         UI, and ApkInstaller.canRequestInstalls() additionally checks
+         the per-app "install unknown apps" toggle before firing the
+         intent at all (API 26+ gates this per-source-app, not with a
+         runtime permission dialog). -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-feature
         android:name="android.hardware.camera"
         android:required="false" />
@@ -34,7 +44,7 @@
 
         <!-- Receipt photo capture writes to this app's own cache dir and
              hands a content:// Uri to the system camera app via
-             FileProvider — required on modern Android (a plain file://
+             FileProvider - required on modern Android (a plain file://
              Uri crossing the process boundary to the camera app throws
              FileUriExposedException on API 24+). -->
         <provider

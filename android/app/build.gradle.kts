@@ -1,8 +1,44 @@
+import java.util.Base64
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     jacoco
 }
+
+// Release signing material, sourced from env vars so nothing here is
+// ever hardcoded and no secret is ever committed. Either
+// LOGAND_KEYSTORE_PATH (a real file already on disk -- used by
+// local/manual release builds) or LOGAND_KEYSTORE_B64 (a base64-encoded
+// keystore -- used by CI, see .github/workflows/release-android.yml,
+// which decodes a GitHub secret into this env var) may supply the
+// keystore; PATH wins if both happen to be set. This module MUST still
+// build fine with none of this set at all (any local dev/debug
+// checkout) -- see hasReleaseSigningMaterial below and its use in
+// buildTypes.release, which falls back to the debug signingConfig
+// rather than failing the build or producing an unsigned APK.
+val releaseKeystoreFile: File? = run {
+    val keystorePath = System.getenv("LOGAND_KEYSTORE_PATH")
+    val keystoreB64 = System.getenv("LOGAND_KEYSTORE_B64")
+    when {
+        !keystorePath.isNullOrBlank() && File(keystorePath).isFile -> File(keystorePath)
+        !keystoreB64.isNullOrBlank() -> {
+            // Decoded once per configuration into the build dir -- never
+            // written into the source tree, never committed.
+            val decoded = layout.buildDirectory.file("release-keystore.jks").get().asFile
+            decoded.parentFile?.mkdirs()
+            decoded.writeBytes(Base64.getDecoder().decode(keystoreB64))
+            decoded
+        }
+        else -> null
+    }
+}
+val releaseKeystorePassword: String? = System.getenv("LOGAND_KEYSTORE_PASSWORD")
+val releaseKeyAlias: String? = System.getenv("LOGAND_KEY_ALIAS")
+val releaseKeyPassword: String? = System.getenv("LOGAND_KEY_PASSWORD")
+val hasReleaseSigningMaterial: Boolean =
+    releaseKeystoreFile != null && !releaseKeystorePassword.isNullOrBlank() &&
+        !releaseKeyAlias.isNullOrBlank() && !releaseKeyPassword.isNullOrBlank()
 
 android {
     namespace = "app.logand.mobile"
@@ -18,9 +54,36 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    signingConfigs {
+        if (hasReleaseSigningMaterial) {
+            create("release") {
+                storeFile = releaseKeystoreFile
+                storePassword = releaseKeystorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
+            // Falls back to the debug signingConfig (AGP's own
+            // auto-generated ~/.android/debug.keystore) whenever the
+            // real release keystore material isn't available -- this is
+            // what makes `./gradlew :app:assembleRelease` build cleanly
+            // on a fresh local checkout with no secrets configured at
+            // all. Auto-update (the whole point of this signingConfig)
+            // ONLY works between two builds signed with the SAME stable
+            // key, so this fallback path is a "still builds" guarantee,
+            // not a "still updatable" one -- only CI (which always has
+            // the real secret) produces the stable-signed APK that gets
+            // released.
+            signingConfig = if (hasReleaseSigningMaterial) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("debug")
+            }
         }
         debug {
             enableUnitTestCoverage = true
@@ -38,6 +101,13 @@ android {
 
     buildFeatures {
         compose = true
+        // Generates BuildConfig.VERSION_NAME/VERSION_CODE (mirroring
+        // defaultConfig above) -- the in-app updater (see
+        // ui/update/UpdateViewModel.kt) reads BuildConfig.VERSION_NAME
+        // as "the running app's own version" to compare against the
+        // latest GitHub release tag. AGP 8's default for this flag is
+        // false, so it needs this explicit opt-in.
+        buildConfig = true
     }
 
     composeOptions {

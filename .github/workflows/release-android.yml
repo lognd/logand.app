@@ -37,28 +37,42 @@ jobs:
         working-directory: android
         run: ./gradlew :core:test :app:testDebugUnitTest
 
-      # No release signing keystore exists for this project (see
-      # app/build.gradle.kts -- the `release` build type has no
-      # signingConfig) -- assembleRelease would produce an UNSIGNED,
-      # uninstallable APK. assembleDebug is real compilation (R8/
-      # resource processing/etc. all run) and AGP's auto-generated debug
-      # keystore makes the result directly installable via `adb install`
-      # or sideloading, which matches this project's own "personal
-      # project... expect to fork and adapt" framing (see root README's
-      # License section) -- not a Play-Store-grade signed release.
-      - name: build debug APK
+      # Release signing -- app/build.gradle.kts's `release` signingConfig
+      # reads these exact env vars (LOGAND_KEYSTORE_B64 plus the three
+      # passwords/alias below) and falls back to the debug signingConfig
+      # if any are missing, so this step only produces a STABLE-signed
+      # APK when all four repo secrets are actually configured (see
+      # android/README.md's "Release signing" section for how to
+      # generate/set them). A stable signing key across every release is
+      # the entire point: Android refuses to install an APK over an
+      # existing install signed by a DIFFERENT key, which is exactly
+      # what the old debug-keystore-per-CI-run approach hit -- in-app
+      # auto-update (see android/app/src/main/kotlin/.../ui/update/) is
+      # only possible once every release shares one key.
+      - name: build signed release APK
         working-directory: android
-        run: ./gradlew :app:assembleDebug
+        env:
+          LOGAND_KEYSTORE_B64: ${{ secrets.LOGAND_KEYSTORE_B64 }}
+          LOGAND_KEYSTORE_PASSWORD: ${{ secrets.LOGAND_KEYSTORE_PASSWORD }}
+          LOGAND_KEY_ALIAS: ${{ secrets.LOGAND_KEY_ALIAS }}
+          LOGAND_KEY_PASSWORD: ${{ secrets.LOGAND_KEY_PASSWORD }}
+        run: ./gradlew :app:assembleRelease
 
       - name: release
         uses: softprops/action-gh-release@v2
         with:
-          files: android/app/build/outputs/apk/debug/app-debug.apk
+          files: android/app/build/outputs/apk/release/app-release.apk
           generate_release_notes: true
           body: |
-            Debug-signed APK (see this workflow's own build step for why) --
-            install with `adb install app-debug.apk` or by downloading it
-            directly to an Android device and opening it (allow installs
-            from this source when prompted). See
+            Signed with this project's stable release key (see
+            [android/README.md](https://github.com/${{ github.repository }}/blob/main/android/README.md#release-signing))
+            -- install by downloading `app-release.apk` directly to an
+            Android device and opening it (allow installs from this
+            source when prompted), or `adb install app-release.apk`.
+            Because every release shares the same signing key, this
+            install will cleanly UPDATE a previous release's install
+            rather than requiring an uninstall first, and the app's own
+            in-app update banner (checks GitHub's latest release on
+            launch) can offer this build directly. See
             [android/README.md](https://github.com/${{ github.repository }}/blob/main/android/README.md#installing-on-a-real-device)
             for device-specific install steps (e.g. Pixel 7a).

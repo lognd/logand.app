@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths>
-    <!-- Matches ReceiptCapture's photo-file location — see
+    <!-- Matches ReceiptCapture's photo-file location - see
          ui/receipts/ReceiptCaptureController.kt. Deliberately UNPREFIXED
-         name/path attributes (not android:name/android:path) — this is
+         name/path attributes (not android:name/android:path) - this is
          the real, documented FileProvider meta-file convention
          (developer.android.com/reference/androidx/core/content/FileProvider),
          confirmed by a real test failure ("Name must not be empty") when
@@ -11,6 +11,14 @@
     <!-- Matches ShareLogsAction's export location, the concatenated log
          file handed to the share sheet. -->
     <cache-path name="logs_export" path="logs_export/" />
+    <!-- Matches ApkInstaller's downloaded-update location, handed to
+         the system package installer via a content:// Uri, same
+         FileUriExposedException-avoidance reasoning as receipt_photos
+         above. -->
+    <cache-path name="apk_updates" path="updates/" />
+    <!-- Invoice PDFs and payment-proof files downloaded from the admin
+         Invoices screen; see ui/admin/invoices/InvoiceDownloadController.kt. -->
+    <cache-path name="invoices_export" path="invoices_export/" />
     <!-- The real, live log directory (FileLogger writes here via
          AppContainer.logger, see LogandApplication) is under filesDir,
          not cacheDir, so it survives across app restarts rather than
