@@ -28,6 +28,7 @@ _STATUS_MAP: dict[ErrorSet, int] = {
     AuthError.EmailAlreadyRegistered: 409,
     AuthError.PasswordResetTokenInvalid: 400,
     AuthError.PasswordInvalidLength: 422,
+    AuthError.EmailInvalid: 422,
     AuthError.EmailNotVerified: 403,
     AuthError.EmailVerificationTokenInvalid: 400,
     InvoiceError.NotFound: 404,

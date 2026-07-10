@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import pytest
+from sqlalchemy import select
+
+from logand_backend.db.models.users import User
 from logand_backend.domain.auth.email_verification import verify_email
 from logand_backend.domain.auth.service import get_or_create_contact_user, register
 from logand_backend.errors import AuthError
@@ -57,7 +61,9 @@ async def test_register_over_contact_row_is_allowed_and_sets_no_password(
     """docs/design/17: an admin invoicing a bare email leaves a contact
     row (password_hash NULL); registering against it is allowed and keeps
     it a contact -- the password is chosen only at verify time."""
-    contact = await get_or_create_contact_user(db_session, "contact@example.com")
+    contact = (
+        await get_or_create_contact_user(db_session, "contact@example.com")
+    ).danger_ok
     assert contact.password_hash is None
 
     result = await register(db_session, "contact@example.com")
@@ -98,3 +104,44 @@ async def test_register_never_creates_an_admin_account(db_session) -> None:
     assert result.is_ok
     user, _ = result.danger_ok
     assert user.role == "customer"
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "not-an-email",
+        "no-at-sign.com",
+        "spaces in@example.com",
+        "trailing@dot.",
+        "@nolocalpart.com",
+        "a@b",
+        "x" * 250 + "@example.com",
+    ],
+)
+async def test_register_rejects_an_invalid_email_and_creates_no_row(
+    db_session, bad: str
+) -> None:
+    """Found the hard way: `POST /api/auth/register {"email": "not-an-email"}`
+    returned 202 and created a permanent contact row in PRODUCTION. Such a row
+    can never receive its claim link, and once an invoice references it, it
+    can never be deleted (invoices.customer_id is ON DELETE RESTRICT).
+    """
+    result = await register(db_session, bad)
+
+    assert result.is_err
+    assert result.danger_err == AuthError.EmailInvalid
+    rows = (await db_session.execute(select(User))).scalars().all()
+    assert rows == []
+
+
+async def test_get_or_create_contact_user_rejects_an_invalid_email(
+    db_session,
+) -> None:
+    """Same guard on the invoice path -- an admin typo must not become a
+    permanent, undeletable contact row."""
+    result = await get_or_create_contact_user(db_session, "typo-no-at-sign")
+
+    assert result.is_err
+    assert result.danger_err == AuthError.EmailInvalid
+    rows = (await db_session.execute(select(User))).scalars().all()
+    assert rows == []

@@ -63,7 +63,9 @@ async def test_customer_detail_reports_contact_account_state(
     admin = await make_user(role="admin", password="pw")
     await login_as(db_client, admin.email, "pw")
 
-    contact = await get_or_create_contact_user(db_session, "invoiced@example.com")
+    contact = (
+        await get_or_create_contact_user(db_session, "invoiced@example.com")
+    ).danger_ok
     await db_session.commit()
 
     resp = await db_client.get(f"/api/admin/customers/{contact.id}")

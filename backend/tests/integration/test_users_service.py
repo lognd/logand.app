@@ -108,7 +108,9 @@ async def test_admin_reset_password_refuses_contact_row(db_session, make_user) -
     from logand_backend.domain.auth.service import get_or_create_contact_user
 
     admin = await make_user(role="admin")
-    contact = await get_or_create_contact_user(db_session, "contact@example.com")
+    contact = (
+        await get_or_create_contact_user(db_session, "contact@example.com")
+    ).danger_ok
 
     result = await admin_reset_password(
         db_session, contact.id, "a-brand-new-password", admin.id

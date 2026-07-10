@@ -139,7 +139,10 @@ async def create(
             detail="exactly one of customer_id or customer_email must be provided",
         )
     if customer_email is not None:
-        contact = await get_or_create_contact_user(db, customer_email)
+        contact_result = await get_or_create_contact_user(db, customer_email)
+        if contact_result.is_err:
+            raise to_http_exception(contact_result.danger_err)
+        contact = contact_result.danger_ok
         # FINDINGS L2: an email that resolves to a non-customer row (e.g. the
         # admin's own address, role="admin") would strand the invoice -- every
         # customer-facing view/pay route rejects role != "customer", and no

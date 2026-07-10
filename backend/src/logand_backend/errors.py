@@ -8,6 +8,10 @@ class AuthError(ErrorSet):
     SessionExpired = "session has expired and must be re-authenticated"
     SessionNotFound = "session token does not match any known session"
     EmailAlreadyRegistered = "an account with this email already exists"
+    # Rejected BEFORE a users row exists. A typo'd address becomes a
+    # permanent contact row that never receives its claim link and can never
+    # be deleted once an invoice references it (ON DELETE RESTRICT).
+    EmailInvalid = "that does not look like a valid email address"
     PasswordResetTokenInvalid = "password reset link is invalid or has expired"
     PasswordInvalidLength = "password must be between 8 and 128 characters"
     # Distinct from InvalidCredentials (docs/design/17) -- safe to disclose

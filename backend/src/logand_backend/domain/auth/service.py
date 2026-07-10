@@ -8,6 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from typani.result import Err, Ok, Result
 
+from logand_backend.auth.emails import is_valid_email, normalize_email
 from logand_backend.auth.passwords import (
     DUMMY_PASSWORD_HASH,
     hash_password,
@@ -44,7 +45,7 @@ async def login(
     successfully and then fail to log back in with that exact same
     string.
     """
-    normalized_email = email.strip().lower()
+    normalized_email = normalize_email(email)
     # .limit(1) (not scalar_one_or_none()) -- users.email has a
     # case-SENSITIVE unique constraint, so legacy pre-normalization data
     # can still contain two rows differing only by case (e.g. "Bob@x.com"
@@ -142,7 +143,10 @@ async def register(db: AsyncSession, email: str) -> Result[tuple[User, str], Aut
     racing this SELECT is the `users.email` unique constraint plus the
     IntegrityError catch below.
     """
-    normalized_email = email.strip().lower()
+    normalized_email = normalize_email(email)
+    if not is_valid_email(normalized_email):
+        _log.warning("registration rejected: invalid email address")
+        return Err(AuthError.EmailInvalid)
 
     existing = (
         await db.execute(select(User).where(func.lower(User.email) == normalized_email))
@@ -199,7 +203,7 @@ async def ensure_admin_seeded(db: AsyncSession, email: str, password: str) -> Us
     have a well-known admin password sitting in an env var at all past
     its very first bootstrap.
     """
-    normalized_email = email.strip().lower()
+    normalized_email = normalize_email(email)
     existing = (
         await db.execute(select(User).where(func.lower(User.email) == normalized_email))
     ).scalar_one_or_none()
@@ -226,7 +230,9 @@ async def ensure_admin_seeded(db: AsyncSession, email: str, password: str) -> Us
     return user
 
 
-async def get_or_create_contact_user(db: AsyncSession, email: str) -> User:
+async def get_or_create_contact_user(
+    db: AsyncSession, email: str
+) -> Result[User, AuthError]:
     """Get-or-create a "contact" row for `email` (docs/design/17) -- used
     by api/invoices.py's POST /api/invoices when an admin invoices a bare
     email address with no existing account. Returns the existing row
@@ -235,13 +241,22 @@ async def get_or_create_contact_user(db: AsyncSession, email: str) -> User:
     the invoice to it; this never demotes an active account back to
     contact). Only ever creates a brand-new row with password_hash AND
     email_verified_at both NULL (a fresh contact) when no row exists yet.
+
+    Validates the address first: an admin typo would otherwise become a
+    permanent contact row that never receives its claim link and can never
+    be deleted once the invoice references it (ON DELETE RESTRICT). Returns
+    a Result rather than raising, since a mistyped address is an ordinary
+    user error, not a programmer bug.
     """
-    normalized_email = email.strip().lower()
+    normalized_email = normalize_email(email)
+    if not is_valid_email(normalized_email):
+        _log.warning("contact creation rejected: invalid email address")
+        return Err(AuthError.EmailInvalid)
     existing = (
         await db.execute(select(User).where(func.lower(User.email) == normalized_email))
     ).scalar_one_or_none()
     if existing is not None:
-        return existing
+        return Ok(existing)
 
     user = User(email=normalized_email, password_hash=None, role="customer")
     try:
@@ -262,6 +277,6 @@ async def get_or_create_contact_user(db: AsyncSession, email: str) -> User:
                 select(User).where(func.lower(User.email) == normalized_email)
             )
         ).scalar_one()
-        return existing
+        return Ok(existing)
     _log.info("created contact user for invoicing", extra={"email": normalized_email})
-    return user
+    return Ok(user)

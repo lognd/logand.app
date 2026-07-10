@@ -154,7 +154,9 @@ async def test_verify_purpose_token_cannot_be_redeemed_as_claim(
 
 
 async def test_claim_token_cannot_be_redeemed_as_verify(db_session) -> None:
-    contact = await get_or_create_contact_user(db_session, "claim-only@example.com")
+    contact = (
+        await get_or_create_contact_user(db_session, "claim-only@example.com")
+    ).danger_ok
     raw_token = await mint_email_verification_token(db_session, contact.id, "claim")
 
     result = await verify_email(db_session, raw_token, "brand-new-password-456")
@@ -180,7 +182,9 @@ async def test_mint_invalidates_previous_live_token_of_same_purpose(
 async def test_claim_invoices_sets_password_and_verified_at(
     db_session,
 ) -> None:
-    contact = await get_or_create_contact_user(db_session, "contact@example.com")
+    contact = (
+        await get_or_create_contact_user(db_session, "contact@example.com")
+    ).danger_ok
     raw_token = await mint_email_verification_token(db_session, contact.id, "claim")
 
     result = await claim_invoices(db_session, raw_token, "brand-new-password-456")
@@ -192,7 +196,9 @@ async def test_claim_invoices_sets_password_and_verified_at(
 
 
 async def test_claim_invoices_rejects_short_password(db_session) -> None:
-    contact = await get_or_create_contact_user(db_session, "contact2@example.com")
+    contact = (
+        await get_or_create_contact_user(db_session, "contact2@example.com")
+    ).danger_ok
     raw_token = await mint_email_verification_token(db_session, contact.id, "claim")
 
     result = await claim_invoices(db_session, raw_token, "short")
@@ -202,7 +208,9 @@ async def test_claim_invoices_rejects_short_password(db_session) -> None:
 
 
 async def test_claim_invoices_rejects_already_used_token(db_session) -> None:
-    contact = await get_or_create_contact_user(db_session, "contact3@example.com")
+    contact = (
+        await get_or_create_contact_user(db_session, "contact3@example.com")
+    ).danger_ok
     raw_token = await mint_email_verification_token(db_session, contact.id, "claim")
 
     first = await claim_invoices(db_session, raw_token, "brand-new-password-456")
@@ -216,7 +224,9 @@ async def test_claim_invoices_rejects_already_used_token(db_session) -> None:
 async def test_get_claim_preview_does_not_consume_the_token(
     db_session,
 ) -> None:
-    contact = await get_or_create_contact_user(db_session, "contact4@example.com")
+    contact = (
+        await get_or_create_contact_user(db_session, "contact4@example.com")
+    ).danger_ok
     raw_token = await mint_email_verification_token(db_session, contact.id, "claim")
 
     preview = await get_claim_preview(db_session, raw_token)
