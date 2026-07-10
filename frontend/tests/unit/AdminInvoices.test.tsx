@@ -136,7 +136,7 @@ describe("AdminInvoices (integration)", () => {
     // + the id-resolution effect to actually resolve a real customer id
     // before moving on, since submitting too early would send an empty
     // customer_id.
-    const customerInput = await screen.findByLabelText("Bill to");
+    const customerInput = await screen.findByLabelText("Search existing customers");
     await user.type(customerInput, "customer@example.com");
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
@@ -163,6 +163,135 @@ describe("AdminInvoices (integration)", () => {
         { description: "Consulting", quantity: "2", unit_price: "50", unit: "" },
       ]);
     });
+  });
+
+  it("invoicing a bare email sends customer_email (not customer_id) as a query param", async () => {
+    const fetchMock = vi.fn((url: string) => {
+      if (url.startsWith("/api/admin/customers")) {
+        return Promise.resolve(jsonResponse([]));
+      }
+      if (url.startsWith("/api/admin/invoices?")) {
+        return Promise.resolve(jsonResponse({ id: "inv-new" }));
+      }
+      return Promise.resolve(jsonResponse([draftInvoice]));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    document.cookie = "csrf_token=test-csrf";
+
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: "New invoice" }));
+    await user.click(
+      await screen.findByRole("radio", { name: "Email only (no account yet)" }),
+    );
+
+    // The plain-language consequence explanation (task 3) is present
+    // while this mode is active.
+    expect(
+      screen.getByText(/cannot view or pay it online until they click that link/),
+    ).toBeInTheDocument();
+
+    await user.type(screen.getByLabelText("Recipient email"), "newcustomer@example.com");
+    await user.type(screen.getByLabelText("Description"), "Consulting");
+    await user.clear(screen.getByLabelText("Qty"));
+    await user.type(screen.getByLabelText("Qty"), "1");
+    await user.type(screen.getByLabelText("Unit price"), "75.00");
+
+    await user.click(screen.getByRole("button", { name: "Create invoice" }));
+
+    await waitFor(() => {
+      const createCall = fetchMock.mock.calls.find(([url]) =>
+        String(url).startsWith("/api/admin/invoices?"),
+      ) as [string, RequestInit] | undefined;
+      expect(createCall).toBeDefined();
+      const [url] = createCall!;
+      expect(url).toBe(
+        "/api/admin/invoices?customer_email=newcustomer%40example.com",
+      );
+    });
+  });
+
+  it("rejects an invalid email client-side without ever calling the network", async () => {
+    const fetchMock = vi.fn((url: string) => {
+      if (url.startsWith("/api/admin/customers")) {
+        return Promise.resolve(jsonResponse([]));
+      }
+      return Promise.resolve(jsonResponse([draftInvoice]));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    document.cookie = "csrf_token=test-csrf";
+
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: "New invoice" }));
+    await user.click(
+      await screen.findByRole("radio", { name: "Email only (no account yet)" }),
+    );
+
+    const emailInput = screen.getByLabelText("Recipient email");
+    await user.type(emailInput, "not-an-email");
+    await user.tab();
+
+    expect(
+      await screen.findByText("Enter a valid email address."),
+    ).toBeInTheDocument();
+
+    await user.type(screen.getByLabelText("Description"), "Consulting");
+    await user.clear(screen.getByLabelText("Qty"));
+    await user.type(screen.getByLabelText("Qty"), "1");
+    await user.type(screen.getByLabelText("Unit price"), "75.00");
+
+    const createButton = screen.getByRole("button", { name: "Create invoice" });
+    expect(createButton).toBeDisabled();
+    await user.click(createButton);
+
+    expect(
+      fetchMock.mock.calls.some(([url]) => String(url).startsWith("/api/admin/invoices?")),
+    ).toBe(false);
+  });
+
+  it("surfaces the backend's 422 'exactly one of' message instead of a generic failure", async () => {
+    const fetchMock = vi.fn((url: string) => {
+      if (url.startsWith("/api/admin/customers")) {
+        return Promise.resolve(jsonResponse([]));
+      }
+      if (url.startsWith("/api/admin/invoices?")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              detail: "exactly one of customer_id or customer_email must be provided",
+            }),
+            { status: 422, headers: { "Content-Type": "application/json" } },
+          ),
+        );
+      }
+      return Promise.resolve(jsonResponse([draftInvoice]));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    document.cookie = "csrf_token=test-csrf";
+
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: "New invoice" }));
+    await user.click(
+      await screen.findByRole("radio", { name: "Email only (no account yet)" }),
+    );
+    await user.type(screen.getByLabelText("Recipient email"), "someone@example.com");
+    await user.type(screen.getByLabelText("Description"), "Consulting");
+    await user.clear(screen.getByLabelText("Qty"));
+    await user.type(screen.getByLabelText("Qty"), "1");
+    await user.type(screen.getByLabelText("Unit price"), "75.00");
+
+    await user.click(screen.getByRole("button", { name: "Create invoice" }));
+
+    expect(
+      await screen.findByText(
+        "exactly one of customer_id or customer_email must be provided",
+      ),
+    ).toBeInTheDocument();
   });
 
   it("importing from a BOM populates material/labor/overhead line items with a real cost breakdown", async () => {

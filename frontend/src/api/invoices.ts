@@ -125,12 +125,26 @@ export function listAdminInvoices(): Promise<Invoice[]> {
 // customer_id, just in the wrong place, which is exactly what happened
 // before this was ever wired up to a real form (see AdminInvoices.tsx's
 // former TODO).
+// The recipient is EXACTLY one of an existing customer (customerId) or a
+// bare email address with no account yet (customerEmail) -- matches
+// api/invoices.py's create() route, which 422s ("exactly one of
+// customer_id or customer_email must be provided") if both or neither are
+// given. See docs/design/17-contact-users-and-email-verification.md: when
+// customerEmail is used, the backend get-or-creates a "contact" user row
+// (no password, unverified) so the invoice can be linked and emailed
+// before the recipient ever has an account.
+export type CreateInvoiceRecipient =
+  | { customerId: string; customerEmail?: undefined }
+  | { customerId?: undefined; customerEmail: string };
+
 export function createInvoice(
-  customerId: string,
+  recipient: CreateInvoiceRecipient,
   lineItems: CreateInvoiceLineItem[],
   memo?: string,
 ): Promise<{ id: string }> {
-  const params = new URLSearchParams({ customer_id: customerId });
+  const params = new URLSearchParams();
+  if (recipient.customerId) params.set("customer_id", recipient.customerId);
+  if (recipient.customerEmail) params.set("customer_email", recipient.customerEmail);
   if (memo) params.set("memo", memo);
   return apiPost<{ id: string }>(`/api/admin/invoices?${params.toString()}`, lineItems);
 }

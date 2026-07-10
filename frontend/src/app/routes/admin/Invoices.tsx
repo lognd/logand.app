@@ -27,6 +27,17 @@ import {
   LABEL_CLASS,
 } from "../../../styles/a11y";
 
+// Deliberately simple (not RFC 5322 exhaustive) -- this only exists to
+// catch obvious typos client-side before wasting a round trip; the
+// backend/get_or_create_contact_user is the real source of truth for
+// what counts as a usable address, and actual delivery is verified by
+// the recipient clicking the emailed link, not by this regex.
+const SIMPLE_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function isValidEmail(value: string): boolean {
+  return SIMPLE_EMAIL_RE.test(value.trim());
+}
+
 const MANUAL_PAYMENT_METHODS: { value: ManualPaymentMethod; label: string }[] = [
   { value: "zelle", label: "Zelle" },
   { value: "paypal", label: "PayPal (sent directly)" },
@@ -452,8 +463,15 @@ const EMPTY_LINE_ITEM: CreateInvoiceLineItem = {
 // skip a query for every single keypress of a fast typist.
 const CUSTOMER_SEARCH_DEBOUNCE_MS = 250;
 
+// Which half of the "bill to" picker is active -- mutually exclusive with
+// the other, so the admin (and the request) never end up with both a
+// customerId and a customerEmail, which the backend 422s on (see
+// api/invoices.py's create() route and createInvoice's own doc comment).
+type RecipientMode = "existing" | "email";
+
 function CreateInvoiceForm({ onCreated }: { onCreated: () => void }) {
   const [open, setOpen] = useState(false);
+  const [recipientMode, setRecipientMode] = useState<RecipientMode>("existing");
   const [customerId, setCustomerId] = useState("");
   // The text actually in the search box -- separate from customerId,
   // since what's typed doesn't necessarily resolve to a real customer
@@ -462,6 +480,11 @@ function CreateInvoiceForm({ onCreated }: { onCreated: () => void }) {
   // handler below).
   const [customerQuery, setCustomerQuery] = useState("");
   const [debouncedCustomerQuery, setDebouncedCustomerQuery] = useState("");
+  // Bare email address for billing someone with no account yet (see
+  // docs/design/17). Kept separate from customerQuery/customerId, which
+  // are only ever used for the "existing customer" mode.
+  const [recipientEmail, setRecipientEmail] = useState("");
+  const [emailTouched, setEmailTouched] = useState(false);
   const [memo, setMemo] = useState("");
   const [lineItems, setLineItems] = useState<CreateInvoiceLineItem[]>([
     { ...EMPTY_LINE_ITEM },
@@ -504,7 +527,9 @@ function CreateInvoiceForm({ onCreated }: { onCreated: () => void }) {
   const mutation = useMutation({
     mutationFn: () =>
       createInvoice(
-        customerId,
+        recipientMode === "email"
+          ? { customerEmail: recipientEmail.trim() }
+          : { customerId },
         lineItems.filter((li) => li.description && li.unit_price),
         memo || undefined,
       ),
@@ -513,10 +538,20 @@ function CreateInvoiceForm({ onCreated }: { onCreated: () => void }) {
       setOpen(false);
       setCustomerId("");
       setCustomerQuery("");
+      setRecipientEmail("");
+      setEmailTouched(false);
+      setRecipientMode("existing");
       setMemo("");
       setLineItems([{ ...EMPTY_LINE_ITEM }]);
     },
   });
+
+  // Exactly one of the two must resolve to something real before the form
+  // is submittable -- mirrors the backend's own "exactly one of
+  // customer_id or customer_email" invariant, but checked client-side so
+  // an admin gets instant feedback instead of a round trip.
+  const hasValidRecipient =
+    recipientMode === "existing" ? !!customerId : isValidEmail(recipientEmail);
 
   function updateLineItem(index: number, patch: Partial<CreateInvoiceLineItem>) {
     setLineItems((items) =>
@@ -609,55 +644,124 @@ function CreateInvoiceForm({ onCreated }: { onCreated: () => void }) {
       className="mb-6 flex flex-col gap-4 rounded border border-border p-4"
       onSubmit={(e) => {
         e.preventDefault();
-        if (!customerId || !hasAtLeastOneRealLineItem) return;
+        if (!hasValidRecipient || !hasAtLeastOneRealLineItem) {
+          if (recipientMode === "email") setEmailTouched(true);
+          return;
+        }
         mutation.mutate();
       }}
     >
       <h2 className="text-xl text-fg-primary">New invoice</h2>
 
       <div>
-        <label htmlFor="new-invoice-customer" className={LABEL_CLASS}>
-          Bill to
-        </label>
-        {/* A native <input list> + <datalist> combobox, not a plain
-            <select> -- a flat alphabetical dropdown of every customer
-            doesn't scale ("customer dropdown needs to have some filter
-            in case I have a lot of people"). This gets real
-            type-to-filter, keyboard navigation, and screen-reader
-            support for free from the browser, without hand-building a
-            custom ARIA combobox from scratch. The actual filtering
-            happens server-side (debounced, see customersQuery above) --
-            the datalist's own options are just whatever that search
-            already narrowed down to, not a client-side filter over a
-            full customer list that may not even be loaded. */}
-        <input
-          id="new-invoice-customer"
-          type="text"
-          required
-          autoComplete="off"
-          list="new-invoice-customer-options"
-          placeholder="Type to search customers..."
-          value={customerQuery}
-          onChange={(e) => setCustomerQuery(e.target.value)}
-          className={INPUT_CLASS}
-        />
-        <datalist id="new-invoice-customer-options">
-          {customersQuery.data?.map((c) => (
-            <option key={c.id} value={c.email} />
-          ))}
-        </datalist>
-        {customersQuery.isLoading && (
-          <p className="mt-1 text-sm text-fg-muted">Searching...</p>
-        )}
-        {customerQuery && !customersQuery.isLoading && !customerId && (
-          <p className="mt-1 text-sm text-fg-muted">
-            No exact match yet -- pick a customer from the list.
-          </p>
-        )}
-        {customersQuery.isError && (
-          <p role="alert" className="mt-1 text-base text-accent-red">
-            Could not load customer list.
-          </p>
+        <span className={LABEL_CLASS}>Bill to</span>
+        {/* Two mutually-exclusive modes -- an existing customer picked
+            from the account list, or a bare email with no account yet
+            (docs/design/17). Radio buttons, not a dropdown, so it's
+            immediately visible which mode is active without an extra
+            click. */}
+        <div className="mb-2 flex gap-4 text-base text-fg-primary">
+          <label className="flex min-h-11 items-center gap-2">
+            <input
+              type="radio"
+              name="recipient-mode"
+              checked={recipientMode === "existing"}
+              onChange={() => setRecipientMode("existing")}
+            />
+            Existing customer
+          </label>
+          <label className="flex min-h-11 items-center gap-2">
+            <input
+              type="radio"
+              name="recipient-mode"
+              checked={recipientMode === "email"}
+              onChange={() => setRecipientMode("email")}
+            />
+            Email only (no account yet)
+          </label>
+        </div>
+
+        {recipientMode === "existing" ? (
+          <div>
+            <label htmlFor="new-invoice-customer" className={LABEL_CLASS}>
+              Search existing customers
+            </label>
+            {/* A native <input list> + <datalist> combobox, not a plain
+                <select> -- a flat alphabetical dropdown of every customer
+                doesn't scale ("customer dropdown needs to have some filter
+                in case I have a lot of people"). This gets real
+                type-to-filter, keyboard navigation, and screen-reader
+                support for free from the browser, without hand-building a
+                custom ARIA combobox from scratch. The actual filtering
+                happens server-side (debounced, see customersQuery above) --
+                the datalist's own options are just whatever that search
+                already narrowed down to, not a client-side filter over a
+                full customer list that may not even be loaded. */}
+            <input
+              id="new-invoice-customer"
+              type="text"
+              required
+              autoComplete="off"
+              list="new-invoice-customer-options"
+              placeholder="Type to search customers..."
+              value={customerQuery}
+              onChange={(e) => setCustomerQuery(e.target.value)}
+              className={INPUT_CLASS}
+            />
+            <datalist id="new-invoice-customer-options">
+              {customersQuery.data?.map((c) => (
+                <option key={c.id} value={c.email} />
+              ))}
+            </datalist>
+            {customersQuery.isLoading && (
+              <p className="mt-1 text-sm text-fg-muted">Searching...</p>
+            )}
+            {customerQuery && !customersQuery.isLoading && !customerId && (
+              <p className="mt-1 text-sm text-fg-muted">
+                No exact match yet -- pick a customer from the list.
+              </p>
+            )}
+            {customersQuery.isError && (
+              <p role="alert" className="mt-1 text-base text-accent-red">
+                Could not load customer list.
+              </p>
+            )}
+          </div>
+        ) : (
+          <div>
+            <label htmlFor="new-invoice-email" className={LABEL_CLASS}>
+              Recipient email
+            </label>
+            <input
+              id="new-invoice-email"
+              type="email"
+              required
+              autoComplete="off"
+              placeholder="someone@example.com"
+              value={recipientEmail}
+              onChange={(e) => setRecipientEmail(e.target.value)}
+              onBlur={() => setEmailTouched(true)}
+              className={INPUT_CLASS}
+            />
+            {emailTouched && recipientEmail && !isValidEmail(recipientEmail) && (
+              <p role="alert" className="mt-1 text-sm text-accent-red">
+                Enter a valid email address.
+              </p>
+            )}
+            {/* The whole point of task 3: make the consequence legible
+                instead of making a first-time business owner read a
+                design doc. See docs/design/17-contact-users-and-email-
+                verification.md's state table -- this is the "contact"
+                row's actual behavior in plain language. */}
+            <p className="mt-2 text-sm text-fg-muted">
+              This person does not have an account yet. They will get an
+              emailed invoice with a link to claim it, but they cannot view
+              or pay it online until they click that link and prove they
+              own this inbox (by registering or setting a password). The
+              invoice is created and linked right away either way -- this
+              only affects when THEY can see it.
+            </p>
+          </div>
         )}
       </div>
 
@@ -813,7 +917,7 @@ function CreateInvoiceForm({ onCreated }: { onCreated: () => void }) {
       <div className="flex gap-2">
         <button
           type="submit"
-          disabled={mutation.isPending || !customerId || !hasAtLeastOneRealLineItem}
+          disabled={mutation.isPending || !hasValidRecipient || !hasAtLeastOneRealLineItem}
           className={BUTTON_CLASS}
         >
           {mutation.isPending ? "Creating..." : "Create invoice"}
@@ -825,7 +929,13 @@ function CreateInvoiceForm({ onCreated }: { onCreated: () => void }) {
 
       {mutation.isError && (
         <p role="alert" className="text-base text-accent-red">
-          Could not create the invoice. Check every field and try again.
+          {/* Surfaces the backend's real 422 detail (e.g. "exactly one of
+              customer_id or customer_email must be provided") when it's a
+              structured ApiError, instead of a generic message that hides
+              exactly what went wrong. */}
+          {mutation.error instanceof ApiError
+            ? mutation.error.message
+            : "Could not create the invoice. Check every field and try again."}
         </p>
       )}
     </form>
