@@ -11,6 +11,9 @@ from logand_backend.auth.sessions import revoke_all_sessions_for_user
 from logand_backend.db.models.audit import AdminAuditLog
 from logand_backend.db.models.users import User
 from logand_backend.errors import UserError
+from logand_backend.logging import get_logger
+
+_log = get_logger(__name__)
 
 _MIN_PASSWORD_LENGTH = 8
 
@@ -160,6 +163,17 @@ async def admin_reset_password(
     if result.is_err:
         return Err(result.danger_err)
     user = result.danger_ok
+
+    # docs/design/17 / FINDINGS L1: a contact row has never registered.
+    # Setting a password here without email_verified_at would leave an
+    # "unverified" row that login refuses forever, while reporting success to
+    # the admin. Refuse with a distinct, actionable error instead.
+    if user.password_hash is None and user.email_verified_at is None:
+        _log.warning(
+            "admin password reset refused: target is a contact row",
+            extra={"user_id": str(user_id), "admin_id": str(admin_id)},
+        )
+        return Err(UserError.CannotResetContactAccount)
 
     user.password_hash = hash_password(new_password)
     await db.flush()

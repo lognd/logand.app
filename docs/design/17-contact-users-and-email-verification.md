@@ -69,7 +69,12 @@ Registration against an **active** row is refused (email already in use).
 
 Whoever controls the inbox wins. That is the only correct tiebreak.
 
-## Schema (migration `0022_contact_users_and_email_verification`)
+## Schema (migration `0028_contact_users_verification`)
+
+(Renumbered from 0022 on merge: the tax subsystem had already taken 0022-0027,
+and two migrations sharing a `down_revision` fork the Alembic graph into two
+heads, which makes `alembic upgrade head` fail on deploy. The revision id is
+also capped at 32 chars by `alembic_version.version_num`.)
 
 ```
 users.password_hash      TEXT  NOT NULL -> NULL      (NULL = contact, no account)
@@ -101,23 +106,49 @@ systems. Reuse `auth/tokens.py::hash_token` and the
 `domain/auth/password_reset.py` structure verbatim; do not reimplement
 hashing, expiry, or single-use checks.
 
+Both purposes are the SAME operation, `_redeem_and_activate`, differing only
+in `purpose`. Redeeming a token takes a password and sets `password_hash`
+**and** `email_verified_at` in one transaction. Clicking the emailed link
+*is* the proof of inbox control, so the party that proves inbox control is
+also the party that chooses the credential. Redemption is refused against an
+already-active row: an active row's password is owned, and a stale token of
+either purpose must never rewrite it.
+
 **verify** -- minted by `register`. Emailed as
-`{frontend_url}/verify-email?token=...`. Redeeming sets `email_verified_at`.
+`{public_base_url}/verify-email?token=...`.
 
 **claim** -- minted by `notify_invoice_sent` when the recipient is a *contact*
-row. Emailed as `{frontend_url}/claim?token=...` alongside the invoice.
-Redeeming takes a password, sets `password_hash` **and** `email_verified_at`
-in one transaction: clicking the link *is* the proof of inbox control, so a
-claim never needs a second verification round-trip.
+row. Emailed as `{public_base_url}/claim?token=...` alongside the invoice.
 
 Both are single-use and expire (`claim` gets a long TTL -- an invoice email
 may sit unread for weeks; `verify` gets 24h).
 
+### Why `register` stores no password (FINDINGS-auth-2026-07-10 H1)
+
+`register` originally wrote `password_hash` onto the row and `verify` merely
+flipped `email_verified_at`. That binds the token to the ROW, not to the
+credential live when it was minted -- and an unverified row's password is
+deliberately overwritable (that is what prevents squatting). So an attacker
+could re-register a victim's pending address, replacing the password, and the
+victim's own click would then activate the account **with the attacker's
+password**. Deterministic takeover of billing data.
+
+Hence: **`register` writes no credential on any branch.** A registered row
+stays a contact (`password_hash IS NULL`) until somebody redeems a token.
+There is no planted credential for a victim's click to turn on. Registration
+therefore takes an email only; the password is chosen at redemption.
+
+Residual, accepted: re-registering invalidates the prior pending token, so an
+attacker can nuisance-invalidate a victim's unclicked link. Every replacement
+still goes to the victim's inbox, and `resend-verification` recovers. That is
+an annoyance, not a takeover.
+
 ## API
 
 ```
-POST /api/auth/register            -> 202, mints verify token, mails it
-POST /api/auth/verify-email        {token}            -> 204
+POST /api/auth/register            {email}           -> 202, mints verify token,
+                                   mails it. NO password field: see H1 above.
+POST /api/auth/verify-email        {token, password}  -> 204, row becomes active
 POST /api/auth/resend-verification {email}            -> 202 (always, no oracle)
 GET  /api/auth/claim               ?token=            -> invoice preview (no auth)
 POST /api/auth/claim               {token, password}  -> 204, row becomes active

@@ -64,6 +64,9 @@ _STATUS_MAP: dict[ErrorSet, int] = {
     UserError.NotFound: 404,
     UserError.CannotModifyAdmin: 403,
     UserError.PasswordTooShort: 422,
+    # 409 -- a state conflict (the row is a contact, not an account), not a
+    # malformed request.
+    UserError.CannotResetContactAccount: 409,
     DataError.TableNotFound: 404,
     DataError.RowNotFound: 404,
     DataError.ColumnNotFound: 422,

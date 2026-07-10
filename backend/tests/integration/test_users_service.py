@@ -99,6 +99,29 @@ async def test_admin_reset_password_rejects_short_password(
     assert result.danger_err == UserError.PasswordTooShort
 
 
+async def test_admin_reset_password_refuses_contact_row(db_session, make_user) -> None:
+    """FINDINGS L1: setting a password on a contact row (password_hash NULL,
+    never verified) would silently produce an unverified row that can never
+    log in. It must be refused with a distinct, actionable error instead of
+    reporting success.
+    """
+    from logand_backend.domain.auth.service import get_or_create_contact_user
+
+    admin = await make_user(role="admin")
+    contact = await get_or_create_contact_user(db_session, "contact@example.com")
+
+    result = await admin_reset_password(
+        db_session, contact.id, "a-brand-new-password", admin.id
+    )
+
+    assert result.is_err
+    assert result.danger_err == UserError.CannotResetContactAccount
+    # Still a contact -- no half-created unusable account was left behind.
+    refreshed = await db_session.get(User, contact.id)
+    assert refreshed.password_hash is None
+    assert refreshed.email_verified_at is None
+
+
 async def test_get_customer_rejects_admin_account(db_session, make_user) -> None:
     admin = await make_user(role="admin")
     result = await get_customer(db_session, admin.id)

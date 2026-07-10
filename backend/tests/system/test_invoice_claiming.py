@@ -57,9 +57,9 @@ async def test_unverified_registrant_cannot_read_linked_invoices(
 ) -> None:
     """The load-bearing invariant (docs/design/17): an invoice being
     linked to an email is never enough to see it -- only a verified
-    account can. This registers over the contact row (allowed) but
-    deliberately never verifies, then confirms login itself is refused
-    (there is no session at all to read invoices with).
+    account can. This registers over the contact row (allowed, email-only,
+    sets no password) but deliberately never verifies, then confirms login
+    itself is refused (there is no session at all to read invoices with).
     """
     _configure_smtp(monkeypatch, fake_smtp_server)
     admin = await make_user(role="admin", password="admin-pw")
@@ -72,18 +72,20 @@ async def test_unverified_registrant_cannot_read_linked_invoices(
 
     register_resp = await db_client.post(
         "/api/auth/register",
-        json={"email": email, "password": "attacker-password"},
+        json={"email": email},
         headers={"X-Forwarded-For": "203.0.113.201"},
     )
     assert register_resp.status_code == 202
 
+    # register set no password (FINDINGS H1), so the row is still a contact:
+    # any login attempt is the generic invalid-credentials, no oracle.
     login_resp = await db_client.post(
         "/api/auth/login",
         json={"email": email, "password": "attacker-password"},
         headers={"X-Forwarded-For": "203.0.113.202"},
     )
-    assert login_resp.status_code == 403
-    assert login_resp.json()["detail"]["code"] == "AuthError.EmailNotVerified"
+    assert login_resp.status_code == 401
+    assert login_resp.json()["detail"]["code"] == "AuthError.InvalidCredentials"
 
     # No session cookie was ever set -- there is no way to reach GET
     # /api/invoices at all as this identity.
@@ -98,43 +100,44 @@ async def test_registering_over_unverified_row_reissues_verify_link(
     monkeypatch: pytest.MonkeyPatch,
     fake_smtp_server: FakeSmtpServer,
 ) -> None:
+    """FINDINGS H1: re-registering is email-only and re-mints a fresh verify
+    link (invalidating the prior one). No password is set until verification,
+    and whoever redeems the live token chooses it -- so the account ends up
+    with the verifier's password, never anything register could have planted.
+    """
     _configure_smtp(monkeypatch, fake_smtp_server)
     email = "squatted@example.com"
 
     first = await db_client.post(
         "/api/auth/register",
-        json={"email": email, "password": "first-password"},
+        json={"email": email},
         headers={"X-Forwarded-For": "203.0.113.210"},
     )
     assert first.status_code == 202
 
     second = await db_client.post(
         "/api/auth/register",
-        json={"email": email, "password": "second-password"},
+        json={"email": email},
         headers={"X-Forwarded-For": "203.0.113.211"},
     )
     assert second.status_code == 202
 
-    # The SECOND password is now the live one -- overwritten, not refused.
+    # The verifier chooses the password on the live (latest) link.
     message = fake_smtp_server.messages[-1]
     body = message.get_body(("plain",)).get_content()
     token = body.split("verify-email?token=")[1].split()[0].strip()
-    verify_resp = await db_client.post("/api/auth/verify-email", json={"token": token})
+    verify_resp = await db_client.post(
+        "/api/auth/verify-email",
+        json={"token": token, "password": "chosen-at-verify-time"},
+    )
     assert verify_resp.status_code == 204
 
     login_resp = await db_client.post(
         "/api/auth/login",
-        json={"email": email, "password": "second-password"},
+        json={"email": email, "password": "chosen-at-verify-time"},
         headers={"X-Forwarded-For": "203.0.113.212"},
     )
     assert login_resp.status_code == 200
-
-    old_password_login = await db_client.post(
-        "/api/auth/login",
-        json={"email": email, "password": "first-password"},
-        headers={"X-Forwarded-For": "203.0.113.213"},
-    )
-    assert old_password_login.status_code == 401
 
 
 # -- (c) registering over an active row is refused -------------------------
@@ -147,7 +150,7 @@ async def test_registering_over_active_row_is_refused(
 
     resp = await db_client.post(
         "/api/auth/register",
-        json={"email": user.email, "password": "a-different-password"},
+        json={"email": user.email},
         headers={"X-Forwarded-For": "203.0.113.220"},
     )
     assert resp.status_code == 409
@@ -202,6 +205,79 @@ async def test_claim_link_sets_password_and_makes_invoices_visible(
     invoices_resp = await db_client.get("/api/invoices")
     assert invoices_resp.status_code == 200
     assert invoice_id in [inv["id"] for inv in invoices_resp.json()]
+
+
+# -- (d2) a contact row can also be activated via register + verify --------
+
+
+async def test_invoiced_contact_can_be_activated_via_register_and_verify(
+    db_client: AsyncClient,
+    make_user,
+    login_as,
+    monkeypatch: pytest.MonkeyPatch,
+    fake_smtp_server: FakeSmtpServer,
+) -> None:
+    """A contact row created by invoicing (get_or_create_contact_user) can be
+    activated through the register+verify path too, not only the claim link:
+    the recipient registers the address (email-only), then redeems the verify
+    link with their chosen password. Their linked invoice is then visible.
+    """
+    _configure_smtp(monkeypatch, fake_smtp_server)
+    admin = await make_user(role="admin", password="admin-pw")
+    await login_as(db_client, admin.email, "admin-pw")
+    admin_headers = _csrf_headers(db_client)
+
+    email = "invoiced-then-registers@example.com"
+    invoice_id = await _create_and_send_invoice_by_email(
+        db_client, admin_headers, email
+    )
+    await db_client.post("/api/auth/logout", headers=admin_headers)
+
+    register_resp = await db_client.post(
+        "/api/auth/register",
+        json={"email": email},
+        headers={"X-Forwarded-For": "203.0.113.240"},
+    )
+    assert register_resp.status_code == 202
+
+    # The most recent mail is the verify link from register.
+    message = fake_smtp_server.messages[-1]
+    body = message.get_body(("plain",)).get_content()
+    token = body.split("verify-email?token=")[1].split()[0].strip()
+    verify_resp = await db_client.post(
+        "/api/auth/verify-email",
+        json={"token": token, "password": "verify-chosen-password"},
+    )
+    assert verify_resp.status_code == 204
+
+    await login_as(db_client, email, "verify-chosen-password")
+    invoices_resp = await db_client.get("/api/invoices")
+    assert invoices_resp.status_code == 200
+    assert invoice_id in [inv["id"] for inv in invoices_resp.json()]
+
+
+# -- (g) an invoice billed to a non-customer (admin) email is refused -------
+
+
+async def test_create_invoice_by_admin_email_is_refused(
+    db_client: AsyncClient, make_user, login_as
+) -> None:
+    """FINDINGS L2: billing an email that resolves to a non-customer row
+    (here the admin's own address) would strand the invoice -- customer
+    portals reject role != 'customer' and no claim token is minted for a row
+    with a password. Reject it at creation time instead.
+    """
+    admin = await make_user(role="admin", password="admin-pw")
+    await login_as(db_client, admin.email, "admin-pw")
+    admin_headers = _csrf_headers(db_client)
+
+    resp = await db_client.post(
+        "/api/admin/invoices",
+        params={"customer_email": admin.email},
+        json=[{"description": "widget", "quantity": "1", "unit_price": "10.00"}],
+        headers=admin_headers,
+    )
+    assert resp.status_code == 422, resp.text
 
 
 # -- (e) login refused for contact rows and unverified rows ----------------

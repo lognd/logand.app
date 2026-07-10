@@ -50,15 +50,17 @@ async def _register_and_verify(
     password: str,
     forwarded_for: str,
 ) -> None:
-    """docs/design/17: register() no longer logs the account in -- it
-    mints a 'verify' token and mails it. Walks that whole round trip
-    (register -> pull the link out of the fake SMTP inbox -> POST
-    /verify-email) so this test's account ends up genuinely "active"
-    before anything below tries to log in as it.
+    """docs/design/17 + FINDINGS H1: register() is email-only and no longer
+    logs the account in -- it mints a 'verify' token and mails it. The
+    PASSWORD is chosen at verify time, in the same transaction that marks the
+    email verified. Walks that whole round trip (register -> pull the link out
+    of the fake SMTP inbox -> POST /verify-email with the chosen password) so
+    this test's account ends up genuinely "active" before anything below tries
+    to log in as it.
     """
     register_resp = await db_client.post(
         "/api/auth/register",
-        json={"email": email, "password": password},
+        json={"email": email},
         headers={"X-Forwarded-For": forwarded_for},
     )
     assert register_resp.status_code == 202, register_resp.text
@@ -69,7 +71,9 @@ async def _register_and_verify(
     body = message.get_body(("plain",)).get_content()
     token = body.split("verify-email?token=")[1].split()[0].strip()
 
-    verify_resp = await db_client.post("/api/auth/verify-email", json={"token": token})
+    verify_resp = await db_client.post(
+        "/api/auth/verify-email", json={"token": token, "password": password}
+    )
     assert verify_resp.status_code == 204, verify_resp.text
 
 

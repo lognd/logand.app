@@ -27,11 +27,11 @@ export function logout(): Promise<{ status: string }> {
   return apiPost<{ status: string }>("/api/auth/logout");
 }
 
-export function register(
-  email: string,
-  password: string,
-): Promise<{ status: string }> {
-  return apiPost<{ status: string }>("/api/auth/register", { email, password });
+// Email-only (FINDINGS H1): registration no longer takes a password. The
+// password is chosen later, by whoever proves inbox control by redeeming the
+// emailed 'verify' token (see verifyEmail below). 202 on success.
+export function register(email: string): Promise<{ status: string }> {
+  return apiPost<{ status: string }>("/api/auth/register", { email });
 }
 
 // ALWAYS resolves (never a 401/404-shaped rejection for "no such
@@ -55,11 +55,13 @@ export function confirmPasswordReset(
   });
 }
 
-// Redeems a 'verify' token minted by register() (docs/design/17). 204 on
-// success; a 400 with code "AuthError.EmailVerificationTokenInvalid" means
-// the token is invalid, expired, or already used.
-export function verifyEmail(token: string): Promise<void> {
-  return apiPost<void>("/api/auth/verify-email", { token });
+// Redeems a 'verify' token minted by register() (docs/design/17). Sets the
+// chosen password AND marks the email verified in one step (FINDINGS H1) --
+// identical to confirmClaim, only the token purpose differs. 204 on success;
+// a 400 with code "AuthError.EmailVerificationTokenInvalid" means the token
+// is invalid, expired, or already used.
+export function verifyEmail(token: string, password: string): Promise<void> {
+  return apiPost<void>("/api/auth/verify-email", { token, password });
 }
 
 // ALWAYS resolves 202 regardless of whether the email has a pending

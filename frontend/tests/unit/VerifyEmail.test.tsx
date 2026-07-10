@@ -1,7 +1,7 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { VerifyEmail } from "../../src/app/routes/public/VerifyEmail";
 import * as authApi from "../../src/api/auth";
@@ -13,7 +13,10 @@ function renderWithToken(token: string | null) {
   return render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter initialEntries={[initialEntry]}>
-        <VerifyEmail />
+        <Routes>
+          <Route path="/verify-email" element={<VerifyEmail />} />
+          <Route path="/login" element={<div>login page</div>} />
+        </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
   );
@@ -30,18 +33,23 @@ describe("VerifyEmail", () => {
     expect(screen.getByLabelText("Email")).toBeInTheDocument();
   });
 
-  it("verifies the token from the URL automatically and shows success", async () => {
+  it("lets the visitor choose a password and POSTs {token, password}, then goes to login (FINDINGS H1)", async () => {
     const verifySpy = vi.spyOn(authApi, "verifyEmail").mockResolvedValue(undefined);
+    const user = userEvent.setup();
     renderWithToken("real-token-abc");
 
-    await waitFor(() => {
-      expect(verifySpy).toHaveBeenCalledWith("real-token-abc");
-    });
-    expect(await screen.findByText(/has been verified/i)).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "log in" })).toHaveAttribute(
-      "href",
-      "/login",
+    await user.type(screen.getByLabelText("Password"), "chosen-at-verify-time");
+    await user.click(
+      screen.getByRole("button", { name: "Verify and set password" }),
     );
+
+    await waitFor(() => {
+      expect(verifySpy).toHaveBeenCalledWith(
+        "real-token-abc",
+        "chosen-at-verify-time",
+      );
+    });
+    expect(await screen.findByText("login page")).toBeInTheDocument();
   });
 
   it("shows the backend's real detail message and a resend affordance on an invalid or expired token", async () => {
@@ -51,7 +59,13 @@ describe("VerifyEmail", () => {
         "AuthError.EmailVerificationTokenInvalid",
       ),
     );
+    const user = userEvent.setup();
     renderWithToken("stale-token");
+
+    await user.type(screen.getByLabelText("Password"), "chosen-at-verify-time");
+    await user.click(
+      screen.getByRole("button", { name: "Verify and set password" }),
+    );
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "verification link is invalid, has expired, or was already used",

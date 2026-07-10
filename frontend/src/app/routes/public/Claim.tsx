@@ -3,6 +3,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { confirmClaim, getClaimPreview } from "../../../api/auth";
 import { ApiError, RateLimitedError } from "../../../api/client";
+import { useNoReferrer } from "../../layout/useNoReferrer";
 import { formatRetryAt } from "../../../lib/time";
 import { BUTTON_CLASS, INPUT_CLASS, LABEL_CLASS } from "../../../styles/a11y";
 
@@ -17,6 +18,7 @@ const MIN_PASSWORD_LENGTH = 8;
 // token itself is the credential -- so this preview-then-set-password
 // flow has no session at any point.
 export function Claim() {
+  useNoReferrer();
   const [searchParams, setSearchParams] = useSearchParams();
   const token = searchParams.get("token") ?? "";
   const navigate = useNavigate();

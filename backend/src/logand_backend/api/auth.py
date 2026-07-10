@@ -77,19 +77,19 @@ class LoginRequest(BaseModel):
 class RegisterRequest(BaseModel):
     model_config = {}
 
+    # Email-only (FINDINGS H1): registration no longer sets a password. The
+    # password is chosen later, atomically, by whoever proves inbox control
+    # by redeeming the emailed 'verify' token (see VerifyEmailInput).
     email: str
-    # NOTE: per docs/design/02 -- "no password length cap below 128 chars,
-    # no composition rules" for hashed-and-stored passwords in general, but
-    # self-registration (unlike admin-created accounts) accepts arbitrary
-    # client input, so a minimum length is a real, not theoretical, weakness
-    # to close here specifically.
-    password: str = Field(min_length=8, max_length=128)
 
 
 class VerifyEmailInput(BaseModel):
     model_config = {}
 
     token: str
+    # verify now sets the password too (FINDINGS H1) -- same length rule as
+    # ClaimConfirmInput/registration used to enforce (docs/design/02).
+    password: str = Field(min_length=8, max_length=128)
 
 
 class ResendVerificationInput(BaseModel):
@@ -177,7 +177,7 @@ async def register(
     domain/auth/service.py's register() docstring).
     """
     cfg = AppConfig.from_external(argparse.Namespace())
-    result = await register_domain(db, payload.email, payload.password)
+    result = await register_domain(db, payload.email)
     if result.is_err:
         raise to_http_exception(result.danger_err)
     user, raw_token = result.danger_ok
@@ -204,7 +204,7 @@ async def verify_email_route(
         rate_limit("verify_email", *VERIFY_EMAIL, redis_url=_cfg.redis_url)
     ),
 ) -> Response:
-    result = await verify_email_domain(db, payload.token)
+    result = await verify_email_domain(db, payload.token, payload.password)
     if result.is_err:
         raise to_http_exception(result.danger_err)
     return Response(status_code=204)

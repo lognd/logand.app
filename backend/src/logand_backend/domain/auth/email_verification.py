@@ -158,19 +158,60 @@ async def request_verification_resend(
     return user, raw_token
 
 
-async def verify_email(db: AsyncSession, raw_token: str) -> Result[User, AuthError]:
-    """Redeems a 'verify' token: sets email_verified_at. Does not touch
-    password_hash -- register() already set it when the row moved from
-    contact/unverified to unverified/re-registered.
+async def _redeem_and_activate(
+    db: AsyncSession, raw_token: str, purpose: TokenPurpose, password: str
+) -> Result[User, AuthError]:
+    """The ONE code path shared by both 'verify' and 'claim' (docs/design/17,
+    FINDINGS H1): redeem the single-use token and, in the SAME transaction,
+    install the caller's chosen password AND set email_verified_at. Whoever
+    holds the token -- i.e. whoever proves inbox control by clicking the
+    emailed link -- is the one who chooses the credential, so the party that
+    supplies the inbox proof and the party that sets the password can never
+    diverge. This is what closes the account-takeover hole where register()
+    used to write a password a later, unrelated click would activate.
+
+    Refuses a row that is already active (email_verified_at IS NOT NULL) with
+    the generic token-invalid error: an active row's password is owned, and a
+    stale token (of either purpose) must never be allowed to rewrite it.
     """
-    result = await _redeem_token(db, raw_token, "verify")
+    if not (_MIN_PASSWORD_LENGTH <= len(password) <= _MAX_PASSWORD_LENGTH):
+        _log.warning(
+            "email credential redemption rejected: password fails length bound",
+            extra={"purpose": purpose},
+        )
+        return Err(AuthError.PasswordInvalidLength)
+
+    result = await _redeem_token(db, raw_token, purpose)
     if result.is_err:
         return result
     user = result.danger_ok
+    if user.email_verified_at is not None:
+        # Stale token against an already-active account -- refuse with the
+        # same token-invalid error so it cannot rewrite an owned password.
+        _log.warning(
+            "email credential redemption rejected: account already active",
+            extra={"user_id": str(user.id), "purpose": purpose},
+        )
+        return Err(AuthError.EmailVerificationTokenInvalid)
+
+    user.password_hash = hash_password(password)
     user.email_verified_at = datetime.now(timezone.utc)
     await db.flush()
-    _log.info("email verified", extra={"user_id": str(user.id)})
+    _log.info(
+        "email verified and password set",
+        extra={"user_id": str(user.id), "purpose": purpose},
+    )
     return Ok(user)
+
+
+async def verify_email(
+    db: AsyncSession, raw_token: str, password: str
+) -> Result[User, AuthError]:
+    """Redeems a 'verify' token: sets password_hash AND email_verified_at in
+    one transaction (FINDINGS H1). Identical operation to claim_invoices, only
+    the token purpose differs -- see _redeem_and_activate.
+    """
+    return await _redeem_and_activate(db, raw_token, "verify", password)
 
 
 class ClaimPreviewInvoice:
@@ -238,18 +279,7 @@ async def claim_invoices(
     """Redeems a 'claim' token: sets password_hash AND email_verified_at
     in one transaction -- clicking the link *is* the proof of inbox
     control (docs/design/17), so a claim never needs a second
-    verification round-trip the way self-registration does.
+    verification round-trip the way self-registration does. Shares the
+    exact same redemption path as verify_email (see _redeem_and_activate).
     """
-    if not (_MIN_PASSWORD_LENGTH <= len(password) <= _MAX_PASSWORD_LENGTH):
-        _log.warning("invoice claim rejected: password fails length bound")
-        return Err(AuthError.PasswordInvalidLength)
-
-    result = await _redeem_token(db, raw_token, "claim")
-    if result.is_err:
-        return result
-    user = result.danger_ok
-    user.password_hash = hash_password(password)
-    user.email_verified_at = datetime.now(timezone.utc)
-    await db.flush()
-    _log.info("invoices claimed", extra={"user_id": str(user.id)})
-    return Ok(user)
+    return await _redeem_and_activate(db, raw_token, "claim", password)

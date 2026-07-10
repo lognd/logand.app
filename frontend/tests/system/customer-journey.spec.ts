@@ -68,9 +68,12 @@ async function registerViaUi(
   email: string,
   password: string,
 ): Promise<void> {
+  // FINDINGS H1: registration is email-only -- there is no password field on
+  // /register any more. The password is chosen at verify time, so an attacker
+  // registering someone else's address can never plant a credential a
+  // victim's click activates.
   await page.goto("/register");
   await page.locator("#email").fill(email);
-  await page.locator("#password").fill(password);
   await page.getByRole("button", { name: /create account/i }).click();
 
   // No session yet -- the form is replaced by a "check your email" notice
@@ -79,12 +82,17 @@ async function registerViaUi(
   await expect(page.getByRole("button", { name: "log out" })).toHaveCount(0);
 
   const token = extractVerifyToken(await waitForEmail(request, email));
+  // The verify page is now a "choose your password" form (FINDINGS H1):
+  // whoever redeems the token SETS the password, in the same transaction
+  // that marks the email verified.
   await page.goto(`/verify-email?token=${token}`);
-  // Verification alone still does not create a session; it makes the
-  // credentials usable. The caller logs in explicitly. `.first()` because
-  // the success panel's own "log in" link and the logged-out nav's both
-  // match, which would otherwise trip Playwright's strict mode.
-  await expect(page.getByRole("link", { name: "log in" }).first()).toBeVisible();
+  await page.locator("#verify-password").fill(password);
+  await page.getByRole("button", { name: /verify and set password/i }).click();
+
+  // On success the page redirects to /login. Verification still does not
+  // create a session; it makes the credentials usable. The caller logs in
+  // explicitly.
+  await expect(page.getByRole("button", { name: "Log in" })).toBeVisible();
 }
 
 async function loginViaUi(page: Page, email: string, password: string): Promise<void> {
@@ -115,7 +123,7 @@ async function seedSentInvoice(
 ): Promise<string> {
   const adminEmail = uniqueEmail("journey-admin");
   const registerResp = await request.post("/api/auth/register", {
-    data: { email: adminEmail, password: "admin-seed-password" },
+    data: { email: adminEmail },
   });
   expect(registerResp.ok()).toBeTruthy();
 

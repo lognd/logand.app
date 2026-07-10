@@ -140,6 +140,19 @@ async def create(
         )
     if customer_email is not None:
         contact = await get_or_create_contact_user(db, customer_email)
+        # FINDINGS L2: an email that resolves to a non-customer row (e.g. the
+        # admin's own address, role="admin") would strand the invoice -- every
+        # customer-facing view/pay route rejects role != "customer", and no
+        # claim token is minted for a row that already has a password, so it
+        # could never be opened or paid. Refuse at creation time instead.
+        if contact.role != "customer":
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "customer_email resolves to a non-customer account and "
+                    "cannot be invoiced through the customer portal"
+                ),
+            )
         customer_id = contact.id
 
     assert customer_id is not None

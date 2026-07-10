@@ -1,56 +1,54 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { resendVerification, verifyEmail } from "../../../api/auth";
 import { ApiError, RateLimitedError } from "../../../api/client";
+import { useNoReferrer } from "../../layout/useNoReferrer";
 import { formatRetryAt } from "../../../lib/time";
 import { BUTTON_CLASS, INPUT_CLASS, LABEL_CLASS } from "../../../styles/a11y";
 
+// Mirrors backend/src/logand_backend/api/auth.py's VerifyEmailInput password
+// bounds (8-128 chars) -- same fast-fail-UX-nicety-not-source-of-truth
+// reasoning as Register.tsx/Claim.tsx's identical constant.
+const MIN_PASSWORD_LENGTH = 8;
+
 // Reached from the real link mailer.py's email-verification-requested send
-// (?token=<raw_token>), same shape as ResetPassword.tsx. There is no
-// session at this point, by design -- verifying an email happens before
-// any login is possible (see docs/design/17).
+// (?token=<raw_token>). FINDINGS H1: verifying is now a "choose your
+// password" step -- it POSTs {token, password} and sets the password AND
+// marks the email verified in one transaction (mirroring Claim.tsx exactly,
+// only the endpoint differs). There is no session at this point, by design
+// -- verifying happens before any login is possible (docs/design/17). On an
+// invalid/expired token, the resend affordance is kept.
 export function VerifyEmail() {
+  useNoReferrer();
   const [searchParams, setSearchParams] = useSearchParams();
   const token = searchParams.get("token") ?? "";
-  const attempted = useRef(false);
+  const navigate = useNavigate();
 
+  const [password, setPassword] = useState("");
   const verifyMutation = useMutation({
-    mutationFn: () => verifyEmail(token),
+    mutationFn: () => verifyEmail(token, password),
+    onSuccess: () => {
+      // The verify token is single-use and only ever needed once; drop it
+      // from the visible URL now that it has been redeemed (docs/design/17
+      // security notes), then send the visitor to log in with their new
+      // password.
+      setSearchParams({}, { replace: true });
+      navigate("/login");
+    },
   });
-
-  useEffect(() => {
-    if (!token || attempted.current) return;
-    attempted.current = true;
-    verifyMutation.mutate(undefined, {
-      // Once the token has been submitted, drop it from the visible URL
-      // (docs/design/17 security notes) -- it is single-use and there is
-      // no reason for it to keep sitting in the address bar / browser
-      // history after this point.
-      onSettled: () => {
-        setSearchParams({}, { replace: true });
-      },
-    });
-    // verifyMutation is a fresh object identity every render; only token
-    // should re-trigger this effect.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token]);
 
   // Login.tsx's "resend verification email" link (shown on the distinct
   // EmailNotVerified error) pre-fills this via ?email= so the visitor
-  // doesn't have to retype an address they just typed into the login
-  // form -- purely a convenience default, never trusted as anything else.
+  // doesn't have to retype an address -- purely a convenience default.
   const [resendEmail, setResendEmail] = useState(searchParams.get("email") ?? "");
   const resendMutation = useMutation({
     mutationFn: () => resendVerification(resendEmail),
   });
 
-  // Gated on attempted.current, not just !token: the effect above clears
-  // ?token= from the URL as soon as the verify attempt settles, so by the
-  // time a result renders, token is already "" again -- checking token
-  // alone would flip back to the missing-token branch right after a real
-  // attempt and hide the success/failure state it just produced.
-  if (!token && !attempted.current) {
+  const tooShort = password.length > 0 && password.length < MIN_PASSWORD_LENGTH;
+
+  if (!token) {
     return (
       <main className="mx-auto w-full max-w-md px-4 py-8">
         <h1 className="mb-6 text-2xl text-fg-primary">Verify your email</h1>
@@ -70,23 +68,50 @@ export function VerifyEmail() {
     <main className="mx-auto w-full max-w-md px-4 py-8">
       <h1 className="mb-6 text-2xl text-fg-primary">Verify your email</h1>
 
-      {verifyMutation.isPending && (
-        <p className="text-base text-fg-muted">Verifying...</p>
-      )}
+      <p className="mb-4 text-base text-fg-primary">
+        Set a password to finish verifying your account.
+      </p>
 
-      {verifyMutation.isSuccess && (
-        <p className="text-base text-fg-primary">
-          Your email has been verified. You can now{" "}
-          <a href="/login" className="text-accent-aqua underline underline-offset-2">
-            log in
-          </a>
-          .
-        </p>
-      )}
+      <form
+        className="flex flex-col gap-4"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (tooShort) return;
+          verifyMutation.mutate();
+        }}
+      >
+        <div>
+          <label htmlFor="verify-password" className={LABEL_CLASS}>
+            Password
+          </label>
+          <input
+            id="verify-password"
+            type="password"
+            autoComplete="new-password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            required
+            minLength={MIN_PASSWORD_LENGTH}
+            aria-describedby="verify-password-hint"
+            className={INPUT_CLASS}
+          />
+          <p id="verify-password-hint" className="mt-1 text-base text-fg-muted">
+            At least {MIN_PASSWORD_LENGTH} characters.
+          </p>
+        </div>
+
+        <button
+          type="submit"
+          disabled={verifyMutation.isPending || tooShort}
+          className={BUTTON_CLASS}
+        >
+          {verifyMutation.isPending ? "Verifying..." : "Verify and set password"}
+        </button>
+      </form>
 
       {verifyMutation.isError && (
         <>
-          <p role="alert" className="text-base text-accent-red">
+          <p role="alert" className="mt-4 text-base text-accent-red">
             {verifyMutation.error instanceof RateLimitedError
               ? `Too many attempts. Try again at ${formatRetryAt(
                   verifyMutation.error.retryAfterSeconds,

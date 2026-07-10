@@ -109,32 +109,32 @@ async def login(
     return await create_session(db, user.id, user.role)
 
 
-async def register(
-    db: AsyncSession, email: str, password: str
-) -> Result[tuple[User, str], AuthError]:
-    """Get-or-create semantics (docs/design/17), NOT plain self-registration
-    any more: since an admin invoicing a bare email now leaves a real
-    users row behind (a "contact" row, password_hash/email_verified_at
-    both NULL), register() may be landing on a row that already exists
-    for a completely legitimate reason -- there being an invoice already
-    waiting for this address is the whole point of the feature.
+async def register(db: AsyncSession, email: str) -> Result[tuple[User, str], AuthError]:
+    """Get-or-create semantics (docs/design/17), email-only -- register()
+    NEVER writes password_hash on any branch (FINDINGS H1). A freshly
+    registered row stays a "contact" (password_hash IS NULL) until somebody
+    proves inbox control by redeeming the 'verify' token; the password is
+    then chosen atomically by whoever holds that token (see
+    email_verification.verify_email). Decoupling password-setting from
+    registration is what makes it impossible for an attacker to install a
+    credential that a victim's own verification click would activate.
 
-    - No existing row: create a fresh "unverified" one.
+    - No existing row: create a fresh contact row (password_hash NULL) and
+      mint a 'verify' token.
     - Existing row is a contact (password_hash NULL) or unverified
-      (email_verified_at NULL): allowed. Overwrites password_hash and
-      re-mints a 'verify' token -- this is what stops an attacker from
-      squatting/denial-of-servicing a real owner out of their own
-      address (whoever proves inbox control wins, see the design doc's
-      "Squatting" section), and what lets the real owner re-request a
-      verification email if the first one was lost.
-    - Existing row is "active" (email_verified_at set): refused --
-      the email is already in use by someone who has proven ownership.
+      (email_verified_at NULL): allowed. Leaves password_hash untouched and
+      re-mints a 'verify' token -- this both lets a real owner re-request a
+      lost verification email and stops an attacker squatting a real owner
+      out of their own address (whoever proves inbox control wins, see the
+      design doc's "Squatting" section). Since no password is written here,
+      re-registration can never plant a credential.
+    - Existing row is "active" (email_verified_at set): refused -- the email
+      is already in use by someone who has proven ownership.
 
-    Returns (user, raw_verify_token) rather than a session -- unlike the
-    old self-registration flow, a freshly registered account is NOT
-    logged in immediately any more (see api/auth.py's register route):
-    it can't log in until it verifies, so there is no session to hand
-    back.
+    Returns (user, raw_verify_token) rather than a session -- a freshly
+    registered account is NOT logged in (see api/auth.py's register route):
+    it has no password and cannot log in until it verifies, so there is no
+    session to hand back.
 
     Email comparison/storage is lowercased so "User@x.com" and "user@x.com"
     can't both register -- the case-insensitive lookup here is a
@@ -151,19 +151,17 @@ async def register(
     if existing is not None:
         if existing.email_verified_at is not None:
             return Err(AuthError.EmailAlreadyRegistered)
-        # Contact or unverified row -- overwrite the password and re-mint.
-        existing.password_hash = hash_password(password)
-        await db.flush()
+        # Contact or unverified row -- re-mint only; NEVER touch the password.
         raw_token = await mint_email_verification_token(db, existing.id, "verify")
         _log.info(
-            "registration overwrote contact/unverified row",
+            "registration re-minted verify token for contact/unverified row",
             extra={"email": normalized_email, "user_id": str(existing.id)},
         )
         return Ok((existing, raw_token))
 
     user = User(
         email=normalized_email,
-        password_hash=hash_password(password),
+        password_hash=None,
         role="customer",
     )
     db.add(user)
@@ -174,7 +172,7 @@ async def register(
 
     raw_token = await mint_email_verification_token(db, user.id, "verify")
     _log.info(
-        "registration created new unverified user",
+        "registration created new contact row",
         extra={"email": normalized_email, "user_id": str(user.id)},
     )
     return Ok((user, raw_token))

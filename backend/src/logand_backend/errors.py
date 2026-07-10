@@ -39,6 +39,14 @@ class UserError(ErrorSet):
     NotFound = "user was not found"
     CannotModifyAdmin = "admin accounts cannot be managed through this route"
     PasswordTooShort = "password must be at least 8 characters"
+    # docs/design/17 / FINDINGS L1: a contact row (password_hash IS NULL) has
+    # never registered, so setting a password without a verified email would
+    # silently produce an unverified row that can never log in. Refuse it
+    # instead, with actionable guidance toward the real path.
+    CannotResetContactAccount = (
+        "this email has been invoiced but no account exists yet; it cannot be "
+        "given a password until the recipient registers or claims it"
+    )
 
 
 class InvoiceError(ErrorSet):
