@@ -46,9 +46,12 @@ android/.cxx/
 .frob/
 FROBLEMS.md
 
-# Scratch audit findings -- regenerated per audit-fix pass, not a
-# tracked deliverable.
+# AI assistant working artifacts -- scratch audit findings (regenerated per
+# pass) and assistant instruction files, never tracked deliverables.
 FINDINGS.md
+FINDINGS-*.md
+CLAUDE.md
+.claude/
 
 # Local storage backend (STORAGE_BACKEND=local, the default) -- real
 # uploaded evidence/receipts/documents, never committed.
