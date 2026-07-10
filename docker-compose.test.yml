@@ -36,6 +36,21 @@ services:
     ports:
       - "12111:12111"
 
+  # A real SMTP sink for the stack's own mail, same spirit as fake-stripe
+  # above: registration now mints an email-verification token and mails a
+  # link, and the only honest way to system-test "register -> verify ->
+  # log in" is to actually receive that mail. mailpit accepts SMTP on 1025
+  # and exposes the captured messages over an HTTP API on 8025, which
+  # customer-journey.spec.ts reads to pull the verification link back out.
+  # Without this the backend has no mail transport, notify_* silently
+  # no-ops (see domain/notifications/mailer.py::is_configured), and no
+  # token ever reaches the test.
+  mailpit:
+    image: axllent/mailpit:latest
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+
   backend:
     build:
       context: ./backend
@@ -59,10 +74,21 @@ services:
       # two values back out of the environment to log in as this account.
       SEED_ADMIN_EMAIL: admin-fixture@example.com
       SEED_ADMIN_PASSWORD: admin-fixture-password-not-for-production
+      # Points every emailed link (verify-email, claim, password reset) at
+      # the Playwright dev server rather than the real site, so a link the
+      # test clicks stays inside the test stack.
+      PUBLIC_BASE_URL: http://localhost:5173
+      SMTP_HOST: mailpit
+      SMTP_PORT: 1025
+      # mailpit speaks plaintext SMTP; STARTTLS would fail the handshake.
+      SMTP_USE_TLS: "false"
+      SMTP_FROM_ADDRESS: noreply@logand.test
     ports:
       - "8000:8000"
     depends_on:
       postgres:
         condition: service_healthy
       fake-stripe:
+        condition: service_started
+      mailpit:
         condition: service_started

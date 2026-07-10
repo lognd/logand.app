@@ -21,15 +21,70 @@ function uniqueEmail(label: string): string {
   return `${label}-${Date.now()}-${Math.floor(Math.random() * 1e6)}@example.com`;
 }
 
-async function registerViaUi(page: Page, email: string, password: string): Promise<void> {
+// docker-compose.test.yml's mailpit, reachable on the host network (the
+// Playwright container runs with --network host -- see ci.yml).
+const MAILPIT_API = "http://localhost:8025/api/v1";
+
+/** Pulls the newest message sent to `email` out of mailpit and returns its
+ * text body. Polls, because the backend sends via a FastAPI BackgroundTask
+ * -- the HTTP response returns before the mail has actually left. */
+async function waitForEmail(request: APIRequestContext, email: string): Promise<string> {
+  const deadline = Date.now() + 20_000;
+  while (Date.now() < deadline) {
+    const res = await request.get(`${MAILPIT_API}/search?query=to:${encodeURIComponent(email)}`);
+    if (res.ok()) {
+      const body = await res.json();
+      const first = body.messages?.[0];
+      if (first) {
+        const full = await request.get(`${MAILPIT_API}/message/${first.ID}`);
+        if (full.ok()) {
+          const msg = await full.json();
+          return (msg.Text as string) || (msg.HTML as string) || "";
+        }
+      }
+    }
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  throw new Error(`no email ever arrived for ${email}`);
+}
+
+function extractVerifyToken(body: string): string {
+  // PUBLIC_BASE_URL is http://localhost:5173 in the test stack, so the link
+  // is already same-origin with the dev server the browser is driving.
+  const match = body.match(/\/verify-email\?token=([A-Za-z0-9_\-.]+)/);
+  if (!match) throw new Error(`no verify-email link in email body:\n${body}`);
+  return match[1];
+}
+
+/** Registers, then completes the email-verification round trip the account
+ * now requires before it can log in at all (docs/design/17). Registration
+ * deliberately no longer creates a session -- an unverified registrant must
+ * not be able to reach anything, since self-registration proves nothing
+ * about who owns the address. This drives the REAL flow: submit the form,
+ * receive the real mail from the real backend, click the real link. */
+async function registerViaUi(
+  page: Page,
+  request: APIRequestContext,
+  email: string,
+  password: string,
+): Promise<void> {
   await page.goto("/register");
   await page.locator("#email").fill(email);
   await page.locator("#password").fill(password);
   await page.getByRole("button", { name: /create account/i }).click();
-  // Registration logs the account in immediately and navigates home --
-  // the nav's "log out" link is the real signal that a session exists,
-  // not just that the form submission didn't error.
-  await expect(page.getByRole("button", { name: "log out" })).toBeVisible();
+
+  // No session yet -- the form is replaced by a "check your email" notice
+  // rather than navigating home. Asserting the ABSENCE of a session here is
+  // the security-relevant half of this test.
+  await expect(page.getByRole("button", { name: "log out" })).toHaveCount(0);
+
+  const token = extractVerifyToken(await waitForEmail(request, email));
+  await page.goto(`/verify-email?token=${token}`);
+  // Verification alone still does not create a session; it makes the
+  // credentials usable. The caller logs in explicitly. `.first()` because
+  // the success panel's own "log in" link and the logged-out nav's both
+  // match, which would otherwise trip Playwright's strict mode.
+  await expect(page.getByRole("link", { name: "log in" }).first()).toBeVisible();
 }
 
 async function loginViaUi(page: Page, email: string, password: string): Promise<void> {
@@ -107,11 +162,14 @@ async function seedSentInvoice(
 }
 
 test.describe("customer journey", () => {
-  test("register, log out, confirm session over, log back in", async ({ page }) => {
+  test("register, log out, confirm session over, log back in", async ({ page, request }) => {
     const email = uniqueEmail("journey");
     const password = "a-real-password-123";
 
-    await registerViaUi(page, email, password);
+    await registerViaUi(page, request, email, password);
+    // Registration no longer logs you in (docs/design/17) -- the session
+    // this test goes on to exercise starts here, at an explicit login.
+    await loginViaUi(page, email, password);
 
     // Session reload persistence, not just the in-memory nav state --
     // reload the page and confirm /api/me still reports logged in from
@@ -148,7 +206,8 @@ test.describe("customer journey", () => {
     // (the form) while the Element itself simply never mounts.
     await page.route(/js\.stripe\.com/, (route) => route.abort());
 
-    await registerViaUi(page, email, password);
+    await registerViaUi(page, request, email, password);
+    await loginViaUi(page, email, password);
 
     // page.request (NOT the standalone `request` fixture) for THIS read --
     // the standalone fixture is its own isolated APIRequestContext with no
