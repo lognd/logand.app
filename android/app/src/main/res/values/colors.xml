@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Gruvbox Dark palette — exact same hex values as
+<!-- Gruvbox Dark palette - exact same hex values as
      frontend/src/styles/tokens.css, see docs/design/09-design-system.md.
      Kept as a literal copy (not a shared source) since there's no
      practical way to share CSS custom properties with an Android
-     resource file across the repo boundary — if the web palette ever
+     resource file across the repo boundary - if the web palette ever
      changes, update both. -->
 <resources>
     <color name="bg_primary">#282828</color>

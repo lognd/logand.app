@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- A terminal-prompt ">_" glyph — matches the site's ASCII/terminal
+<!-- A terminal-prompt ">_" glyph - matches the site's ASCII/terminal
      visual identity (see docs/design/09-design-system.md, GlitchText).
      Centered within the adaptive icon's 66dp "safe zone" so it isn't
      clipped by circular/rounded-square icon masks on different launchers. -->

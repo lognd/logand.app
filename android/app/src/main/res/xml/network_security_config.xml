@@ -4,7 +4,7 @@
     <base-config cleartextTrafficPermitted="false" />
 
     <!-- Cleartext HTTP allowed ONLY for the Android emulator's host-loopback
-         alias (10.0.2.2) and physical-device localhost testing — never a
+         alias (10.0.2.2) and physical-device localhost testing - never a
          real domain. This is exactly the same "point the client at a local
          backend for development" pattern the web frontend's
          VITE_API_PROXY_TARGET env var uses, just expressed as Android's own
