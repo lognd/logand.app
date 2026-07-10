@@ -1,5 +1,5 @@
 # Root Makefile delegates to each subproject. See docs/design/00-overview.md for layout.
-.PHONY: install build test test-system lint typecheck fmt check clean
+.PHONY: install build test test-system lint typecheck fmt check clean release-android
 
 install:
 	$(MAKE) -C backend install
@@ -51,3 +51,12 @@ clean:
 	$(MAKE) -C backend clean
 	$(MAKE) -C frontend clean
 	$(MAKE) -C wasm-ascii clean
+
+# Cut an Android release: bump versionCode/versionName, commit, tag, push.
+# Pushing the tag triggers .github/workflows/release-android.yml. Bumps and
+# tags locally by default; append PUSH=1 to actually push (and release).
+#   make release-android VERSION=1.2.0
+#   make release-android VERSION=1.2.0 PUSH=1
+release-android:
+	@test -n "$(VERSION)" || { echo "usage: make release-android VERSION=X.Y.Z [PUSH=1]"; exit 1; }
+	scripts/release-android.sh $(VERSION) $(if $(PUSH),--push,)
