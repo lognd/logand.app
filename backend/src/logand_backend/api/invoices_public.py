@@ -35,6 +35,33 @@ from logand_backend.logging import get_logger
 
 _log = get_logger(__name__)
 
+
+async def _stripe_call(operation: str, fn, /, *args, **kwargs):
+    """Runs a blocking stripe-python call off the event loop and converts a
+    transport/API failure into the same 503 this module already returns for
+    "card payments are not configured".
+
+    Without this, a transient `APIConnectionError`/`RateLimitError` from
+    Stripe escapes as an unhandled 500 on a customer-facing pay route, while
+    every other Stripe call site in this codebase (domain/invoices/refunds.py,
+    api/webhooks.py) already degrades gracefully. See FINDINGS-2026-07-09.md
+    L1. Deliberately does NOT catch HTTPException, so the 409 "already paid"
+    guard raised between these calls still propagates untouched.
+    """
+    try:
+        return await asyncio.to_thread(fn, *args, **kwargs)
+    except stripe.error.StripeError as exc:
+        _log.error(
+            "stripe call failed on a customer-facing pay route",
+            extra={"operation": operation},
+            exc_info=exc,
+        )
+        raise HTTPException(
+            status_code=503,
+            detail="card payments are temporarily unavailable; try again shortly",
+        ) from exc
+
+
 router = APIRouter(prefix="/api/invoices", tags=["customer", "invoices"])
 # redis_url wired from config -- see api/auth.py's identical NOTE for why
 # this previously always used RateLimiter's in-process fallback regardless
@@ -293,8 +320,10 @@ async def pay_invoice_via_paypal(
         stripe.api_key = cfg.payment_processor_secret
         if cfg.stripe_api_base:
             stripe.api_base = cfg.stripe_api_base
-        existing_intent = await asyncio.to_thread(
-            stripe.PaymentIntent.retrieve, invoice.stripe_payment_intent_id
+        existing_intent = await _stripe_call(
+            "PaymentIntent.retrieve",
+            stripe.PaymentIntent.retrieve,
+            invoice.stripe_payment_intent_id,
         )
         if existing_intent.status == "succeeded":
             # Mirrors pay_invoice's own check: the webhook hasn't caught up
@@ -602,8 +631,10 @@ async def pay_invoice(
     # Stripe round trip doesn't stall every other concurrent request on
     # this process.
     if invoice.stripe_payment_intent_id:
-        existing_intent = await asyncio.to_thread(
-            stripe.PaymentIntent.retrieve, invoice.stripe_payment_intent_id
+        existing_intent = await _stripe_call(
+            "PaymentIntent.retrieve",
+            stripe.PaymentIntent.retrieve,
+            invoice.stripe_payment_intent_id,
         )
         if existing_intent.status == "succeeded":
             # Already paid on Stripe's side -- either the webhook hasn't
@@ -629,9 +660,12 @@ async def pay_invoice(
             # so settle_invoice_if_paid could over- or under-collect.
             # Cancel the stale intent and fall through to create a fresh
             # one for the current amount due.
-            await asyncio.to_thread(stripe.PaymentIntent.cancel, existing_intent.id)
+            await _stripe_call(
+                "PaymentIntent.cancel", stripe.PaymentIntent.cancel, existing_intent.id
+            )
 
-    intent = await asyncio.to_thread(
+    intent = await _stripe_call(
+        "PaymentIntent.create",
         stripe.PaymentIntent.create,
         amount=to_minor_units(amount_due, invoice.currency),
         currency=invoice.currency,
