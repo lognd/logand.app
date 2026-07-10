@@ -70,7 +70,7 @@ async def login(
         verify_password(password, DUMMY_PASSWORD_HASH)
         _log.warning("login failed: no such account", extra={"email": email})
         return Err(AuthError.InvalidCredentials)
-    # docs/design/16: a contact row (password_hash IS NULL) has nothing to
+    # docs/design/17: a contact row (password_hash IS NULL) has nothing to
     # authenticate as -- but still run verify_password against the SAME
     # fixed dummy hash used above, so this branch costs the same argon2
     # latency as a real wrong-password check and doesn't fork timing
@@ -209,7 +209,7 @@ async def ensure_admin_seeded(db: AsyncSession, email: str, password: str) -> Us
     if existing is not None:
         existing.password_hash = hash_password(password)
         existing.role = "admin"
-        # docs/design/16: without this, the seeded admin is left
+        # docs/design/17: without this, the seeded admin is left
         # "unverified" (email_verified_at NULL) and cannot log in at all
         # -- there is no inbox to click a verify link from for an
         # out-of-band seeded account, so this IS the verification.

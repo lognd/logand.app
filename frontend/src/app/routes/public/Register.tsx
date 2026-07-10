@@ -17,7 +17,7 @@ const MIN_PASSWORD_LENGTH = 8;
 // register() domain function: role is hardcoded server-side, never taken
 // from the request).
 //
-// docs/design/16: registration no longer logs the visitor in -- POST
+// docs/design/17: registration no longer logs the visitor in -- POST
 // /api/auth/register now returns 202 and mints a "verify" token emailed to
 // the address, and the resulting account cannot log in until that link is
 // clicked (email_verified_at IS NULL blocks login with a distinct error,

@@ -111,6 +111,13 @@ class InvoicePdfData(BaseModel):
     currency_upper: str
     currency_symbol: str
     amount_total: str
+    # Pre-tax subtotal and total sales tax, formatted like amount_total.
+    # has_tax gates whether the template breaks the totals into Subtotal/
+    # Tax/Total rows or shows just Total -- a zero-tax invoice stays a
+    # single Total line. See docs/design/16-sales-tax.md.
+    subtotal: str
+    tax_amount: str
+    has_tax: bool
     line_items: list[InvoiceLineItemData]
     contact_email: str
     # None means no Zelle handle is configured at all (cfg.zelle_handle is
@@ -118,6 +125,10 @@ class InvoicePdfData(BaseModel):
     # whether to mention the real handle or fall back to bare "Zelle"
     # without a separate "is Zelle even offered" flag.
     zelle_handle: str | None = None
+    # None means no PayPal receive email is configured (cfg.paypal_receive
+    # _email unset) -- like zelle_handle, the template then shows a bare
+    # "PayPal" without a handle rather than needing a separate flag.
+    paypal_receive_email: str | None = None
     pay_url: str | None = None
     memo: str | None = None
 
@@ -128,6 +139,8 @@ def build_invoice_pdf_data(
     status: str,
     currency: str,
     amount_total: Decimal,
+    subtotal: Decimal = Decimal(0),
+    tax_amount: Decimal = Decimal(0),
     due_date: str | None,
     created_at: str,
     memo: str | None,
@@ -137,6 +150,7 @@ def build_invoice_pdf_data(
     business_details: str,
     contact_email: str,
     zelle_handle: str | None = None,
+    paypal_receive_email: str | None = None,
     pay_url: str | None,
 ) -> InvoicePdfData:
     """Assembles + LaTeX-escapes everything the template needs from raw
@@ -187,9 +201,15 @@ def build_invoice_pdf_data(
         currency_upper=latex_escape(currency.upper()),
         currency_symbol=_currency_symbol(currency),
         amount_total=latex_escape(format_major_units(amount_total, currency)),
+        subtotal=latex_escape(format_major_units(subtotal, currency)),
+        tax_amount=latex_escape(format_major_units(tax_amount, currency)),
+        has_tax=tax_amount > 0,
         line_items=line_item_data,
         contact_email=latex_escape(contact_email),
         zelle_handle=latex_escape(zelle_handle) if zelle_handle else None,
+        paypal_receive_email=(
+            latex_escape(paypal_receive_email) if paypal_receive_email else None
+        ),
         pay_url=pay_url,
         memo=latex_escape(memo) if memo else None,
     )

@@ -72,7 +72,7 @@ export function resendVerification(email: string): Promise<{ status: string }> {
 }
 
 // Just enough to preview an invoice-claim link before a password is set
-// (docs/design/16's ClaimPreviewInvoice) -- amount_total is a decimal
+// (docs/design/17's ClaimPreviewInvoice) -- amount_total is a decimal
 // string (already quantized to the invoice's currency server-side), never
 // a number, so it round-trips through JSON without float rounding.
 export interface ClaimPreviewInvoice {

@@ -120,7 +120,7 @@ or a scoped invoice token, see [04-invoices.md](04-invoices.md)).
 
 ## Account states and email verification
 
-As of `docs/design/16-contact-users-and-email-verification.md`, a `users`
+As of `docs/design/17-contact-users-and-email-verification.md`, a `users`
 row is no longer necessarily an account. It is one of three states:
 
 - **contact** (`password_hash IS NULL`) -- an address an admin has invoiced.

@@ -10,7 +10,11 @@ import pytest
 from typani.result import Ok
 
 from logand_backend.app.config import AppConfig
-from logand_backend.db.models.invoices import Invoice, InvoiceLineItem
+from logand_backend.db.models.invoices import (
+    Invoice,
+    InvoiceLineItem,
+    InvoiceLineItemTax,
+)
 from logand_backend.db.models.users import User
 from logand_backend.domain.notifications import notify
 
@@ -34,6 +38,8 @@ def _invoice(**overrides: object) -> Invoice:
         customer_id=uuid.uuid4(),
         status="sent",
         amount_total=Decimal("10.00"),
+        tax_amount=Decimal("0.00"),
+        tax_origin_state=None,
         currency="usd",
         due_date=None,
         memo=None,
@@ -71,10 +77,12 @@ class _FakeDb:
         user: User | None,
         invoice: Invoice | None = None,
         line_items: list[InvoiceLineItem] | None = None,
+        line_item_taxes: list[object] | None = None,
     ) -> None:
         self._user = user
         self._invoice = invoice
         self._line_items = line_items or []
+        self._line_item_taxes = line_item_taxes or []
 
     async def get(self, model: type, _id: object) -> object:
         if model is User:
@@ -83,7 +91,14 @@ class _FakeDb:
             return self._invoice
         raise AssertionError(f"unexpected model {model!r} passed to db.get")
 
-    async def execute(self, _stmt: object) -> _FakeResult:
+    async def execute(self, stmt: object) -> _FakeResult:
+        # Route by the queried entity -- load_invoice_export_data now issues
+        # a second query for InvoiceLineItemTax (per-line tax charges) after
+        # the line items, and returning line items for that too would feed
+        # the wrong rows into the charge grouping.
+        entity = stmt.column_descriptions[0]["entity"]  # type: ignore[attr-defined]
+        if entity is InvoiceLineItemTax:
+            return _FakeResult(self._line_item_taxes)
         return _FakeResult(self._line_items)
 
 

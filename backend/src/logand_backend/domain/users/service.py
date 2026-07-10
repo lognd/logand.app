@@ -111,6 +111,36 @@ async def reactivate_customer(
     return Ok(log_id)
 
 
+async def update_customer_address(
+    db: AsyncSession,
+    user_id: UUID,
+    *,
+    address_line1: str | None,
+    address_city: str | None,
+    address_state: str | None,
+    address_postal_code: str | None,
+    address_country: str | None,
+) -> Result[User, UserError]:
+    """Sets the customer's destination address -- feeds
+    domain/invoices/tax/apply.py's destination-jurisdiction lookup
+    ("US-{address_state}") for the auto-tax categorizer. All fields
+    optional/nullable, same as the underlying columns (see
+    docs/design/16-sales-tax.md Phase 6): this replaces the whole address in
+    one call, it does not patch field-by-field."""
+    result = await get_customer(db, user_id)
+    if result.is_err:
+        return Err(result.danger_err)
+    user = result.danger_ok
+
+    user.address_line1 = address_line1
+    user.address_city = address_city
+    user.address_state = address_state
+    user.address_postal_code = address_postal_code
+    user.address_country = address_country
+    await db.flush()
+    return Ok(user)
+
+
 async def admin_reset_password(
     db: AsyncSession, user_id: UUID, new_password: str, admin_id: UUID
 ) -> Result[UUID, UserError]:

@@ -27,6 +27,8 @@ def _data(**overrides: object) -> InvoiceExportData:
         status="sent",
         currency="usd",
         amount_total=Decimal("15.00"),
+        tax_amount=Decimal("0.00"),
+        tax_origin_state=None,
         due_date=None,
         created_at=date(2026, 1, 1),
         memo=None,

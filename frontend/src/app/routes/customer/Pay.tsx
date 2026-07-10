@@ -553,7 +553,16 @@ export function CustomerPay() {
           handle is shown directly (not just "contact us about Zelle")
           once one is actually configured -- "I need to have my Zelle tag
           and whatnot on the customer invoice so that they can see the
-          options of where they can pay." */}
+          options of where they can pay."
+
+          KEEP IN SYNC: this "Other ways to pay" box and the invoice PDF's
+          "Alternative payment methods accepted" list
+          (backend/src/logand_backend/domain/invoices/pdf/invoice.tex.jinja)
+          show the SAME manual methods (Zelle handle, PayPal receive email,
+          in-person) in the SAME style -- a method label with the handle/
+          email set off in monospace (font-mono here, \texttt there),
+          distinct from the surrounding prose. Change one, change the other
+          in the same commit so the PDF and this page stay consistent. */}
       <div className="mt-6 rounded border border-border p-4">
         <p className="text-base text-fg-primary">Other ways to pay</p>
         {paymentMethods.data?.zelle_handle && (

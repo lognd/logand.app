@@ -6,6 +6,8 @@ import {
   listCustomers,
   reactivateCustomer,
   resetCustomerPassword,
+  updateCustomerAddress,
+  type CustomerDetail,
 } from "../../../api/customers";
 import { BUTTON_CLASS, INPUT_CLASS, LABEL_CLASS } from "../../../styles/a11y";
 
@@ -14,6 +16,104 @@ import { BUTTON_CLASS, INPUT_CLASS, LABEL_CLASS } from "../../../styles/a11y";
 // "confirmations on everything" requirement as inventory's /adjust
 // route, so each one gets its own explicit confirm step showing exactly
 // what's about to happen before the request fires.
+// Destination address used by the tax engine's jurisdiction lookup (see
+// docs/design/16-sales-tax.md Phase 6) -- a plain always-visible form
+// (unlike the confirm-gated deactivate/reset flows above) since editing an
+// address is not a destructive action that needs a second confirm step.
+function AddressForm({ customer }: { customer: CustomerDetail }) {
+  const queryClient = useQueryClient();
+  const [line1, setLine1] = useState(customer.address_line1 ?? "");
+  const [city, setCity] = useState(customer.address_city ?? "");
+  const [state, setState] = useState(customer.address_state ?? "");
+  const [postalCode, setPostalCode] = useState(customer.address_postal_code ?? "");
+  const [country, setCountry] = useState(customer.address_country ?? "");
+
+  const saveMutation = useMutation({
+    mutationFn: () =>
+      updateCustomerAddress(customer.id, {
+        address_line1: line1 || null,
+        address_city: city || null,
+        address_state: state || null,
+        address_postal_code: postalCode || null,
+        address_country: country || null,
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["admin", "customers", customer.id] });
+    },
+  });
+
+  return (
+    <div className="mt-4 rounded border border-border p-4">
+      <p className="text-base text-fg-primary">Address (for tax sourcing)</p>
+      <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <label className="flex flex-col text-sm text-fg-muted">
+          Address line 1
+          <input
+            type="text"
+            value={line1}
+            onChange={(e) => setLine1(e.target.value)}
+            className={INPUT_CLASS}
+          />
+        </label>
+        <label className="flex flex-col text-sm text-fg-muted">
+          City
+          <input
+            type="text"
+            value={city}
+            onChange={(e) => setCity(e.target.value)}
+            className={INPUT_CLASS}
+          />
+        </label>
+        <label className="flex flex-col text-sm text-fg-muted">
+          State
+          <input
+            type="text"
+            value={state}
+            onChange={(e) => setState(e.target.value)}
+            className={INPUT_CLASS}
+          />
+        </label>
+        <label className="flex flex-col text-sm text-fg-muted">
+          Postal code
+          <input
+            type="text"
+            value={postalCode}
+            onChange={(e) => setPostalCode(e.target.value)}
+            className={INPUT_CLASS}
+          />
+        </label>
+        <label className="flex flex-col text-sm text-fg-muted">
+          Country
+          <input
+            type="text"
+            value={country}
+            onChange={(e) => setCountry(e.target.value)}
+            className={INPUT_CLASS}
+          />
+        </label>
+      </div>
+      {saveMutation.isError && (
+        <p role="alert" className="mt-2 text-base text-accent-red">
+          Could not save the address.
+        </p>
+      )}
+      {saveMutation.isSuccess && (
+        <p className="mt-2 text-base text-fg-primary">Address saved.</p>
+      )}
+      <div className="mt-3">
+        <button
+          type="button"
+          disabled={saveMutation.isPending}
+          onClick={() => saveMutation.mutate()}
+          className={BUTTON_CLASS}
+        >
+          Save address
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function CustomerDetailPanel({ userId }: { userId: string }) {
   const queryClient = useQueryClient();
   const [confirmingDeactivate, setConfirmingDeactivate] = useState(false);
@@ -180,6 +280,8 @@ function CustomerDetailPanel({ userId }: { userId: string }) {
           </div>
         )}
       </div>
+
+      <AddressForm customer={customer} />
     </div>
   );
 }

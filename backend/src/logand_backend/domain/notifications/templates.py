@@ -358,7 +358,7 @@ def email_verification_requested(
     *,
     verify_url: str,
 ) -> tuple[str, str, str]:
-    """docs/design/16 -- sent by register() (and resend-verification) to
+    """docs/design/17 -- sent by register() (and resend-verification) to
     prove inbox control before the account can log in. Mirrors
     password_reset_requested's structure (a single link is the whole
     message) but with a 24-hour window and no "if you didn't request

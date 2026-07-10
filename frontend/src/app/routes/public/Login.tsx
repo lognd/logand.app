@@ -16,7 +16,7 @@ import { BUTTON_CLASS, INPUT_CLASS, LABEL_CLASS } from "../../../styles/a11y";
 // 401 from something in front of the app).
 const GENERIC_LOGIN_ERROR = "Login failed. Check your email and password.";
 
-// docs/design/16: unlike InvalidCredentials, EmailNotVerified is safe to
+// docs/design/17: unlike InvalidCredentials, EmailNotVerified is safe to
 // disclose distinctly -- reaching it already requires knowing the correct
 // password, so it does not participate in login's account-existence
 // oracle (see backend/src/logand_backend/errors.py's own comment on

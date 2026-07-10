@@ -24,7 +24,7 @@ export function VerifyEmail() {
     attempted.current = true;
     verifyMutation.mutate(undefined, {
       // Once the token has been submitted, drop it from the visible URL
-      // (docs/design/16 security notes) -- it is single-use and there is
+      // (docs/design/17 security notes) -- it is single-use and there is
       // no reason for it to keep sitting in the address bar / browser
       // history after this point.
       onSettled: () => {

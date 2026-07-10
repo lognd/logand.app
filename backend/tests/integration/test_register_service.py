@@ -28,7 +28,7 @@ async def test_register_with_active_email_fails(db_session, make_user) -> None:
 async def test_register_over_unverified_row_is_allowed_and_overwrites_password(
     db_session, make_user
 ) -> None:
-    """docs/design/16: registering against an unverified row (e.g. an
+    """docs/design/17: registering against an unverified row (e.g. an
     attacker squatting an address, or the real owner re-registering after
     losing the first verify email) overwrites the password and re-mints
     -- unverified rows are not "owned" by anyone yet.
@@ -44,7 +44,7 @@ async def test_register_over_unverified_row_is_allowed_and_overwrites_password(
 
 
 async def test_register_over_contact_row_is_allowed(db_session) -> None:
-    """docs/design/16: an admin invoicing a bare email leaves a contact
+    """docs/design/17: an admin invoicing a bare email leaves a contact
     row (password_hash NULL); registering against it is allowed."""
     contact = await get_or_create_contact_user(db_session, "contact@example.com")
     assert contact.password_hash is None
@@ -60,7 +60,7 @@ async def test_register_over_contact_row_is_allowed(db_session) -> None:
 
 async def test_register_email_comparison_is_case_insensitive(db_session) -> None:
     """The second registration attempt for the SAME (still-unverified)
-    address is allowed, per docs/design/16 -- an unverified row isn't
+    address is allowed, per docs/design/17 -- an unverified row isn't
     "owned" by the first registrant. Case-insensitivity is what's under
     test here: verifying the FIRST attempt promotes the row to active, and
     only THEN does a third attempt with different casing correctly fail.

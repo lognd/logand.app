@@ -16,6 +16,7 @@ from logand_backend.domain.users.service import (
     deactivate_customer,
     get_customer,
     reactivate_customer,
+    update_customer_address,
 )
 
 router = APIRouter(prefix="/api/admin/customers", tags=["admin", "users"])
@@ -27,6 +28,21 @@ class ResetPasswordInput(BaseModel):
     new_password: str
 
 
+class AddressInput(BaseModel):
+    """The customer's destination address (docs/design/16-sales-tax.md
+    Phase 6) -- feeds domain/invoices/tax/apply.py's destination-
+    jurisdiction lookup. Replaces the whole address; pass None for any
+    field that should be cleared."""
+
+    model_config = {}
+
+    address_line1: str | None = None
+    address_city: str | None = None
+    address_state: str | None = None
+    address_postal_code: str | None = None
+    address_country: str | None = None
+
+
 def _customer_detail(user: User) -> dict:
     return {
         "id": str(user.id),
@@ -35,6 +51,11 @@ def _customer_detail(user: User) -> dict:
         "emails_opted_out": user.emails_opted_out,
         "disabled_at": user.disabled_at.isoformat() if user.disabled_at else None,
         "created_at": user.created_at.isoformat(),
+        "address_line1": user.address_line1,
+        "address_city": user.address_city,
+        "address_state": user.address_state,
+        "address_postal_code": user.address_postal_code,
+        "address_country": user.address_country,
     }
 
 
@@ -106,6 +127,27 @@ async def reactivate(
     if result.is_err:
         raise to_http_exception(result.danger_err)
     return {"status": "reactivated"}
+
+
+@router.put("/{user_id}/address")
+async def update_address(
+    user_id: UUID,
+    body: AddressInput,
+    _admin: SessionInfo = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    result = await update_customer_address(
+        db,
+        user_id,
+        address_line1=body.address_line1,
+        address_city=body.address_city,
+        address_state=body.address_state,
+        address_postal_code=body.address_postal_code,
+        address_country=body.address_country,
+    )
+    if result.is_err:
+        raise to_http_exception(result.danger_err)
+    return _customer_detail(result.danger_ok)
 
 
 @router.post("/{user_id}/reset-password")

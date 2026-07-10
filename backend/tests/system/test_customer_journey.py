@@ -50,7 +50,7 @@ async def _register_and_verify(
     password: str,
     forwarded_for: str,
 ) -> None:
-    """docs/design/16: register() no longer logs the account in -- it
+    """docs/design/17: register() no longer logs the account in -- it
     mints a 'verify' token and mails it. Walks that whole round trip
     (register -> pull the link out of the fake SMTP inbox -> POST
     /verify-email) so this test's account ends up genuinely "active"
@@ -94,7 +94,7 @@ async def test_full_customer_journey_register_to_paid_invoice(
     email = "journey-customer@example.com"
     password = "a-real-password-123"
 
-    # 1. Register a brand new account and verify it (docs/design/16: an
+    # 1. Register a brand new account and verify it (docs/design/17: an
     # unverified account can't log in at all, so this is now a
     # prerequisite step, not an assertion made after the fact).
     await _register_and_verify(

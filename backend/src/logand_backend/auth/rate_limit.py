@@ -31,7 +31,7 @@ REGISTER = LOGIN
 # testing token values directly, not a legitimate user's typo.
 PASSWORD_RESET_REQUEST = LOGIN
 PASSWORD_RESET_CONFIRM = (10, 15 * 60)
-# docs/design/16 -- same reasoning as PASSWORD_RESET_REQUEST/CONFIRM's own
+# docs/design/17 -- same reasoning as PASSWORD_RESET_REQUEST/CONFIRM's own
 # split: "resend" never reveals whether the address has an account (no
 # oracle, mirrors request_password_reset), so it's IP-keyed at the same
 # generous LOGIN threshold as everything else that doesn't burn a token;

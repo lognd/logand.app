@@ -52,7 +52,7 @@ async def notify_invoice_sent(
             # and here -- nothing left to notify about.
             return
 
-        # docs/design/16: when the recipient is a contact row (no account
+        # docs/design/17: when the recipient is a contact row (no account
         # yet -- password_hash IS NULL), mint a 'claim' token alongside the
         # invoice and include the claim link in the same email. This is
         # the ONLY place a 'claim' token gets minted -- there is no

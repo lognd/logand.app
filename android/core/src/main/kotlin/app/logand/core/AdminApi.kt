@@ -84,7 +84,7 @@ class AdminApi internal constructor(private val plumbing: HttpPlumbing) {
     // Exactly one of customerId/customerEmail is expected by the backend
     // -- customerId for an existing customer account, customerEmail as
     // the get-or-create-a-contact-user alternative (see
-    // docs/design/16-contact-users-and-email-verification.md). Both are
+    // docs/design/17-contact-users-and-email-verification.md). Both are
     // nullable here rather than this method taking a sealed choice type
     // so callers can pass whichever one the UI's create-invoice form
     // collected, unchanged from what the backend route itself accepts.

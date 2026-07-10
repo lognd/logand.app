@@ -31,7 +31,7 @@ data class InvoiceLineItemForm(
 // Which "bill to" path the create-invoice form is using -- mirrors the
 // backend's "exactly one of customer_id/customer_email" contract (see
 // AdminApi.createInvoice's own doc comment and
-// docs/design/16-contact-users-and-email-verification.md): an admin can
+// docs/design/17-contact-users-and-email-verification.md): an admin can
 // either pick an existing customer by id, or address the invoice to a
 // bare email with no account yet.
 enum class InvoiceRecipientMode { EXISTING_CUSTOMER, BARE_EMAIL }

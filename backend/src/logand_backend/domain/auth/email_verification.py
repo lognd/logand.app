@@ -177,7 +177,7 @@ class ClaimPreviewInvoice:
     """Just enough to show "here's what you're claiming" on the GET
     /api/auth/claim page before a password is set -- never the full
     line-item breakdown (that's still gated behind email_verified_at IS
-    NOT NULL once the row becomes active, per docs/design/16's load-
+    NOT NULL once the row becomes active, per docs/design/17's load-
     bearing invariant; this preview is the one deliberate, narrow
     exception, and it only ever reveals what a 'claim' token already
     proves the holder is entitled to see).

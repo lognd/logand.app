@@ -147,7 +147,7 @@ const PROJECTS: Project[] = [
     title: "STPONE: Coreless Paper Winder Electronics",
     period: "May 2026",
     description:
-      "Built for Swedish Tracing Paper (STP), LLC to replace decades of manual switching and measuring on their coreless paper-winder machine with real electronics: designed the PCB, wrote the ATmega32U4 firmware from the interrupt vectors up, and built a desktop debug application to actually watch what the board was doing over serial instead of guessing from LED blinks. More is in the works.",
+      "Built for Sand Key Services, LLC. to replace decades of manual switching and measuring on their coreless paper-winder machine with real electronics: designed the PCB and wrote the ATmega32U4 firmware from the interrupt vectors up. More is in the works.",
     slides: [
       {
         alt: "STPONE electronics demo",

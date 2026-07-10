@@ -45,9 +45,10 @@ def _no_dotenv_reinjection(monkeypatch: pytest.MonkeyPatch) -> None:
     fails.
 
     Patching the symbol as `config` bound it (`from dotenv import
-    load_dotenv`) leaves every variable already loaded at import time --
-    notably DATABASE_URL, which the db fixtures below genuinely do source
-    from .env -- in place, and only prevents the re-injection.
+    load_dotenv`) leaves every variable already loaded at import time in
+    place and only prevents the re-injection. Nothing the db fixtures need
+    is lost: `AppConfig.database_url` has a real local default, so the
+    suite still reaches Postgres with no environment at all.
     """
     from logand_backend.app import config
 

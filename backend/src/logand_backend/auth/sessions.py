@@ -96,7 +96,7 @@ async def validate_session(
     # silently honored just because the row itself hasn't expired yet.
     if disabled_at is not None:
         return Err(AuthError.SessionNotFound)
-    # Same defense-in-depth reasoning, for docs/design/16's load-bearing
+    # Same defense-in-depth reasoning, for docs/design/17's load-bearing
     # invariant: login() refuses to create a session for an unverified
     # account, so this should never find a live session for one in
     # practice -- but if one somehow exists (a direct DB edit via

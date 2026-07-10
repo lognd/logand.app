@@ -14,7 +14,7 @@ class User(Base):
     __tablename__ = "users"
     __table_args__ = (
         CheckConstraint("role in ('admin', 'customer')", name="ck_users_role"),
-        # docs/design/16: a row with email_verified_at set MUST have a
+        # docs/design/17: a row with email_verified_at set MUST have a
         # password_hash -- a verified row with no password would be a
         # login-bypass shaped hole (nothing to verify_password against,
         # yet "verified"). Declared on the model (not just the migration)
@@ -36,13 +36,13 @@ class User(Base):
     # through verify_password against DUMMY_PASSWORD_HASH so the timing
     # doesn't fork). Set once someone registers against this email (see
     # domain/auth/service.py::register) or claims it via a 'claim' token
-    # (domain/auth/email_verification.py). See docs/design/16 for the full
+    # (domain/auth/email_verification.py). See docs/design/17 for the full
     # contact/unverified/active state table.
     password_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
     role: Mapped[str] = mapped_column(Text, nullable=False)
     # None until the inbox is proven (a 'verify' or 'claim' token
     # redeemed) -- gates BOTH login (domain/auth/service.py::login) and
-    # every customer-facing invoice read path (docs/design/16's "load-
+    # every customer-facing invoice read path (docs/design/17's "load-
     # bearing invariant": visibility is gated on this column, never on
     # mere linkage). Deliberately a timestamp, not a bool, for the same
     # audit-trail reason as disabled_at above.
@@ -68,6 +68,20 @@ class User(Base):
     disabled_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # Destination address for sales/import-tax jurisdiction resolution
+    # (docs/design/16-sales-tax.md) -- e.g. domain/invoices/tax/apply.py
+    # builds "US-{address_state}" as the customer's destination
+    # jurisdiction. All nullable: most existing customers predate this and
+    # an invoice with no destination simply prices origin-only tax, same
+    # as today.
+    address_line1: Mapped[str | None] = mapped_column(Text, nullable=True)
+    address_city: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Two-letter US state code (e.g. "TN") -- same bare-code convention as
+    # AppConfig.invoice_tax_origin_state, not the "US-TN" jurisdiction
+    # string form.
+    address_state: Mapped[str | None] = mapped_column(Text, nullable=True)
+    address_postal_code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    address_country: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

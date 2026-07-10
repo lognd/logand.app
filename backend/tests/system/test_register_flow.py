@@ -6,7 +6,7 @@ from httpx import AsyncClient
 async def test_register_returns_202_and_does_not_log_in(
     db_client: AsyncClient,
 ) -> None:
-    """docs/design/16: register() no longer creates a session -- a freshly
+    """docs/design/17: register() no longer creates a session -- a freshly
     registered account is "unverified" and login() refuses it outright.
     """
     resp = await db_client.post(

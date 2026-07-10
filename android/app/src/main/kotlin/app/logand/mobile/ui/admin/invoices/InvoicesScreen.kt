@@ -500,7 +500,7 @@ private fun CreateInvoiceDialog(
                 } else {
                     // Addresses the invoice to an email with no existing
                     // account -- backend get-or-creates a contact user
-                    // (see docs/design/16-contact-users-and-email-verification.md).
+                    // (see docs/design/17-contact-users-and-email-verification.md).
                     OutlinedTextField(
                         value = form.customerEmail,
                         onValueChange = { v ->
