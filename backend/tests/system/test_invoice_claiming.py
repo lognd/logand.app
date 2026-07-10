@@ -55,7 +55,7 @@ async def test_unverified_registrant_cannot_read_linked_invoices(
     monkeypatch: pytest.MonkeyPatch,
     fake_smtp_server: FakeSmtpServer,
 ) -> None:
-    """The load-bearing invariant (docs/design/16): an invoice being
+    """The load-bearing invariant (docs/design/17): an invoice being
     linked to an email is never enough to see it -- only a verified
     account can. This registers over the contact row (allowed) but
     deliberately never verifies, then confirms login itself is refused
@@ -254,7 +254,7 @@ async def test_login_refused_for_unverified_row(
 async def test_backfilled_active_user_can_still_log_in(
     db_client: AsyncClient, make_user, login_as
 ) -> None:
-    """make_user() defaults to verified=True (docs/design/16), mirroring
+    """make_user() defaults to verified=True (docs/design/17), mirroring
     migration 0022's backfill of every pre-existing row -- this is the
     single most important regression to guard: skipping that backfill
     would lock every existing customer (and the seeded admin) out.

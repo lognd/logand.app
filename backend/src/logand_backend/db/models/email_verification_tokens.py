@@ -12,7 +12,7 @@ from logand_backend.db.base import Base
 
 class EmailVerificationToken(Base):
     """One table, one code path, two `purpose` values -- mirrors
-    db/models/password_reset_tokens.py's shape verbatim (see docs/design/16).
+    db/models/password_reset_tokens.py's shape verbatim (see docs/design/17).
 
     'verify' -- minted by domain/auth/service.py::register. Redeeming just
     sets User.email_verified_at.

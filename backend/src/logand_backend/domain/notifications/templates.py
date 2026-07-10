@@ -199,7 +199,7 @@ def invoice_sent(
     must agree with that, not always show a link that would just 409 on
     a future non-"sent" caller. See FINDINGS.md L5.
 
-    `claim_url` (docs/design/16) is set only when this invoice went to a
+    `claim_url` (docs/design/17) is set only when this invoice went to a
     "contact" row with no account yet -- rendered as a second CTA above
     the payment paragraph, since claiming the invoice (proving inbox
     control) is the prerequisite to ever seeing/paying it online at all.

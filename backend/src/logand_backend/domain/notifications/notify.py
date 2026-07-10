@@ -322,7 +322,7 @@ async def notify_password_reset_requested(
 async def notify_email_verification_requested(
     cfg: AppConfig, *, to_email: str, to_user_id: UUID, verify_url: str
 ) -> None:
-    """Mirrors notify_password_reset_requested exactly (docs/design/16):
+    """Mirrors notify_password_reset_requested exactly (docs/design/17):
     deliberately does NOT check emails_opted_out (this is a security/
     account-setup email the recipient just triggered themselves by
     registering, not a marketing send), and takes email/user_id/verify_url

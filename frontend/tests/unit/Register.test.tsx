@@ -40,7 +40,7 @@ describe("Register", () => {
     });
   });
 
-  it("shows a check-your-email message instead of logging the visitor in (docs/design/16)", async () => {
+  it("shows a check-your-email message instead of logging the visitor in (docs/design/17)", async () => {
     vi.spyOn(authApi, "register").mockResolvedValue({ status: "ok" });
     const user = userEvent.setup();
     renderWithClient();

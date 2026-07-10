@@ -55,7 +55,7 @@ export function confirmPasswordReset(
   });
 }
 
-// Redeems a 'verify' token minted by register() (docs/design/16). 204 on
+// Redeems a 'verify' token minted by register() (docs/design/17). 204 on
 // success; a 400 with code "AuthError.EmailVerificationTokenInvalid" means
 // the token is invalid, expired, or already used.
 export function verifyEmail(token: string): Promise<void> {
@@ -96,7 +96,7 @@ export function getClaimPreview(token: string): Promise<ClaimPreview> {
 }
 
 // Redeems a 'claim' token: sets password AND marks the row's email
-// verified in one step (docs/design/16) -- clicking the link is itself
+// verified in one step (docs/design/17) -- clicking the link is itself
 // proof of inbox control, so there is no second verify round-trip after
 // this succeeds.
 export function confirmClaim(token: string, password: string): Promise<void> {

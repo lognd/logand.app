@@ -32,7 +32,7 @@ _access_log = get_logger("logand_backend.access")
 #   an email client and a mail server's own RFC 8058 one-click POST have no
 #   session cookie/CSRF token to present at all.
 # - /api/auth/verify-email, /api/auth/resend-verification, /api/auth/claim
-#   (docs/design/16): same reasoning as the password-reset pair above -- a
+#   (docs/design/17): same reasoning as the password-reset pair above -- a
 #   freshly registered/unverified/contact account has no session at all
 #   (verify-email/claim are reached from an emailed link, resend-verification
 #   is submitted with no session either), so there is no CSRF secret to

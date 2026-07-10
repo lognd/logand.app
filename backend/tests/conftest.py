@@ -206,7 +206,7 @@ def make_user(
         email: str | None = None,
         verified: bool = True,
     ) -> User:
-        # verified=True by default (docs/design/16): every existing test
+        # verified=True by default (docs/design/17): every existing test
         # calling make_user() expects a fully "active" account that can
         # log in immediately, same as every pre-migration-0022 row after
         # its backfill (email_verified_at = now()). Tests exercising the

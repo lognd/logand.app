@@ -9,7 +9,7 @@ import { BUTTON_CLASS, INPUT_CLASS, LABEL_CLASS } from "../../../styles/a11y";
 // Reached from the real link mailer.py's email-verification-requested send
 // (?token=<raw_token>), same shape as ResetPassword.tsx. There is no
 // session at this point, by design -- verifying an email happens before
-// any login is possible (see docs/design/16).
+// any login is possible (see docs/design/17).
 export function VerifyEmail() {
   const [searchParams, setSearchParams] = useSearchParams();
   const token = searchParams.get("token") ?? "";

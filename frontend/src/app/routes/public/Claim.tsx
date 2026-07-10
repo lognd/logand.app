@@ -13,7 +13,7 @@ const MIN_PASSWORD_LENGTH = 8;
 
 // Reached from the real invoice-sent email's claim link
 // (?token=<raw_token>) when the recipient is a "contact" row that has
-// never had a password (docs/design/16). No auth is possible yet -- the
+// never had a password (docs/design/17). No auth is possible yet -- the
 // token itself is the credential -- so this preview-then-set-password
 // flow has no session at any point.
 export function Claim() {
@@ -33,7 +33,7 @@ export function Claim() {
     mutationFn: () => confirmClaim(token, password),
     onSuccess: () => {
       // The claim token is single-use and only ever needed once; drop it
-      // from the visible URL now that it has been redeemed (docs/design/16
+      // from the visible URL now that it has been redeemed (docs/design/17
       // security notes), then send the visitor to log in with their new
       // password.
       setSearchParams({}, { replace: true });

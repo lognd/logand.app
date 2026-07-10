@@ -10,7 +10,7 @@ class AuthError(ErrorSet):
     EmailAlreadyRegistered = "an account with this email already exists"
     PasswordResetTokenInvalid = "password reset link is invalid or has expired"
     PasswordInvalidLength = "password must be between 8 and 128 characters"
-    # Distinct from InvalidCredentials (docs/design/16) -- safe to disclose
+    # Distinct from InvalidCredentials (docs/design/17) -- safe to disclose
     # since reaching it requires already knowing the correct password;
     # unlike InvalidCredentials, it does not participate in the login
     # account-existence oracle.

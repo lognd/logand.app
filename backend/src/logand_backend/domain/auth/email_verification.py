@@ -21,7 +21,7 @@ _log = get_logger(__name__)
 
 TokenPurpose = Literal["verify", "claim"]
 
-# 'verify' (docs/design/16): short, since register() just sent it and the
+# 'verify' (docs/design/17): short, since register() just sent it and the
 # registrant is expected to click through promptly -- same window as
 # domain/auth/password_reset.py's own reset-link TTL reasoning.
 _VERIFY_TOKEN_TTL = timedelta(hours=24)
@@ -128,7 +128,7 @@ async def request_verification_resend(
     db: AsyncSession, email: str
 ) -> tuple[User, str] | None:
     """Mirrors domain/auth/password_reset.py::request_password_reset's own
-    no-oracle contract (docs/design/16) -- returns None for "nothing to
+    no-oracle contract (docs/design/17) -- returns None for "nothing to
     resend" (unknown email, a contact row that never registered, or an
     already-verified/active row), and the caller (api/auth.py) MUST
     respond identically either way so this can't be used to probe which
@@ -194,7 +194,7 @@ class ClaimPreviewInvoice:
 async def get_claim_preview(
     db: AsyncSession, raw_token: str
 ) -> Result[tuple[str, list[ClaimPreviewInvoice]], AuthError]:
-    """Read-only lookup for GET /api/auth/claim (docs/design/16) -- does
+    """Read-only lookup for GET /api/auth/claim (docs/design/17) -- does
     NOT redeem the token (no used_at write): a customer previewing the
     link before deciding on a password must not burn their one-time
     token just by loading the page.
@@ -237,7 +237,7 @@ async def claim_invoices(
 ) -> Result[User, AuthError]:
     """Redeems a 'claim' token: sets password_hash AND email_verified_at
     in one transaction -- clicking the link *is* the proof of inbox
-    control (docs/design/16), so a claim never needs a second
+    control (docs/design/17), so a claim never needs a second
     verification round-trip the way self-registration does.
     """
     if not (_MIN_PASSWORD_LENGTH <= len(password) <= _MAX_PASSWORD_LENGTH):

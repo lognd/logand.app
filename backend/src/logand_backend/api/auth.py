@@ -168,7 +168,7 @@ async def register(
         rate_limit("register", *REGISTER, redis_url=_cfg.redis_url)
     ),
 ) -> dict[str, str]:
-    """202, not 200 with a session cookie any more (docs/design/16) -- a
+    """202, not 200 with a session cookie any more (docs/design/17) -- a
     freshly registered account is "unverified" until the emailed link is
     clicked, and login refuses an unverified account outright, so there
     is no session to hand back here. NOTE: register_domain hardcodes

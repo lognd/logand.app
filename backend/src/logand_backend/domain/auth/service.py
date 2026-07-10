@@ -96,7 +96,7 @@ async def login(
         )
         return Err(AuthError.InvalidCredentials)
     if user.email_verified_at is None:
-        # Distinct, disclosable error (docs/design/16) -- reaching this
+        # Distinct, disclosable error (docs/design/17) -- reaching this
         # branch already required knowing the correct password, so it is
         # safe to tell the truth here (unlike InvalidCredentials, this
         # does not participate in the login account-existence oracle).
@@ -112,7 +112,7 @@ async def login(
 async def register(
     db: AsyncSession, email: str, password: str
 ) -> Result[tuple[User, str], AuthError]:
-    """Get-or-create semantics (docs/design/16), NOT plain self-registration
+    """Get-or-create semantics (docs/design/17), NOT plain self-registration
     any more: since an admin invoicing a bare email now leaves a real
     users row behind (a "contact" row, password_hash/email_verified_at
     both NULL), register() may be landing on a row that already exists
@@ -229,7 +229,7 @@ async def ensure_admin_seeded(db: AsyncSession, email: str, password: str) -> Us
 
 
 async def get_or_create_contact_user(db: AsyncSession, email: str) -> User:
-    """Get-or-create a "contact" row for `email` (docs/design/16) -- used
+    """Get-or-create a "contact" row for `email` (docs/design/17) -- used
     by api/invoices.py's POST /api/invoices when an admin invoices a bare
     email address with no existing account. Returns the existing row
     unchanged if one already exists (contact, unverified, or active --
