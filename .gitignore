@@ -57,8 +57,15 @@ backend/data/
 # Rotating log files (LOG_DIR, default ./logs relative to wherever the
 # backend/scheduler process runs -- see logging/logger.py). Real runtime
 # output, never committed, same as backend/data/ above.
-backend/logs/
-logs/
+#
+# Both patterns are ANCHORED with a leading slash. An unanchored `logs/`
+# matches a directory named "logs" at ANY depth, which silently swallowed
+# the Android admin-logs UI package
+# (android/app/src/main/kotlin/app/logand/mobile/ui/admin/logs/) -- it
+# built fine locally, where the files exist on disk, and broke CI with
+# "Unresolved reference: AdminLogsViewModel" on a fresh clone.
+/backend/logs/
+/logs/
 
 # Secrets
 .env
