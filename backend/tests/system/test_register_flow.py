@@ -3,21 +3,27 @@ from __future__ import annotations
 from httpx import AsyncClient
 
 
-async def test_register_sets_cookies_and_me_reflects_new_customer(
+async def test_register_returns_202_and_does_not_log_in(
     db_client: AsyncClient,
 ) -> None:
+    """docs/design/16: register() no longer creates a session -- a freshly
+    registered account is "unverified" and login() refuses it outright.
+    """
     resp = await db_client.post(
         "/api/auth/register",
         json={"email": "fresh-signup@example.com", "password": "a-real-password"},
         headers={"X-Forwarded-For": "203.0.113.10"},
     )
-    assert resp.status_code == 200, resp.text
-    assert "__Host-session" in db_client.cookies
+    assert resp.status_code == 202, resp.text
+    assert "__Host-session" not in db_client.cookies
 
-    me = await db_client.get("/api/me")
-    assert me.status_code == 200
-    body = me.json()
-    assert body["role"] == "customer"
+    login_resp = await db_client.post(
+        "/api/auth/login",
+        json={"email": "fresh-signup@example.com", "password": "a-real-password"},
+        headers={"X-Forwarded-For": "203.0.113.20"},
+    )
+    assert login_resp.status_code == 403
+    assert login_resp.json()["detail"]["code"] == "AuthError.EmailNotVerified"
 
 
 async def test_register_with_duplicate_email_is_409(
@@ -72,4 +78,4 @@ async def test_register_is_exempt_from_csrf_check(db_client: AsyncClient) -> Non
         json={"email": "no-csrf-needed@example.com", "password": "a-real-password"},
         headers={"X-Forwarded-For": "203.0.113.14"},
     )
-    assert resp.status_code == 200
+    assert resp.status_code == 202

@@ -89,7 +89,14 @@ class _FakeDb:
 
 async def test_notify_invoice_sent_noop_when_smtp_not_configured() -> None:
     cfg = AppConfig()  # smtp_host is None by default
-    db = _FakeDb(User(id=uuid.uuid4(), email="c@example.com", role="customer"))
+    db = _FakeDb(
+        User(
+            id=uuid.uuid4(),
+            email="c@example.com",
+            password_hash="hashed",
+            role="customer",
+        )
+    )
     await notify.notify_invoice_sent(db, cfg, _invoice())  # must not raise
 
 
@@ -115,7 +122,9 @@ async def test_notify_invoice_sent_swallows_send_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     cfg = _cfg()
-    user = User(id=uuid.uuid4(), email="c@example.com", role="customer")
+    user = User(
+        id=uuid.uuid4(), email="c@example.com", password_hash="hashed", role="customer"
+    )
     invoice = _invoice()
     db = _FakeDb(user, invoice=invoice)
     monkeypatch.setattr(
@@ -138,7 +147,9 @@ async def test_notify_invoice_sent_logs_the_actual_exception(
     root-caused without SSHing in and reproducing it by hand.
     """
     cfg = _cfg()
-    user = User(id=uuid.uuid4(), email="c@example.com", role="customer")
+    user = User(
+        id=uuid.uuid4(), email="c@example.com", password_hash="hashed", role="customer"
+    )
     invoice = _invoice()
     db = _FakeDb(user, invoice=invoice)
     monkeypatch.setattr(
@@ -161,7 +172,9 @@ async def test_notify_invoice_sent_noop_when_invoice_missing() -> None:
     """Invoice vanished (soft-deleted) between the caller's commit and
     notify_invoice_sent running -- must no-op, not raise."""
     cfg = _cfg()
-    user = User(id=uuid.uuid4(), email="c@example.com", role="customer")
+    user = User(
+        id=uuid.uuid4(), email="c@example.com", password_hash="hashed", role="customer"
+    )
     db = _FakeDb(user, invoice=None)
     await notify.notify_invoice_sent(db, cfg, _invoice())
 
@@ -173,7 +186,9 @@ async def test_notify_invoice_sent_attaches_pdf_text_and_json_in_order(
     for-robots.json LAST, so a human skimming attachments sees the
     human-readable copies before the machine-readable one."""
     cfg = _cfg()
-    user = User(id=uuid.uuid4(), email="c@example.com", role="customer")
+    user = User(
+        id=uuid.uuid4(), email="c@example.com", password_hash="hashed", role="customer"
+    )
     invoice = _invoice()
     line_item = InvoiceLineItem(
         id=uuid.uuid4(),
@@ -220,7 +235,9 @@ async def test_notify_invoice_sent_skips_pdf_attachment_on_render_failure(
     """Best-effort: a LaTeX/PdfRenderError failure must not sink the whole
     notification -- the txt and for-robots.json attachments still go out."""
     cfg = _cfg()
-    user = User(id=uuid.uuid4(), email="c@example.com", role="customer")
+    user = User(
+        id=uuid.uuid4(), email="c@example.com", password_hash="hashed", role="customer"
+    )
     invoice = _invoice()
     db = _FakeDb(user, invoice=invoice)
     monkeypatch.setattr(
@@ -252,7 +269,9 @@ async def test_notify_invoice_sent_skips_pdf_attachment_on_unexpected_error(
     turning a best-effort attachment into a hard failure of sending the
     invoice at all. Must be swallowed exactly like PdfRenderError is."""
     cfg = _cfg()
-    user = User(id=uuid.uuid4(), email="c@example.com", role="customer")
+    user = User(
+        id=uuid.uuid4(), email="c@example.com", password_hash="hashed", role="customer"
+    )
     invoice = _invoice()
     db = _FakeDb(user, invoice=invoice)
     monkeypatch.setattr(
@@ -275,7 +294,14 @@ async def test_notify_invoice_sent_skips_pdf_attachment_on_unexpected_error(
 
 async def test_notify_payment_received_noop_when_smtp_not_configured() -> None:
     cfg = AppConfig()
-    db = _FakeDb(User(id=uuid.uuid4(), email="c@example.com", role="customer"))
+    db = _FakeDb(
+        User(
+            id=uuid.uuid4(),
+            email="c@example.com",
+            password_hash="hashed",
+            role="customer",
+        )
+    )
     await notify.notify_payment_received(db, cfg, _invoice(), Decimal("10.00"))
 
 
@@ -301,7 +327,9 @@ async def test_notify_payment_received_swallows_send_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     cfg = _cfg()
-    user = User(id=uuid.uuid4(), email="c@example.com", role="customer")
+    user = User(
+        id=uuid.uuid4(), email="c@example.com", password_hash="hashed", role="customer"
+    )
     db = _FakeDb(user)
     monkeypatch.setattr(
         notify.mailer, "send_email", AsyncMock(side_effect=OSError("boom"))

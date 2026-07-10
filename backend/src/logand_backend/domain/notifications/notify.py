@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from logand_backend.app.config import AppConfig
 from logand_backend.db.models.invoices import Invoice
 from logand_backend.db.models.users import User
+from logand_backend.domain.auth.email_verification import mint_email_verification_token
 from logand_backend.domain.invoices.export import (
     build_invoice_json,
     build_invoice_plaintext,
@@ -51,6 +52,21 @@ async def notify_invoice_sent(
             # and here -- nothing left to notify about.
             return
 
+        # docs/design/16: when the recipient is a contact row (no account
+        # yet -- password_hash IS NULL), mint a 'claim' token alongside the
+        # invoice and include the claim link in the same email. This is
+        # the ONLY place a 'claim' token gets minted -- there is no
+        # self-serve "resend claim link" the way 'verify' has
+        # resend-verification, so this re-mints on every subsequent
+        # invoice sent to the same still-unclaimed contact.
+        claim_url: str | None = None
+        if customer.password_hash is None:
+            raw_claim_token = await mint_email_verification_token(
+                db, customer.id, "claim"
+            )
+            await db.flush()
+            claim_url = f"{cfg.public_base_url}/claim?token={raw_claim_token}"
+
         subject, html, text = templates.invoice_sent(
             cfg,
             invoice_id=invoice.id,
@@ -64,6 +80,7 @@ async def notify_invoice_sent(
             line_items=export_data.line_items,
             memo=export_data.memo,
             pay_url=export_data.pay_url,
+            claim_url=claim_url,
         )
 
         attachments: list[mailer.EmailAttachment] = []
@@ -297,6 +314,43 @@ async def notify_password_reset_requested(
         # alerting/log-search, since this one blocks a security action.
         _log.critical(
             "failed to send password-reset-requested notification",
+            extra={"user_id": str(to_user_id), "alertable": True},
+            exc_info=exc,
+        )
+
+
+async def notify_email_verification_requested(
+    cfg: AppConfig, *, to_email: str, to_user_id: UUID, verify_url: str
+) -> None:
+    """Mirrors notify_password_reset_requested exactly (docs/design/16):
+    deliberately does NOT check emails_opted_out (this is a security/
+    account-setup email the recipient just triggered themselves by
+    registering, not a marketing send), and takes email/user_id/verify_url
+    directly rather than a User + db session since the caller (api/auth.py)
+    already has both from domain.auth.service.register's return value.
+    """
+    if not mailer.is_configured(cfg):
+        return
+
+    subject, html, text = templates.email_verification_requested(
+        cfg, verify_url=verify_url
+    )
+    try:
+        await mailer.send_email(
+            cfg,
+            to_email=to_email,
+            to_user_id=to_user_id,
+            subject=subject,
+            content_html=html,
+            content_text=text,
+        )
+    except Exception as exc:
+        # critical, not error -- same reasoning as
+        # notify_password_reset_requested: this fires after the response
+        # already told the registrant "check your email," and there is no
+        # other signal to them or to us that the send failed.
+        _log.critical(
+            "failed to send email-verification-requested notification",
             extra={"user_id": str(to_user_id), "alertable": True},
             exc_info=exc,
         )

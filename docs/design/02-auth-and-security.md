@@ -118,6 +118,30 @@ or a scoped invoice token, see [04-invoices.md](04-invoices.md)).
   from the session, never trust a customer-supplied ID without checking
   ownership.
 
+## Account states and email verification
+
+As of `docs/design/16-contact-users-and-email-verification.md`, a `users`
+row is no longer necessarily an account. It is one of three states:
+
+- **contact** (`password_hash IS NULL`) -- an address an admin has invoiced.
+  Nothing can authenticate as it.
+- **unverified** (password set, `email_verified_at IS NULL`) -- someone
+  claimed the address but has not proven they control the inbox.
+- **active** -- inbox control proven.
+
+Self-registration is open and unauthenticated, so a registrant asserting an
+email address proves nothing. The consequence for authorization:
+
+> Customer-scoped invoice access is gated on `email_verified_at IS NOT NULL`,
+> never on the mere fact that an invoice's `customer_id` points at the row.
+
+`auth/sessions.py::validate_session` refuses to issue a valid session for a
+contact or unverified row, so the gate sits below every router-level role
+check rather than beside it. Registering over an unverified row is permitted
+(it re-mints verification); registering over an active row is refused.
+Whoever controls the inbox wins -- that is the only correct tiebreak, and it
+is what stops an attacker from either stealing or squatting an address.
+
 ## Testing this doc's mechanics
 
 Auth-specific test cases (session expiry, CSRF rejection, rate-limit

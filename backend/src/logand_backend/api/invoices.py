@@ -14,6 +14,7 @@ from logand_backend.app.config import AppConfig
 from logand_backend.auth.sessions import SessionInfo, require_admin
 from logand_backend.db.base import get_db
 from logand_backend.db.models.invoices import Invoice, InvoiceLineItem, Payment, Refund
+from logand_backend.domain.auth.service import get_or_create_contact_user
 from logand_backend.domain.invoices.export import generate_invoice_pdf
 from logand_backend.domain.invoices.pdf.renderer import PdfRenderError
 from logand_backend.domain.invoices.refunds import RefundInput, refund_payment
@@ -59,12 +60,33 @@ def _invoice_summary(invoice: Invoice) -> dict:
 
 @router.post("")
 async def create(
-    customer_id: UUID,
     line_items: list[LineItemInput],
+    customer_id: UUID | None = None,
+    customer_email: str | None = None,
     memo: str | None = None,
     _admin: SessionInfo = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, str]:
+    """docs/design/16: `customer_email` is an alternative to `customer_id`,
+    not an addition -- exactly one of the two must be given. When
+    `customer_email` is used, get-or-creates a "contact" row for that
+    address (password_hash and email_verified_at both NULL, see
+    get_or_create_contact_user) and invoices that. This is how an admin
+    bills someone with no account yet: the invoice is real and linked
+    from the moment it's created, but the recipient can't see or pay it
+    online until they prove inbox control (register or claim -- see
+    docs/design/16's state table).
+    """
+    if (customer_id is None) == (customer_email is None):
+        raise HTTPException(
+            status_code=422,
+            detail="exactly one of customer_id or customer_email must be provided",
+        )
+    if customer_email is not None:
+        contact = await get_or_create_contact_user(db, customer_email)
+        customer_id = contact.id
+
+    assert customer_id is not None
     result = await create_invoice(db, customer_id, line_items, memo)
     if result.is_err:
         raise to_http_exception(result.danger_err)

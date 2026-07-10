@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import pytest
 from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from logand_backend.db.models.invoices import Invoice
+from logand_backend.testing.fake_smtp import FakeSmtpServer
 
 # Same convention as test_invoice_payment.py: /pay calls the real Stripe SDK
 # by design (card data never touches this server), so this monkeypatches the
@@ -24,35 +27,86 @@ def _csrf_headers(db_client: AsyncClient) -> dict[str, str]:
     return {"X-CSRF-Token": db_client.cookies["csrf_token"]}
 
 
+@pytest.fixture
+def fake_smtp_server() -> Iterator[FakeSmtpServer]:
+    server = FakeSmtpServer()
+    server.start()
+    yield server
+    server.stop()
+
+
+def _configure_smtp(monkeypatch: pytest.MonkeyPatch, server: FakeSmtpServer) -> None:
+    monkeypatch.setenv("SMTP_HOST", "127.0.0.1")
+    monkeypatch.setenv("SMTP_PORT", str(server.port))
+    monkeypatch.setenv("SMTP_USE_TLS", "false")
+    monkeypatch.setenv("MAILING_ADDRESS", "123 Main St, Springfield")
+
+
+async def _register_and_verify(
+    db_client: AsyncClient,
+    fake_smtp_server: FakeSmtpServer,
+    *,
+    email: str,
+    password: str,
+    forwarded_for: str,
+) -> None:
+    """docs/design/16: register() no longer logs the account in -- it
+    mints a 'verify' token and mails it. Walks that whole round trip
+    (register -> pull the link out of the fake SMTP inbox -> POST
+    /verify-email) so this test's account ends up genuinely "active"
+    before anything below tries to log in as it.
+    """
+    register_resp = await db_client.post(
+        "/api/auth/register",
+        json={"email": email, "password": password},
+        headers={"X-Forwarded-For": forwarded_for},
+    )
+    assert register_resp.status_code == 202, register_resp.text
+    assert "__Host-session" not in db_client.cookies
+
+    message = fake_smtp_server.messages[-1]
+    assert message["To"] == email
+    body = message.get_body(("plain",)).get_content()
+    token = body.split("verify-email?token=")[1].split()[0].strip()
+
+    verify_resp = await db_client.post("/api/auth/verify-email", json={"token": token})
+    assert verify_resp.status_code == 204, verify_resp.text
+
+
 async def test_full_customer_journey_register_to_paid_invoice(
     db_client: AsyncClient,
     make_user,
     login_as,
     db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    fake_smtp_server: FakeSmtpServer,
 ) -> None:
     """One end-to-end walk through the whole customer lifecycle, chained in
-    the order a real visitor would actually hit it -- register, confirm the
-    session is live, log out, confirm the session is really gone, log back
+    the order a real visitor would actually hit it -- register, verify the
+    email, log in, log out, confirm the session is really gone, log back
     into the SAME account, get sent an invoice, and pay it. Each of these
     steps already has its own focused test elsewhere (test_register_flow.py,
     test_auth_flow.py, test_invoice_payment.py); this test's value is
     specifically in proving the handoffs between steps work when chained on
     one real account, not any single step in isolation.
     """
+    _configure_smtp(monkeypatch, fake_smtp_server)
     email = "journey-customer@example.com"
     password = "a-real-password-123"
 
-    # 1. Register a brand new account.
-    register_resp = await db_client.post(
-        "/api/auth/register",
-        json={"email": email, "password": password},
-        headers={"X-Forwarded-For": "203.0.113.90"},
+    # 1. Register a brand new account and verify it (docs/design/16: an
+    # unverified account can't log in at all, so this is now a
+    # prerequisite step, not an assertion made after the fact).
+    await _register_and_verify(
+        db_client,
+        fake_smtp_server,
+        email=email,
+        password=password,
+        forwarded_for="203.0.113.90",
     )
-    assert register_resp.status_code == 200, register_resp.text
-    assert "__Host-session" in db_client.cookies
 
-    # 2. Registration logs the account in immediately -- confirm the new
-    # session is actually live before doing anything else with it.
+    # 2. Log in for the first time now that the account is verified.
+    await login_as(db_client, email, password)
     me_after_register = await db_client.get("/api/me")
     assert me_after_register.status_code == 200
     customer_id = me_after_register.json()["user_id"]
@@ -144,20 +198,25 @@ async def test_journey_customer_cannot_pay_before_invoice_is_sent(
     db_client: AsyncClient,
     make_user,
     login_as,
+    monkeypatch: pytest.MonkeyPatch,
+    fake_smtp_server: FakeSmtpServer,
 ) -> None:
     """A narrower companion to the happy-path journey above: register,
     log in as the admin who creates the invoice but does NOT send it yet,
     and confirm the customer can't jump ahead and pay a draft invoice
     before it's actually been sent to them."""
+    _configure_smtp(monkeypatch, fake_smtp_server)
     email = "journey-early-pay@example.com"
     password = "another-real-password"
 
-    register_resp = await db_client.post(
-        "/api/auth/register",
-        json={"email": email, "password": password},
-        headers={"X-Forwarded-For": "203.0.113.91"},
+    await _register_and_verify(
+        db_client,
+        fake_smtp_server,
+        email=email,
+        password=password,
+        forwarded_for="203.0.113.91",
     )
-    assert register_resp.status_code == 200
+    await login_as(db_client, email, password)
     customer_id = (await db_client.get("/api/me")).json()["user_id"]
     await db_client.post("/api/auth/logout", headers=_csrf_headers(db_client))
 

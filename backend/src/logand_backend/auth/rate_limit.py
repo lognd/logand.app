@@ -31,6 +31,16 @@ REGISTER = LOGIN
 # testing token values directly, not a legitimate user's typo.
 PASSWORD_RESET_REQUEST = LOGIN
 PASSWORD_RESET_CONFIRM = (10, 15 * 60)
+# docs/design/16 -- same reasoning as PASSWORD_RESET_REQUEST/CONFIRM's own
+# split: "resend" never reveals whether the address has an account (no
+# oracle, mirrors request_password_reset), so it's IP-keyed at the same
+# generous LOGIN threshold as everything else that doesn't burn a token;
+# "verify-email" and "claim" both spend a token directly, so they get the
+# same tighter bucket as PASSWORD_RESET_CONFIRM (an attacker guessing
+# token values, not a legitimate user's typo).
+RESEND_VERIFICATION = LOGIN
+VERIFY_EMAIL = PASSWORD_RESET_CONFIRM
+CLAIM = PASSWORD_RESET_CONFIRM
 
 
 class RateLimiter:

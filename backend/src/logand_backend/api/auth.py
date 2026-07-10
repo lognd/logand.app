@@ -10,10 +10,13 @@ from logand_backend.api.errors import to_http_exception
 from logand_backend.app.config import AppConfig
 from logand_backend.auth.csrf import CSRF_COOKIE_NAME
 from logand_backend.auth.rate_limit import (
+    CLAIM,
     LOGIN,
     PASSWORD_RESET_CONFIRM,
     PASSWORD_RESET_REQUEST,
     REGISTER,
+    RESEND_VERIFICATION,
+    VERIFY_EMAIL,
     rate_limit,
 )
 from logand_backend.auth.sessions import (
@@ -22,6 +25,14 @@ from logand_backend.auth.sessions import (
     _get_session_from_cookie,
 )
 from logand_backend.db.base import get_db
+from logand_backend.domain.auth.email_verification import (
+    claim_invoices,
+    get_claim_preview,
+    request_verification_resend,
+)
+from logand_backend.domain.auth.email_verification import (
+    verify_email as verify_email_domain,
+)
 from logand_backend.domain.auth.password_reset import (
     request_password_reset,
 )
@@ -31,7 +42,11 @@ from logand_backend.domain.auth.password_reset import (
 from logand_backend.domain.auth.service import login as login_domain
 from logand_backend.domain.auth.service import logout as logout_domain
 from logand_backend.domain.auth.service import register as register_domain
-from logand_backend.domain.notifications.notify import notify_password_reset_requested
+from logand_backend.domain.notifications.notify import (
+    notify_email_verification_requested,
+    notify_password_reset_requested,
+)
+from logand_backend.domain.payments.currency import quantize_to_currency
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -68,6 +83,26 @@ class RegisterRequest(BaseModel):
     # self-registration (unlike admin-created accounts) accepts arbitrary
     # client input, so a minimum length is a real, not theoretical, weakness
     # to close here specifically.
+    password: str = Field(min_length=8, max_length=128)
+
+
+class VerifyEmailInput(BaseModel):
+    model_config = {}
+
+    token: str
+
+
+class ResendVerificationInput(BaseModel):
+    model_config = {}
+
+    email: str
+
+
+class ClaimConfirmInput(BaseModel):
+    model_config = {}
+
+    token: str
+    # Same length rule as RegisterRequest.password (docs/design/02).
     password: str = Field(min_length=8, max_length=128)
 
 
@@ -121,24 +156,139 @@ async def login(
     return {"status": "ok"}
 
 
-@router.post("/register")
+_REGISTERED_MESSAGE = "Check your email for a link to verify your account."
+
+
+@router.post("/register", status_code=202)
 async def register(
     payload: RegisterRequest,
-    response: Response,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     _rate_limit: None = Depends(
         rate_limit("register", *REGISTER, redis_url=_cfg.redis_url)
     ),
 ) -> dict[str, str]:
-    # NOTE: register_domain hardcodes role="customer" -- there is no field
-    # on RegisterRequest that can influence the created account's role, by
-    # design (see domain/auth/service.py's register() docstring).
+    """202, not 200 with a session cookie any more (docs/design/16) -- a
+    freshly registered account is "unverified" until the emailed link is
+    clicked, and login refuses an unverified account outright, so there
+    is no session to hand back here. NOTE: register_domain hardcodes
+    role="customer" -- there is no field on RegisterRequest that can
+    influence the created account's role, by design (see
+    domain/auth/service.py's register() docstring).
+    """
+    cfg = AppConfig.from_external(argparse.Namespace())
     result = await register_domain(db, payload.email, payload.password)
     if result.is_err:
         raise to_http_exception(result.danger_err)
-    raw_token, session = result.danger_ok
-    _set_session_cookies(response, raw_token, session.csrf_secret)
-    return {"status": "ok"}
+    user, raw_token = result.danger_ok
+    # Commit before scheduling the send (mirrors password-reset/request's
+    # own ordering) so a verify link can never be emailed out for a token
+    # a later commit failure would roll back.
+    await db.commit()
+    verify_url = f"{cfg.public_base_url}/verify-email?token={raw_token}"
+    background_tasks.add_task(
+        notify_email_verification_requested,
+        cfg,
+        to_email=user.email,
+        to_user_id=user.id,
+        verify_url=verify_url,
+    )
+    return {"status": "ok", "detail": _REGISTERED_MESSAGE}
+
+
+@router.post("/verify-email", status_code=204)
+async def verify_email_route(
+    payload: VerifyEmailInput,
+    db: AsyncSession = Depends(get_db),
+    _rate_limit: None = Depends(
+        rate_limit("verify_email", *VERIFY_EMAIL, redis_url=_cfg.redis_url)
+    ),
+) -> Response:
+    result = await verify_email_domain(db, payload.token)
+    if result.is_err:
+        raise to_http_exception(result.danger_err)
+    return Response(status_code=204)
+
+
+_RESEND_VERIFICATION_MESSAGE = (
+    "If a pending registration exists for that email, a verification "
+    "link has been sent."
+)
+
+
+@router.post("/resend-verification", status_code=202)
+async def resend_verification_route(
+    payload: ResendVerificationInput,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    _rate_limit: None = Depends(
+        rate_limit(
+            "resend_verification", *RESEND_VERIFICATION, redis_url=_cfg.redis_url
+        )
+    ),
+) -> dict[str, str]:
+    """ALWAYS returns the same 202 body regardless of whether the email
+    matches a pending registration -- same no-oracle discipline as
+    /password-reset/request (see request_verification_resend's own doc
+    comment).
+    """
+    cfg = AppConfig.from_external(argparse.Namespace())
+    result = await request_verification_resend(db, payload.email)
+    await db.commit()
+    if result is not None:
+        user, raw_token = result
+        verify_url = f"{cfg.public_base_url}/verify-email?token={raw_token}"
+        background_tasks.add_task(
+            notify_email_verification_requested,
+            cfg,
+            to_email=user.email,
+            to_user_id=user.id,
+            verify_url=verify_url,
+        )
+    return {"status": "ok", "detail": _RESEND_VERIFICATION_MESSAGE}
+
+
+@router.get("/claim")
+async def get_claim_preview_route(
+    token: str,
+    db: AsyncSession = Depends(get_db),
+    _rate_limit: None = Depends(rate_limit("claim", *CLAIM, redis_url=_cfg.redis_url)),
+) -> dict:
+    """No auth (there's no account to authenticate as yet) -- the token
+    itself IS the credential. Read-only: never redeems the token, see
+    get_claim_preview's own doc comment.
+    """
+    result = await get_claim_preview(db, token)
+    if result.is_err:
+        raise to_http_exception(result.danger_err)
+    email, invoices = result.danger_ok
+    return {
+        "email": email,
+        "invoices": [
+            {
+                "id": str(inv.id),
+                "status": inv.status,
+                "amount_total": str(
+                    quantize_to_currency(inv.amount_total, inv.currency)
+                ),
+                "currency": inv.currency,
+                "due_date": inv.due_date.isoformat() if inv.due_date else None,
+            }
+            for inv in invoices
+        ],
+    }
+
+
+@router.post("/claim", status_code=204)
+async def confirm_claim_route(
+    payload: ClaimConfirmInput,
+    db: AsyncSession = Depends(get_db),
+    _rate_limit: None = Depends(rate_limit("claim", *CLAIM, redis_url=_cfg.redis_url)),
+) -> Response:
+    result = await claim_invoices(db, payload.token, payload.password)
+    if result.is_err:
+        raise to_http_exception(result.danger_err)
+    return Response(status_code=204)
 
 
 _PASSWORD_RESET_REQUESTED_MESSAGE = (

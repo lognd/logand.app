@@ -148,7 +148,13 @@ invoice total is an obvious tamper vector.
 
 ### Admin (`api/invoices.py`, `require_admin`)
 
-- `POST /api/admin/invoices` -- create (draft), with line items
+- `POST /api/admin/invoices` -- create (draft), with line items. Takes
+  either `customer_id` OR `customer_email` (exactly one). `customer_email`
+  get-or-creates a *contact* user row for an address with no account, so a
+  stranger can be invoiced without one; if they later register with that
+  address and verify it, the invoice is already theirs. See
+  `docs/design/16-contact-users-and-email-verification.md` -- in particular,
+  visibility is gated on email verification, not on the FK link.
 - `PATCH /api/admin/invoices/{id}` -- edit while draft; editing a `sent`
   invoice is restricted to memo/due_date (line items are frozen once
   sent, to keep what the customer was shown stable)

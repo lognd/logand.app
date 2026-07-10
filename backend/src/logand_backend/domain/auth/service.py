@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from uuid import UUID
 
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from typani.result import Err, Result
+from typani.result import Err, Ok, Result
 
 from logand_backend.auth.passwords import (
     DUMMY_PASSWORD_HASH,
@@ -14,6 +15,7 @@ from logand_backend.auth.passwords import (
 )
 from logand_backend.auth.sessions import SessionInfo, create_session
 from logand_backend.db.models.users import User
+from logand_backend.domain.auth.email_verification import mint_email_verification_token
 from logand_backend.errors import AuthError
 from logand_backend.logging import get_logger
 
@@ -68,6 +70,19 @@ async def login(
         verify_password(password, DUMMY_PASSWORD_HASH)
         _log.warning("login failed: no such account", extra={"email": email})
         return Err(AuthError.InvalidCredentials)
+    # docs/design/16: a contact row (password_hash IS NULL) has nothing to
+    # authenticate as -- but still run verify_password against the SAME
+    # fixed dummy hash used above, so this branch costs the same argon2
+    # latency as a real wrong-password check and doesn't fork timing
+    # between "no such account", "this is a contact row", and "wrong
+    # password" (all three must be indistinguishable from outside).
+    if user.password_hash is None:
+        verify_password(password, DUMMY_PASSWORD_HASH)
+        _log.warning(
+            "login failed: account has no password set (contact row)",
+            extra={"email": email, "user_id": str(user.id)},
+        )
+        return Err(AuthError.InvalidCredentials)
     if not verify_password(password, user.password_hash):
         _log.warning(
             "login failed: wrong password",
@@ -80,34 +95,71 @@ async def login(
             extra={"email": email, "user_id": str(user.id)},
         )
         return Err(AuthError.InvalidCredentials)
+    if user.email_verified_at is None:
+        # Distinct, disclosable error (docs/design/16) -- reaching this
+        # branch already required knowing the correct password, so it is
+        # safe to tell the truth here (unlike InvalidCredentials, this
+        # does not participate in the login account-existence oracle).
+        _log.warning(
+            "login failed: email not verified",
+            extra={"email": email, "user_id": str(user.id)},
+        )
+        return Err(AuthError.EmailNotVerified)
     _log.info("login succeeded", extra={"email": email, "user_id": str(user.id)})
     return await create_session(db, user.id, user.role)
 
 
 async def register(
     db: AsyncSession, email: str, password: str
-) -> Result[tuple[str, SessionInfo], AuthError]:
-    """Self-registration, customer role only -- there is no request path
-    that can set role to "admin" here, by design (docs/design/02: exactly
-    one admin account ever exists, created out of band, never via this
-    endpoint). On success the new user is logged in immediately, returning
-    the same (raw_token, SessionInfo) shape as login() so the API layer can
-    reuse login's cookie-setting code unchanged.
+) -> Result[tuple[User, str], AuthError]:
+    """Get-or-create semantics (docs/design/16), NOT plain self-registration
+    any more: since an admin invoicing a bare email now leaves a real
+    users row behind (a "contact" row, password_hash/email_verified_at
+    both NULL), register() may be landing on a row that already exists
+    for a completely legitimate reason -- there being an invoice already
+    waiting for this address is the whole point of the feature.
+
+    - No existing row: create a fresh "unverified" one.
+    - Existing row is a contact (password_hash NULL) or unverified
+      (email_verified_at NULL): allowed. Overwrites password_hash and
+      re-mints a 'verify' token -- this is what stops an attacker from
+      squatting/denial-of-servicing a real owner out of their own
+      address (whoever proves inbox control wins, see the design doc's
+      "Squatting" section), and what lets the real owner re-request a
+      verification email if the first one was lost.
+    - Existing row is "active" (email_verified_at set): refused --
+      the email is already in use by someone who has proven ownership.
+
+    Returns (user, raw_verify_token) rather than a session -- unlike the
+    old self-registration flow, a freshly registered account is NOT
+    logged in immediately any more (see api/auth.py's register route):
+    it can't log in until it verifies, so there is no session to hand
+    back.
 
     Email comparison/storage is lowercased so "User@x.com" and "user@x.com"
     can't both register -- the case-insensitive lookup here is a
-    best-effort pre-check; the real guard against a duplicate is the
-    `users.email` unique constraint plus the IntegrityError catch below,
-    since two concurrent registrations for the same email would otherwise
-    both pass this SELECT before either INSERT commits.
+    best-effort pre-check; the real guard against a duplicate insert
+    racing this SELECT is the `users.email` unique constraint plus the
+    IntegrityError catch below.
     """
     normalized_email = email.strip().lower()
 
     existing = (
         await db.execute(select(User).where(func.lower(User.email) == normalized_email))
     ).scalar_one_or_none()
+
     if existing is not None:
-        return Err(AuthError.EmailAlreadyRegistered)
+        if existing.email_verified_at is not None:
+            return Err(AuthError.EmailAlreadyRegistered)
+        # Contact or unverified row -- overwrite the password and re-mint.
+        existing.password_hash = hash_password(password)
+        await db.flush()
+        raw_token = await mint_email_verification_token(db, existing.id, "verify")
+        _log.info(
+            "registration overwrote contact/unverified row",
+            extra={"email": normalized_email, "user_id": str(existing.id)},
+        )
+        return Ok((existing, raw_token))
 
     user = User(
         email=normalized_email,
@@ -120,7 +172,12 @@ async def register(
     except IntegrityError:
         return Err(AuthError.EmailAlreadyRegistered)
 
-    return await create_session(db, user.id, user.role)
+    raw_token = await mint_email_verification_token(db, user.id, "verify")
+    _log.info(
+        "registration created new unverified user",
+        extra={"email": normalized_email, "user_id": str(user.id)},
+    )
+    return Ok((user, raw_token))
 
 
 async def logout(db: AsyncSession, session_id: UUID) -> Result[None, AuthError]:
@@ -152,12 +209,61 @@ async def ensure_admin_seeded(db: AsyncSession, email: str, password: str) -> Us
     if existing is not None:
         existing.password_hash = hash_password(password)
         existing.role = "admin"
+        # docs/design/16: without this, the seeded admin is left
+        # "unverified" (email_verified_at NULL) and cannot log in at all
+        # -- there is no inbox to click a verify link from for an
+        # out-of-band seeded account, so this IS the verification.
+        existing.email_verified_at = datetime.now(timezone.utc)
         await db.flush()
         return existing
 
     user = User(
-        email=normalized_email, password_hash=hash_password(password), role="admin"
+        email=normalized_email,
+        password_hash=hash_password(password),
+        role="admin",
+        email_verified_at=datetime.now(timezone.utc),
     )
     db.add(user)
     await db.flush()
+    return user
+
+
+async def get_or_create_contact_user(db: AsyncSession, email: str) -> User:
+    """Get-or-create a "contact" row for `email` (docs/design/16) -- used
+    by api/invoices.py's POST /api/invoices when an admin invoices a bare
+    email address with no existing account. Returns the existing row
+    unchanged if one already exists (contact, unverified, or active --
+    whatever state it's in, an admin billing that address just attaches
+    the invoice to it; this never demotes an active account back to
+    contact). Only ever creates a brand-new row with password_hash AND
+    email_verified_at both NULL (a fresh contact) when no row exists yet.
+    """
+    normalized_email = email.strip().lower()
+    existing = (
+        await db.execute(select(User).where(func.lower(User.email) == normalized_email))
+    ).scalar_one_or_none()
+    if existing is not None:
+        return existing
+
+    user = User(email=normalized_email, password_hash=None, role="customer")
+    try:
+        # SAVEPOINT (not the outer transaction) -- this may run nested
+        # inside a larger create-invoice transaction; a plain db.rollback()
+        # on IntegrityError would discard everything else that caller has
+        # already flushed, not just this insert. `user` is added inside
+        # the same nested block so a rollback also un-pends it from the
+        # session's identity map, not just the SQL.
+        async with db.begin_nested():
+            db.add(user)
+            await db.flush()
+    except IntegrityError:
+        # Lost a race with a concurrent insert for the same email -- fetch
+        # the row the other request just created instead of erroring.
+        existing = (
+            await db.execute(
+                select(User).where(func.lower(User.email) == normalized_email)
+            )
+        ).scalar_one()
+        return existing
+    _log.info("created contact user for invoicing", extra={"email": normalized_email})
     return user

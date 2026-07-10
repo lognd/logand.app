@@ -188,6 +188,7 @@ def invoice_sent(
     line_items: list[InvoiceLineItemView],
     memo: str | None = None,
     pay_url: str | None = None,
+    claim_url: str | None = None,
 ) -> tuple[str, str, str]:
     """Returns (subject, content_html, content_text).
 
@@ -197,10 +198,24 @@ def invoice_sent(
     self-serve-payable state (draft/void/paid/refunded); this template
     must agree with that, not always show a link that would just 409 on
     a future non-"sent" caller. See FINDINGS.md L5.
+
+    `claim_url` (docs/design/16) is set only when this invoice went to a
+    "contact" row with no account yet -- rendered as a second CTA above
+    the payment paragraph, since claiming the invoice (proving inbox
+    control) is the prerequisite to ever seeing/paying it online at all.
     """
     business = html_escape(cfg.invoice_business_name)
     subject = f"Invoice from {cfg.invoice_business_name}"
     due_line = f" (due {due_date})" if due_date else ""
+    claim_html = (
+        f'<p style="margin:0 0 16px;">{_cta(claim_url, "claim-account --set-password")}'
+        "</p>"
+        if claim_url
+        else ""
+    )
+    claim_text = (
+        f"Claim your account to view/pay online: {claim_url}\n\n" if claim_url else ""
+    )
 
     table_html = _line_items_table(line_items, currency, amount_total)
     memo_html = (
@@ -225,6 +240,7 @@ def invoice_sent(
         f"{due_line}.</p>"
         f'<p class="ln-muted" style="margin:0 0 12px; font-size:12px; '
         f'color:{_MUTED_COLOR};">Order ID: {invoice_id}</p>'
+        f"{claim_html}"
         f"{table_html}"
         f"{memo_html}"
         f"{payment_html}"
@@ -239,6 +255,7 @@ def invoice_sent(
     text = (
         f"You have a new invoice from {cfg.invoice_business_name}{due_line}.\n"
         f"Order ID: {invoice_id}\n\n"
+        f"{claim_text}"
         f"{_line_items_text(line_items, currency)}\n"
         # <60 (not <59) so the amount lands on the same right-hand edge
         # as "Line total" in the header row above -- see export.py's
@@ -332,6 +349,34 @@ def password_reset_requested(
         f"Reset your password: {reset_url}\n\n"
         "If you didn't request this, no action is needed -- your "
         "password hasn't changed and this link will simply expire.\n"
+    )
+    return subject, html, text
+
+
+def email_verification_requested(
+    cfg: AppConfig,
+    *,
+    verify_url: str,
+) -> tuple[str, str, str]:
+    """docs/design/16 -- sent by register() (and resend-verification) to
+    prove inbox control before the account can log in. Mirrors
+    password_reset_requested's structure (a single link is the whole
+    message) but with a 24-hour window and no "if you didn't request
+    this" reassurance -- unlike a reset, an unclicked verify link simply
+    leaves the account unable to log in, not a live credential change
+    someone else could have triggered.
+    """
+    subject = f"Verify your email -- {cfg.invoice_business_name}"
+    html = (
+        '<p style="margin:0 0 16px;">Confirm this email address to finish '
+        "setting up your account. This link is valid for 24 hours and can "
+        "only be used once.</p>"
+        f'<p style="margin:0;">{_cta(verify_url, "verify-email")}</p>'
+    )
+    text = (
+        "Confirm this email address to finish setting up your account. "
+        "This link is valid for 24 hours and can only be used once.\n\n"
+        f"Verify your email: {verify_url}\n"
     )
     return subject, html, text
 

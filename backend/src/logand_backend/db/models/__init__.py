@@ -14,6 +14,7 @@ from logand_backend.db.models.audit import AdminAuditLog
 from logand_backend.db.models.bom import BillOfMaterials, BomMaterialLine
 from logand_backend.db.models.budget import BudgetEntry, BudgetEntryEvidence
 from logand_backend.db.models.documents import Document
+from logand_backend.db.models.email_verification_tokens import EmailVerificationToken
 from logand_backend.db.models.inventory import (
     InventoryAdjustment,
     InventoryItem,
@@ -38,6 +39,7 @@ __all__ = [
     "BudgetEntry",
     "BudgetEntryEvidence",
     "Document",
+    "EmailVerificationToken",
     "InventoryAdjustment",
     "InventoryItem",
     "InventoryLocation",

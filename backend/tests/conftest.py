@@ -167,6 +167,8 @@ def make_user(
     row is invisible to the request's session under read-committed
     isolation, and login would 401 even with the right password.
     """
+    from datetime import datetime, timezone
+
     from logand_backend.auth.passwords import hash_password
     from logand_backend.db.models.users import User
 
@@ -174,12 +176,19 @@ def make_user(
         role: str = "customer",
         password: str = "correct horse battery staple",
         email: str | None = None,
+        verified: bool = True,
     ) -> User:
+        # verified=True by default (docs/design/16): every existing test
+        # calling make_user() expects a fully "active" account that can
+        # log in immediately, same as every pre-migration-0022 row after
+        # its backfill (email_verified_at = now()). Tests exercising the
+        # contact/unverified states explicitly pass verified=False.
         user = User(
             id=uuid4(),
             email=email or f"{uuid4()}@example.com",
             password_hash=hash_password(password),
             role=role,
+            email_verified_at=datetime.now(timezone.utc) if verified else None,
         )
         db_session.add(user)
         await db_session.commit()

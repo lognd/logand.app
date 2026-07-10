@@ -74,7 +74,7 @@ async def validate_session(
     token_hash = hash_token(raw_token)
 
     result = await db.execute(
-        select(Session, User.role, User.disabled_at)
+        select(Session, User.role, User.disabled_at, User.email_verified_at)
         .join(User, User.id == Session.user_id)
         .where(Session.token_hash == token_hash)
     )
@@ -82,7 +82,7 @@ async def validate_session(
     if row is None:
         return Err(AuthError.SessionNotFound)
 
-    session_row, role, disabled_at = row
+    session_row, role, disabled_at, email_verified_at = row
     now = datetime.now(timezone.utc)
     if session_row.expires_at <= now:
         return Err(AuthError.SessionExpired)
@@ -95,6 +95,16 @@ async def validate_session(
     # through deactivate_customer) must still be rejected here too, not
     # silently honored just because the row itself hasn't expired yet.
     if disabled_at is not None:
+        return Err(AuthError.SessionNotFound)
+    # Same defense-in-depth reasoning, for docs/design/16's load-bearing
+    # invariant: login() refuses to create a session for an unverified
+    # account, so this should never find a live session for one in
+    # practice -- but if one somehow exists (a direct DB edit via
+    # admin_data unsetting email_verified_at after the fact, a future
+    # bug), every customer-facing invoice read path is gated on this
+    # session being valid, so it must be rejected here too, not just at
+    # the login boundary.
+    if email_verified_at is None:
         return Err(AuthError.SessionNotFound)
 
     # Slide the idle-timeout window forward, still capped by the absolute
