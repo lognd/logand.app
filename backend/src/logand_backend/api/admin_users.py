@@ -43,6 +43,24 @@ class AddressInput(BaseModel):
     address_country: str | None = None
 
 
+def _account_state(user: User) -> str:
+    """Derive the docs/design/17 account state from password_hash and
+    email_verified_at -- never serialize password_hash itself (only the
+    is-None check), and never any prefix/length/hash of it.
+
+    - password_hash IS NULL                        -> "contact": admin
+      invoiced this email, no account exists, cannot log in.
+    - password_hash set, email_verified_at IS NULL  -> "unverified":
+      registered, has not proven inbox control.
+    - otherwise                                     -> "active".
+    """
+    if user.password_hash is None:
+        return "contact"
+    if user.email_verified_at is None:
+        return "unverified"
+    return "active"
+
+
 def _customer_detail(user: User) -> dict:
     return {
         "id": str(user.id),
@@ -56,6 +74,10 @@ def _customer_detail(user: User) -> dict:
         "address_state": user.address_state,
         "address_postal_code": user.address_postal_code,
         "address_country": user.address_country,
+        "account_state": _account_state(user),
+        "email_verified_at": (
+            user.email_verified_at.isoformat() if user.email_verified_at else None
+        ),
     }
 
 
@@ -65,11 +87,14 @@ async def list_customers(
     _admin: SessionInfo = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ) -> list[dict]:
-    """Customer accounts, id + email only -- what the admin create-invoice
-    form needs to let an admin pick who to bill without already knowing
-    their UUID. Deliberately never includes password_hash or any other
-    User field; this is a lookup list, not a user-management endpoint
-    (there is no create/edit/delete-user surface at all yet).
+    """Customer accounts, id + email + account_state -- what the admin
+    create-invoice form needs to let an admin pick who to bill without
+    already knowing their UUID, plus the docs/design/17 account state so
+    an admin chasing an unpaid invoice can tell at a glance whether the
+    person has ever claimed it. Deliberately never includes password_hash
+    itself or any other User field; this is a lookup list, not a
+    user-management endpoint (there is no create/edit/delete-user surface
+    at all yet).
 
     `q`, when given, filters to emails containing it (case-insensitive
     substring, not a prefix match -- an admin remembering "the gmail
@@ -86,7 +111,10 @@ async def list_customers(
         stmt = stmt.where(User.email.ilike(f"%{q}%"))
     stmt = stmt.order_by(User.email).limit(50)
     rows = (await db.execute(stmt)).scalars().all()
-    return [{"id": str(u.id), "email": u.email} for u in rows]
+    return [
+        {"id": str(u.id), "email": u.email, "account_state": _account_state(u)}
+        for u in rows
+    ]
 
 
 @router.get("/{user_id}")

@@ -33,11 +33,13 @@ describe("AdminCustomers (integration)", () => {
   });
 
   it("deactivating a customer requires an explicit confirm click before the real request fires", async () => {
-    const customer = { id: "cust-1", email: "alice@example.com" };
+    const customer = { id: "cust-1", email: "alice@example.com", account_state: "active" };
     const detail = {
       id: "cust-1",
       email: "alice@example.com",
       role: "customer",
+      account_state: "active",
+      email_verified_at: "2026-01-01T00:00:00Z",
       emails_opted_out: false,
       disabled_at: null,
       created_at: "2026-01-01T00:00:00Z",
@@ -65,7 +67,7 @@ describe("AdminCustomers (integration)", () => {
     const user = userEvent.setup();
     renderPage();
 
-    await user.click(await screen.findByRole("button", { name: "alice@example.com" }));
+    await user.click(await screen.findByRole("button", { name: /alice@example.com/ }));
     await user.click(
       await screen.findByRole("button", { name: "Deactivate account" }),
     );
@@ -92,11 +94,13 @@ describe("AdminCustomers (integration)", () => {
   });
 
   it("saves an address edit via PUT with the entered values", async () => {
-    const customer = { id: "cust-1", email: "alice@example.com" };
+    const customer = { id: "cust-1", email: "alice@example.com", account_state: "active" };
     const detail = {
       id: "cust-1",
       email: "alice@example.com",
       role: "customer",
+      account_state: "active",
+      email_verified_at: "2026-01-01T00:00:00Z",
       emails_opted_out: false,
       disabled_at: null,
       created_at: "2026-01-01T00:00:00Z",
@@ -129,7 +133,7 @@ describe("AdminCustomers (integration)", () => {
     const user = userEvent.setup();
     renderPage();
 
-    await user.click(await screen.findByRole("button", { name: "alice@example.com" }));
+    await user.click(await screen.findByRole("button", { name: /alice@example.com/ }));
     await screen.findByText("Address (for tax sourcing)");
 
     await user.type(screen.getByLabelText("Address line 1"), "123 Main St");
@@ -150,5 +154,74 @@ describe("AdminCustomers (integration)", () => {
     });
 
     expect(await screen.findByText("Address saved.")).toBeInTheDocument();
+  });
+
+  it("shows plain-language account-state badges for contact, unverified, and active customers", async () => {
+    const customers = [
+      { id: "cust-contact", email: "contact@example.com", account_state: "contact" },
+      { id: "cust-unverified", email: "unverified@example.com", account_state: "unverified" },
+      { id: "cust-active", email: "active@example.com", account_state: "active" },
+    ];
+    const fetchMock = vi.fn((url: string) => {
+      if (url.startsWith("/api/admin/customers")) {
+        return Promise.resolve(jsonResponse(customers));
+      }
+      return Promise.resolve(jsonResponse({}));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    document.cookie = "csrf_token=test-csrf";
+
+    renderPage();
+
+    expect(
+      await screen.findByText("No account yet -- invoice sent, not claimed"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Signed up, has not confirmed their email"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Active")).toBeInTheDocument();
+  });
+
+  it("shows the account-state badge and email_verified_at in the customer detail panel", async () => {
+    const customer = {
+      id: "cust-1",
+      email: "alice@example.com",
+      account_state: "unverified",
+    };
+    const detail = {
+      id: "cust-1",
+      email: "alice@example.com",
+      role: "customer",
+      account_state: "unverified",
+      email_verified_at: null,
+      emails_opted_out: false,
+      disabled_at: null,
+      created_at: "2026-01-01T00:00:00Z",
+      address_line1: null,
+      address_city: null,
+      address_state: null,
+      address_postal_code: null,
+      address_country: null,
+    };
+    const fetchMock = vi.fn((url: string) => {
+      if (url === "/api/admin/customers/cust-1") {
+        return Promise.resolve(jsonResponse(detail));
+      }
+      if (url.startsWith("/api/admin/customers")) {
+        return Promise.resolve(jsonResponse([customer]));
+      }
+      return Promise.resolve(jsonResponse({}));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    document.cookie = "csrf_token=test-csrf";
+
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: /alice@example.com/ }));
+
+    expect(
+      await screen.findAllByText("Signed up, has not confirmed their email"),
+    ).not.toHaveLength(0);
   });
 });

@@ -50,7 +50,12 @@ async def test_list_customers_response_never_includes_password_hash(
 
     resp = await db_client.get("/api/admin/customers")
     for row in resp.json():
-        assert set(row.keys()) == {"id", "email"}
+        # Exact key set -- the list is id + email + the docs/design/17
+        # derived account_state, and crucially NOTHING else. This asserts
+        # password_hash (and any prefix/length/hash of it) is absent by
+        # pinning the whole shape, not just checking one missing key.
+        assert set(row.keys()) == {"id", "email", "account_state"}
+        assert "password_hash" not in row
 
 
 async def test_list_customers_filters_by_q_case_insensitive_substring(

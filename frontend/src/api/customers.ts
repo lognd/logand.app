@@ -1,12 +1,22 @@
 import { apiGet, apiPost, apiPut } from "./client";
 
-// Admin-only lookup list (api/admin_users.py) -- id+email only, used to
-// populate the "bill who?" picker on the admin create-invoice form. Not a
-// general user-management endpoint; there is no create/edit/delete-user
-// surface at all.
+// docs/design/17-contact-users-and-email-verification.md's three account
+// states, derived server-side (never trust a client-computed version of
+// this since it comes from password_hash, which the client never sees):
+// - "contact": admin invoiced this email, no account exists, cannot log in.
+// - "unverified": registered, has not proven inbox control.
+// - "active": fully usable account.
+export type AccountState = "contact" | "unverified" | "active";
+
+// Admin-only lookup list (api/admin_users.py) -- id+email+account_state,
+// used to populate the "bill who?" picker on the admin create-invoice form
+// and to let an admin chasing an unpaid invoice see at a glance whether the
+// person has ever claimed it. Not a general user-management endpoint;
+// there is no create/edit/delete-user surface at all.
 export interface Customer {
   id: string;
   email: string;
+  account_state: AccountState;
 }
 
 // `q`, when given, filters to emails containing it (case-insensitive
@@ -24,6 +34,11 @@ export interface CustomerDetail {
   emails_opted_out: boolean;
   disabled_at: string | null;
   created_at: string;
+  account_state: AccountState;
+  // Timestamp the customer proved inbox control (docs/design/17); null
+  // for "contact" and "unverified" states. Not sensitive -- unlike
+  // password_hash, which the backend never serializes at all.
+  email_verified_at: string | null;
   // Destination address for tax sourcing (docs/design/16-sales-tax.md
   // Phase 6) -- matches api/admin_users.py's _customer_detail field names
   // exactly. Any/all may be null if never set.

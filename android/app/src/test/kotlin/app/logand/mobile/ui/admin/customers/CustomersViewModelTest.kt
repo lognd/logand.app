@@ -46,7 +46,7 @@ class CustomersViewModelTest {
     fun `search populates customers from a real response`() = runBlocking {
         server.enqueue(
             MockResponse().setResponseCode(200)
-                .setBody("""[{"id":"cust-1","email":"alice@example.com"}]"""),
+                .setBody("""[{"id":"cust-1","email":"alice@example.com","account_state":"active"}]"""),
         )
 
         viewModel.search("alice")
@@ -74,7 +74,8 @@ class CustomersViewModelTest {
         server.enqueue(
             MockResponse().setResponseCode(200).setBody(
                 """{"id":"cust-1","email":"alice@example.com","role":"customer",""" +
-                    """"emails_opted_out":false,"disabled_at":null,"created_at":"2026-01-01"}"""
+                    """"emails_opted_out":false,"disabled_at":null,"created_at":"2026-01-01",""" +
+                    """"account_state":"active"}"""
             )
         )
 
@@ -105,7 +106,8 @@ class CustomersViewModelTest {
         server.enqueue(
             MockResponse().setResponseCode(200).setBody(
                 """{"id":"cust-1","email":"alice@example.com","role":"customer",""" +
-                    """"emails_opted_out":false,"disabled_at":"2026-07-09T00:00:00","created_at":"2026-01-01"}"""
+                    """"emails_opted_out":false,"disabled_at":"2026-07-09T00:00:00","created_at":"2026-01-01",""" +
+                    """"account_state":"active"}"""
             )
         )
 
@@ -113,5 +115,36 @@ class CustomersViewModelTest {
         awaitState { it.selectedDetail?.disabled_at != null }
 
         assertEquals("2026-07-09T00:00:00", viewModel.uiState.value.selectedDetail?.disabled_at)
+    }
+
+    @Test
+    fun `search surfaces account_state for each customer`() = runBlocking {
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """[{"id":"cust-1","email":"alice@example.com","account_state":"contact"}]"""
+            ),
+        )
+
+        viewModel.search("alice")
+        awaitState { !it.isLoading }
+
+        assertEquals("contact", viewModel.uiState.value.customers[0].account_state)
+    }
+
+    @Test
+    fun `toggleDetail surfaces the unverified account state and null email_verified_at`() = runBlocking {
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"id":"cust-1","email":"alice@example.com","role":"customer",""" +
+                    """"emails_opted_out":false,"disabled_at":null,"created_at":"2026-01-01",""" +
+                    """"account_state":"unverified","email_verified_at":null}"""
+            )
+        )
+
+        viewModel.toggleDetail("cust-1")
+        awaitState { !it.isDetailLoading }
+
+        assertEquals("unverified", viewModel.uiState.value.selectedDetail?.account_state)
+        assertEquals(null, viewModel.uiState.value.selectedDetail?.email_verified_at)
     }
 }

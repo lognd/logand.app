@@ -213,7 +213,7 @@ class AdminApiTest {
 
     @Test
     fun `listCustomers applies the q filter`() = runTest {
-        server.enqueue(MockResponse().setResponseCode(200).setBody("""[{"id":"c-1","email":"a@example.com"}]"""))
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""[{"id":"c-1","email":"a@example.com","account_state":"active"}]"""))
 
         val result = admin.listCustomers(q = "gmail")
 
@@ -226,7 +226,8 @@ class AdminApiTest {
         server.enqueue(
             MockResponse().setResponseCode(200).setBody(
                 """{"id":"c-1","email":"a@example.com","role":"customer","emails_opted_out":false,""" +
-                    """"disabled_at":null,"created_at":"2026-01-01T00:00:00Z"}"""
+                    """"disabled_at":null,"created_at":"2026-01-01T00:00:00Z",""" +
+                    """"account_state":"active"}"""
             )
         )
 
@@ -234,6 +235,24 @@ class AdminApiTest {
 
         assertIs<ApiResult.Success<app.logand.core.model.CustomerDetail>>(result)
         assertEquals("a@example.com", result.data.email)
+    }
+
+    @Test
+    fun `getCustomer decodes contact and unverified account states with no email_verified_at`() = runTest {
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"id":"c-2","email":"contact@example.com","role":"customer",""" +
+                    """"emails_opted_out":false,"disabled_at":null,""" +
+                    """"created_at":"2026-01-01T00:00:00Z","account_state":"contact",""" +
+                    """"email_verified_at":null}"""
+            )
+        )
+
+        val result = admin.getCustomer("c-2")
+
+        assertIs<ApiResult.Success<app.logand.core.model.CustomerDetail>>(result)
+        assertEquals("contact", result.data.account_state)
+        assertEquals(null, result.data.email_verified_at)
     }
 
     @Test
@@ -529,6 +548,7 @@ class AdminApiTest {
             MockResponse().setResponseCode(200).setBody(
                 """{"id":"c-1","email":"a@b.com","role":"customer","emails_opted_out":false,""" +
                     """"disabled_at":null,"created_at":"2026-01-01T00:00:00Z",""" +
+                    """"account_state":"active",""" +
                     """"address_line1":"123 Main St","address_city":"Nashville",""" +
                     """"address_state":"TN","address_postal_code":"37201","address_country":"US"}"""
             )

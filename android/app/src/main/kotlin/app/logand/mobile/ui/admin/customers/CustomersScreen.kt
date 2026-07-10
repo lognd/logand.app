@@ -21,11 +21,32 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.ui.graphics.Color
 import app.logand.core.model.CustomerListItem
 import app.logand.mobile.ui.theme.AccentGreen
+import app.logand.mobile.ui.theme.AccentOrange
 import app.logand.mobile.ui.theme.AccentRed
+import app.logand.mobile.ui.theme.FgMuted
 import app.logand.mobile.ui.theme.SpacingMedium
 import app.logand.mobile.ui.theme.SpacingSmall
+
+// Plain-language copy for docs/design/17's account states, aimed at a
+// solo business owner chasing an unpaid invoice, not a database term --
+// "did they ever even get in?" is the question this answers at a glance.
+// Mirrors frontend/src/app/routes/admin/Customers.tsx's ACCOUNT_STATE_COPY.
+private fun accountStateCopy(state: String): String = when (state) {
+    "contact" -> "No account yet -- invoice sent, not claimed"
+    "unverified" -> "Signed up, has not confirmed their email"
+    "active" -> "Active"
+    else -> state
+}
+
+private fun accountStateColor(state: String): Color = when (state) {
+    "contact" -> FgMuted
+    "unverified" -> AccentOrange
+    "active" -> AccentGreen
+    else -> FgMuted
+}
 
 @Composable
 fun CustomersScreen(viewModel: CustomersViewModel) {
@@ -92,7 +113,14 @@ private fun CustomerRow(customer: CustomerListItem, isExpanded: Boolean, onToggl
             .padding(vertical = SpacingSmall)
             .semantics { contentDescription = "toggle details for ${customer.email}" },
     ) {
-        Text(customer.email, modifier = Modifier.fillMaxWidth())
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Text(customer.email)
+            Text(
+                accountStateCopy(customer.account_state),
+                color = accountStateColor(customer.account_state),
+                style = MaterialTheme.typography.labelMedium,
+            )
+        }
     }
 }
 
@@ -113,6 +141,11 @@ private fun CustomerDetailPanel(viewModel: CustomersViewModel, userId: String) {
         Text(
             "Account created ${customer.created_at}",
             style = MaterialTheme.typography.labelMedium,
+        )
+        Text(
+            accountStateCopy(customer.account_state),
+            color = accountStateColor(customer.account_state),
+            style = MaterialTheme.typography.bodyLarge,
         )
         Text(
             if (customer.disabled_at != null) {

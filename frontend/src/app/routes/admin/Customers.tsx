@@ -7,9 +7,35 @@ import {
   reactivateCustomer,
   resetCustomerPassword,
   updateCustomerAddress,
+  type AccountState,
   type CustomerDetail,
 } from "../../../api/customers";
 import { BUTTON_CLASS, INPUT_CLASS, LABEL_CLASS } from "../../../styles/a11y";
+
+// Plain-language copy for docs/design/17's account states, aimed at a
+// solo business owner chasing an unpaid invoice, not a database term --
+// "did they ever even get in?" is the question this answers at a glance.
+const ACCOUNT_STATE_COPY: Record<AccountState, string> = {
+  contact: "No account yet -- invoice sent, not claimed",
+  unverified: "Signed up, has not confirmed their email",
+  active: "Active",
+};
+
+// Color only ever comes from tokens.css custom properties -- never a
+// hardcoded hex -- so the badge follows the site's theme automatically.
+const ACCOUNT_STATE_CLASS: Record<AccountState, string> = {
+  contact: "text-fg-muted",
+  unverified: "text-accent-orange",
+  active: "text-accent-green",
+};
+
+function AccountStateBadge({ state }: { state: AccountState }) {
+  return (
+    <span className={`text-sm ${ACCOUNT_STATE_CLASS[state]}`}>
+      {ACCOUNT_STATE_COPY[state]}
+    </span>
+  );
+}
 
 // Every write here (deactivate/reactivate/reset password) is a real
 // account-affecting, hard-to-casually-undo action -- same site-wide
@@ -165,6 +191,9 @@ function CustomerDetailPanel({ userId }: { userId: string }) {
       <p className="text-lg text-fg-primary">{customer.email}</p>
       <p className="text-sm text-fg-muted">
         Account created {new Date(customer.created_at).toLocaleDateString()}
+      </p>
+      <p className="mt-1">
+        <AccountStateBadge state={customer.account_state} />
       </p>
       <p className="mt-1 text-sm">
         Status:{" "}
@@ -329,7 +358,10 @@ export function AdminCustomers() {
               }
               className={`${BUTTON_CLASS} w-full text-left`}
             >
-              {customer.email}
+              <span>{customer.email}</span>
+              <span className="ml-2">
+                <AccountStateBadge state={customer.account_state} />
+              </span>
             </button>
             {selectedId === customer.id && (
               <div className="mt-2">

@@ -146,11 +146,18 @@ data class RefundRequest(
 
 // -- customers -----------------------------------------------------------
 
-// Matches api/admin_users.py::list_customers -- deliberately id+email only.
+// Matches api/admin_users.py::list_customers -- deliberately id+email
+// only, plus account_state (docs/design/17-contact-users-and-email-
+// verification.md) so an admin picking who to bill can see at a glance
+// whether the person has ever claimed an invoice. One of "contact",
+// "unverified", "active" -- left as a plain String rather than a Kotlin
+// enum so an unrecognized-by-this-client-version value from a future
+// backend never fails to deserialize.
 @Serializable
 data class CustomerListItem(
     val id: String,
     val email: String,
+    val account_state: String,
 )
 
 // Matches api/admin_users.py::_customer_detail.
@@ -163,6 +170,9 @@ data class ResetPasswordRequest(
 // address_* fields are the customer's destination address
 // (docs/design/16-sales-tax.md Phase 6) -- feeds the tax engine's
 // destination-jurisdiction lookup; any/all may be null if never set.
+// account_state/email_verified_at are docs/design/17's derived,
+// read-only account state -- never password_hash itself, which the
+// backend never serializes at all.
 @Serializable
 data class CustomerDetail(
     val id: String,
@@ -171,6 +181,8 @@ data class CustomerDetail(
     val emails_opted_out: Boolean,
     val disabled_at: String?,
     val created_at: String,
+    val account_state: String,
+    val email_verified_at: String? = null,
     val address_line1: String? = null,
     val address_city: String? = null,
     val address_state: String? = null,

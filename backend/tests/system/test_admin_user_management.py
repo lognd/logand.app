@@ -23,6 +23,74 @@ async def test_get_customer_detail(db_client: AsyncClient, make_user, login_as) 
     assert "password_hash" not in body
 
 
+async def test_customer_detail_reports_active_account_state(
+    db_client: AsyncClient, make_user, login_as
+) -> None:
+    admin = await make_user(role="admin", password="pw")
+    customer = await make_user(role="customer", password="pw", verified=True)
+    await login_as(db_client, admin.email, "pw")
+
+    resp = await db_client.get(f"/api/admin/customers/{customer.id}")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["account_state"] == "active"
+    assert body["email_verified_at"] is not None
+    assert "password_hash" not in body
+
+
+async def test_customer_detail_reports_unverified_account_state(
+    db_client: AsyncClient, make_user, login_as
+) -> None:
+    admin = await make_user(role="admin", password="pw")
+    customer = await make_user(role="customer", password="pw", verified=False)
+    await login_as(db_client, admin.email, "pw")
+
+    resp = await db_client.get(f"/api/admin/customers/{customer.id}")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["account_state"] == "unverified"
+    assert body["email_verified_at"] is None
+    assert "password_hash" not in body
+
+
+async def test_customer_detail_reports_contact_account_state(
+    db_client: AsyncClient, make_user, login_as, db_session
+) -> None:
+    from logand_backend.domain.auth.service import get_or_create_contact_user
+
+    admin = await make_user(role="admin", password="pw")
+    await login_as(db_client, admin.email, "pw")
+
+    contact = await get_or_create_contact_user(db_session, "invoiced@example.com")
+    await db_session.commit()
+
+    resp = await db_client.get(f"/api/admin/customers/{contact.id}")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["account_state"] == "contact"
+    assert body["email_verified_at"] is None
+    assert "password_hash" not in body
+
+
+async def test_list_customers_includes_account_state(
+    db_client: AsyncClient, make_user, login_as
+) -> None:
+    admin = await make_user(role="admin", password="pw")
+    customer = await make_user(role="customer", password="pw", verified=True)
+    await login_as(db_client, admin.email, "pw")
+
+    resp = await db_client.get("/api/admin/customers", params={"q": customer.email})
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body) == 1
+    assert body[0]["account_state"] == "active"
+    assert "password_hash" not in body[0]
+
+
 async def test_deactivate_then_login_fails_then_reactivate_restores_login(
     db_client: AsyncClient, make_user, login_as
 ) -> None:
