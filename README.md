@@ -17,6 +17,9 @@ Full product spec and architecture: **[docs/design/](docs/design/README.md)**
 -- start there, not here, for anything about *what* to build or *why*.
 Deploying this yourself? Start at **[docs/deployment.md](docs/deployment.md)**
 instead. Using the deployed site? See **[docs/usage.md](docs/usage.md)**.
+Already running it and something needs day-2 attention -- a deploy, a
+migration, mail, an Android release, payments? See
+**[docs/OPERATIONS.md](docs/OPERATIONS.md)**.
 This file only covers *how to run the repo*. See
 **[docs/README.md](docs/README.md)** for the full documentation index.
 
