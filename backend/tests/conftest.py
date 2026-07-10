@@ -28,6 +28,33 @@ def _isolated_local_storage_dir(
 
 
 @pytest.fixture(autouse=True)
+def _no_dotenv_reinjection(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stops a developer's real `backend/.env` from leaking into the test
+    suite mid-request.
+
+    `AppConfig.from_external` calls `load_dotenv()` on EVERY invocation, and
+    `load_dotenv` does not overwrite a variable already present in
+    os.environ. That is harmless until a test does
+    `monkeypatch.delenv("STRIPE_PUBLISHABLE_KEY")` to exercise an
+    "unconfigured" path: the variable is now absent, so the next
+    `from_external()` inside the request handler re-reads .env and silently
+    puts it BACK, undoing the test's own setup. Locally that made
+    test_stripe_config/test_zelle_config fail against a real .env while
+    passing in CI (which has no .env at all) -- a test suite that disagrees
+    with CI depending on an untracked file is worse than one that just
+    fails.
+
+    Patching the symbol as `config` bound it (`from dotenv import
+    load_dotenv`) leaves every variable already loaded at import time --
+    notably DATABASE_URL, which the db fixtures below genuinely do source
+    from .env -- in place, and only prevents the re-injection.
+    """
+    from logand_backend.app import config
+
+    monkeypatch.setattr(config, "load_dotenv", lambda *args, **kwargs: False)
+
+
+@pytest.fixture(autouse=True)
 def _default_stripe_config(monkeypatch: pytest.MonkeyPatch) -> None:
     """AppConfig.payment_processor_secret defaults to None now, and
     stripe_provider.is_configured (FINDINGS.md M1) requires BOTH it AND
