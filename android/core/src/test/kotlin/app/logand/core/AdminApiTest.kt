@@ -521,6 +521,204 @@ class AdminApiTest {
         assertEquals("/api/admin/logs/files/app.log", server.takeRequest().path)
     }
 
+    // -- customer address ------------------------------------------------------
+
+    @Test
+    fun `updateCustomerAddress sends a PUT with the address body and decodes it back`() = runTest {
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"id":"c-1","email":"a@b.com","role":"customer","emails_opted_out":false,""" +
+                    """"disabled_at":null,"created_at":"2026-01-01T00:00:00Z",""" +
+                    """"address_line1":"123 Main St","address_city":"Nashville",""" +
+                    """"address_state":"TN","address_postal_code":"37201","address_country":"US"}"""
+            )
+        )
+
+        val result = admin.updateCustomerAddress(
+            userId = "c-1",
+            addressLine1 = "123 Main St",
+            addressCity = "Nashville",
+            addressState = "TN",
+            addressPostalCode = "37201",
+            addressCountry = "US",
+        )
+
+        val recorded = server.takeRequest()
+        assertEquals("PUT", recorded.method)
+        assertEquals("/api/admin/customers/c-1/address", recorded.path)
+        assertTrue(recorded.body.readUtf8().contains("\"address_line1\":\"123 Main St\""))
+
+        assertIs<ApiResult.Success<app.logand.core.model.CustomerDetail>>(result)
+        assertEquals("Nashville", result.data.address_city)
+    }
+
+    // -- tax (docs/design/16-sales-tax.md) --------------------------------------
+
+    @Test
+    fun `listTaxClassifications passes status filter and decodes rows`() = runTest {
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """[{"id":"tc-1","normalized_key":"widget","description":"Widget",""" +
+                    """"category":"tangible_goods","taxable":true,"hts_code":null,""" +
+                    """"status":"pending","source":"claude","model":"claude-sonnet",""" +
+                    """"rationale":"generic hardware item","confirmed_at":null,""" +
+                    """"updated_at":"2026-07-01T00:00:00Z"}]"""
+            )
+        )
+
+        val result = admin.listTaxClassifications(status = "pending")
+
+        val path = server.takeRequest().path!!
+        assertTrue(path.startsWith("/api/admin/tax/classifications?"))
+        assertTrue(path.contains("status=pending"))
+        assertIs<ApiResult.Success<List<app.logand.core.model.TaxClassification>>>(result)
+        assertEquals("widget", result.data[0].normalized_key)
+        assertEquals("pending", result.data[0].status)
+    }
+
+    @Test
+    fun `confirmTaxClassification URL-encodes the normalized key`() = runTest {
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"id":"tc-1","normalized_key":"widget kit","description":"Widget kit",""" +
+                    """"category":"tangible_goods","taxable":true,"hts_code":null,""" +
+                    """"status":"confirmed","source":"claude","model":null,"rationale":null,""" +
+                    """"confirmed_at":"2026-07-09T00:00:00Z","updated_at":"2026-07-09T00:00:00Z"}"""
+            )
+        )
+
+        val result = admin.confirmTaxClassification("widget kit")
+
+        val path = server.takeRequest().path!!
+        assertTrue(path.contains("/api/admin/tax/classifications/widget%20kit/confirm"))
+        assertIs<ApiResult.Success<app.logand.core.model.TaxClassification>>(result)
+        assertEquals("confirmed", result.data.status)
+    }
+
+    @Test
+    fun `overrideTaxClassification sends category taxable and hts_code`() = runTest {
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"id":"tc-1","normalized_key":"widget","description":"Widget",""" +
+                    """"category":"electronics","taxable":false,"hts_code":"8543.70",""" +
+                    """"status":"overridden","source":"admin","model":null,"rationale":null,""" +
+                    """"confirmed_at":"2026-07-09T00:00:00Z","updated_at":"2026-07-09T00:00:00Z"}"""
+            )
+        )
+
+        val result = admin.overrideTaxClassification(
+            key = "widget",
+            category = "electronics",
+            taxable = false,
+            htsCode = "8543.70",
+        )
+
+        val recorded = server.takeRequest()
+        assertEquals("/api/admin/tax/classifications/widget/override", recorded.path)
+        val bodyText = recorded.body.readUtf8()
+        assertTrue(bodyText.contains("\"category\":\"electronics\""))
+        assertTrue(bodyText.contains("\"taxable\":false"))
+        assertTrue(bodyText.contains("\"hts_code\":\"8543.70\""))
+        assertIs<ApiResult.Success<app.logand.core.model.TaxClassification>>(result)
+        assertEquals("overridden", result.data.status)
+    }
+
+    @Test
+    fun `getStripeReconcile passes date range and decodes jurisdiction totals`() = runTest {
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"total_tax_collected":"42.00","by_jurisdiction":{"US-TN":"42.00"},""" +
+                    """"transaction_count":3}"""
+            )
+        )
+
+        val result = admin.getStripeReconcile(fromDate = "2026-01-01", toDate = "2026-12-31")
+
+        val path = server.takeRequest().path!!
+        assertTrue(path.contains("from_date=2026-01-01"))
+        assertTrue(path.contains("to_date=2026-12-31"))
+        assertIs<ApiResult.Success<app.logand.core.model.StripeTaxReconcile>>(result)
+        assertEquals("42.00", result.data.total_tax_collected)
+        assertEquals(3, result.data.transaction_count)
+    }
+
+    @Test
+    fun `listTaxRules decodes the current rate rows`() = runTest {
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """[{"id":"tr-1","jurisdiction":"US-TN","tax_type":"sales",""" +
+                    """"category":"*","rate":"0.07","source":"TN DOR 2026",""" +
+                    """"citation_url":"https://www.tn.gov/revenue.html",""" +
+                    """"effective_from":"2026-01-01"}]"""
+            )
+        )
+
+        val result = admin.listTaxRules()
+
+        assertEquals("/api/admin/tax/rules", server.takeRequest().path)
+        assertIs<ApiResult.Success<List<app.logand.core.model.TaxRule>>>(result)
+        assertEquals("US-TN", result.data[0].jurisdiction)
+        assertEquals("0.07", result.data[0].rate)
+    }
+
+    @Test
+    fun `addTaxRule sends the full rule body including citation_url`() = runTest {
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"id":"tr-2","jurisdiction":"US-TN","tax_type":"sales",""" +
+                    """"category":"*","rate":"0.07","source":"TN DOR 2026",""" +
+                    """"citation_url":"https://www.tn.gov/revenue.html",""" +
+                    """"effective_from":"2026-07-09"}"""
+            )
+        )
+
+        val result = admin.addTaxRule(
+            app.logand.core.model.TaxRuleCreateRequest(
+                jurisdiction = "US-TN",
+                tax_type = "sales",
+                category = "*",
+                rate = "0.07",
+                source = "TN DOR 2026",
+                citation_url = "https://www.tn.gov/revenue.html",
+            )
+        )
+
+        val recorded = server.takeRequest()
+        assertEquals("/api/admin/tax/rules", recorded.path)
+        val bodyText = recorded.body.readUtf8()
+        assertTrue(bodyText.contains("\"citation_url\":\"https://www.tn.gov/revenue.html\""))
+        assertIs<ApiResult.Success<app.logand.core.model.TaxRule>>(result)
+        assertEquals("tr-2", result.data.id)
+    }
+
+    @Test
+    fun `getTaxReport hits the invoices router path with date range and currency`() = runTest {
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"from_date":"2026-01-01","to_date":"2026-12-31","currency":"usd",""" +
+                    """"invoice_count":2,"total_sales":"200.00","total_tax_collected":"14.00",""" +
+                    """"filing_jurisdictions":["US-TN"],""" +
+                    """"by_jurisdiction":[{"jurisdiction":"US-TN","tax_type":"sales",""" +
+                    """"taxable_base":"200.00","tax_collected":"14.00"}],""" +
+                    """"by_category":[{"category":"tangible_goods","gross":"200.00",""" +
+                    """"taxable_gross":"200.00"}]}"""
+            )
+        )
+
+        val result = admin.getTaxReport(fromDate = "2026-01-01", toDate = "2026-12-31")
+
+        val path = server.takeRequest().path!!
+        assertTrue(path.startsWith("/api/admin/invoices/tax-report?"))
+        assertTrue(path.contains("from_date=2026-01-01"))
+        assertTrue(path.contains("to_date=2026-12-31"))
+        assertTrue(path.contains("currency=usd"))
+        assertIs<ApiResult.Success<app.logand.core.model.TaxReport>>(result)
+        assertEquals(2, result.data.invoice_count)
+        assertEquals("US-TN", result.data.filing_jurisdictions[0])
+        assertEquals(1, result.data.by_jurisdiction.size)
+        assertEquals(1, result.data.by_category.size)
+    }
+
     // -- version -----------------------------------------------------------------
 
     @Test

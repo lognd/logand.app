@@ -19,6 +19,9 @@ import app.logand.mobile.ui.admin.inventory.InventoryViewModel
 import app.logand.mobile.ui.admin.invoices.InvoicesViewModel
 import app.logand.mobile.ui.admin.logs.AdminLogsViewModel
 import app.logand.mobile.ui.admin.stats.StatsViewModel
+import app.logand.mobile.ui.admin.taxclassifications.TaxClassificationsViewModel
+import app.logand.mobile.ui.admin.taxrates.TaxRatesViewModel
+import app.logand.mobile.ui.admin.taxreport.TaxReportViewModel
 import app.logand.mobile.ui.admin.version.AdminVersionViewModel
 import app.logand.mobile.ui.login.LoginViewModel
 import app.logand.mobile.ui.mileage.MileageViewModel
@@ -38,6 +41,9 @@ class MainActivity : ComponentActivity() {
     private val inventoryViewModel: InventoryViewModel by viewModels { viewModelFactory() }
     private val bomViewModel: BomViewModel by viewModels { viewModelFactory() }
     private val budgetViewModel: BudgetViewModel by viewModels { viewModelFactory() }
+    private val taxReportViewModel: TaxReportViewModel by viewModels { viewModelFactory() }
+    private val taxClassificationsViewModel: TaxClassificationsViewModel by viewModels { viewModelFactory() }
+    private val taxRatesViewModel: TaxRatesViewModel by viewModels { viewModelFactory() }
     private val adminDataViewModel: AdminDataViewModel by viewModels { viewModelFactory() }
     private val adminLogsViewModel: AdminLogsViewModel by viewModels { viewModelFactory() }
     private val adminVersionViewModel: AdminVersionViewModel by viewModels { viewModelFactory() }
@@ -61,6 +67,9 @@ class MainActivity : ComponentActivity() {
                         inventory = inventoryViewModel,
                         bom = bomViewModel,
                         budget = budgetViewModel,
+                        taxReport = taxReportViewModel,
+                        taxClassifications = taxClassificationsViewModel,
+                        taxRates = taxRatesViewModel,
                         adminData = adminDataViewModel,
                         adminLogs = adminLogsViewModel,
                         adminVersion = adminVersionViewModel,
@@ -94,6 +103,12 @@ class MainActivity : ComponentActivity() {
                     BomViewModel(apiClientProvider, container.logger) as T
                 BudgetViewModel::class.java ->
                     BudgetViewModel(apiClientProvider, container.logger) as T
+                TaxReportViewModel::class.java ->
+                    TaxReportViewModel(apiClientProvider, container.logger) as T
+                TaxClassificationsViewModel::class.java ->
+                    TaxClassificationsViewModel(apiClientProvider, container.logger) as T
+                TaxRatesViewModel::class.java ->
+                    TaxRatesViewModel(apiClientProvider, container.logger) as T
                 AdminDataViewModel::class.java ->
                     AdminDataViewModel(apiClientProvider, container.logger) as T
                 AdminLogsViewModel::class.java ->

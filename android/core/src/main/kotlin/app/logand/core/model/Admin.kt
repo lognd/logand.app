@@ -160,6 +160,9 @@ data class ResetPasswordRequest(
     val new_password: String,
 )
 
+// address_* fields are the customer's destination address
+// (docs/design/16-sales-tax.md Phase 6) -- feeds the tax engine's
+// destination-jurisdiction lookup; any/all may be null if never set.
 @Serializable
 data class CustomerDetail(
     val id: String,
@@ -168,6 +171,23 @@ data class CustomerDetail(
     val emails_opted_out: Boolean,
     val disabled_at: String?,
     val created_at: String,
+    val address_line1: String? = null,
+    val address_city: String? = null,
+    val address_state: String? = null,
+    val address_postal_code: String? = null,
+    val address_country: String? = null,
+)
+
+// Body for PUT /api/admin/customers/{id}/address -- matches
+// api/admin_users.py::AddressInput. Replaces the whole address; a null
+// field clears it rather than leaving it as-is.
+@Serializable
+data class CustomerAddressRequest(
+    val address_line1: String? = null,
+    val address_city: String? = null,
+    val address_state: String? = null,
+    val address_postal_code: String? = null,
+    val address_country: String? = null,
 )
 
 // -- inventory -----------------------------------------------------------

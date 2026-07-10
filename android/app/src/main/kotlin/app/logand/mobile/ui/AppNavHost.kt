@@ -60,6 +60,12 @@ import app.logand.mobile.ui.admin.logs.AdminLogsScreen
 import app.logand.mobile.ui.admin.logs.AdminLogsViewModel
 import app.logand.mobile.ui.admin.stats.StatsScreen
 import app.logand.mobile.ui.admin.stats.StatsViewModel
+import app.logand.mobile.ui.admin.taxclassifications.TaxClassificationsScreen
+import app.logand.mobile.ui.admin.taxclassifications.TaxClassificationsViewModel
+import app.logand.mobile.ui.admin.taxrates.TaxRatesScreen
+import app.logand.mobile.ui.admin.taxrates.TaxRatesViewModel
+import app.logand.mobile.ui.admin.taxreport.TaxReportScreen
+import app.logand.mobile.ui.admin.taxreport.TaxReportViewModel
 import app.logand.mobile.ui.admin.version.AdminVersionScreen
 import app.logand.mobile.ui.admin.version.AdminVersionViewModel
 import app.logand.mobile.ui.login.LoginScreen
@@ -74,7 +80,7 @@ import app.logand.mobile.ui.update.UpdateBanner
 import app.logand.mobile.ui.update.UpdateViewModel
 import kotlinx.coroutines.launch
 
-// Eleven destinations do not fit a Material bottom NavigationBar (which
+// Fourteen destinations do not fit a Material bottom NavigationBar (which
 // tops out around five before labels collide), so this is a
 // ModalNavigationDrawer instead. Order below is the order in the drawer:
 // the two field-use screens (mileage/receipts -- the ones used away from
@@ -93,6 +99,9 @@ private enum class Destination(
     INVENTORY("inventory", "Inventory", Icons.Default.Build),
     BOM("bom", "BOM", Icons.Default.Build),
     BUDGET("budget", "Budget", Icons.Default.DateRange),
+    TAX_REPORT("tax-report", "Tax report", Icons.Default.Description),
+    TAX_CLASSIFICATIONS("tax-classifications", "Tax classifications", Icons.Default.Description),
+    TAX_RATES("tax-rates", "Tax rates", Icons.Default.Description),
     ADMIN_DATA("admin-data", "Data", Icons.Default.Settings),
     ADMIN_LOGS("admin-logs", "Logs", Icons.AutoMirrored.Filled.List),
     ADMIN_VERSION("admin-version", "Version", Icons.Default.Info),
@@ -100,7 +109,7 @@ private enum class Destination(
 
 /**
  * Every ViewModel the signed-in admin UI needs, bundled so `AppNavHost`'s
- * signature does not grow one parameter per screen (it would be eleven).
+ * signature does not grow one parameter per screen (it would be fourteen).
  */
 class AdminViewModels(
     val mileage: MileageViewModel,
@@ -111,6 +120,9 @@ class AdminViewModels(
     val inventory: InventoryViewModel,
     val bom: BomViewModel,
     val budget: BudgetViewModel,
+    val taxReport: TaxReportViewModel,
+    val taxClassifications: TaxClassificationsViewModel,
+    val taxRates: TaxRatesViewModel,
     val adminData: AdminDataViewModel,
     val adminLogs: AdminLogsViewModel,
     val adminVersion: AdminVersionViewModel,
@@ -229,6 +241,15 @@ private fun MainScaffold(
                     }
                     composable(Destination.BOM.route) { BomScreen(viewModels.bom) }
                     composable(Destination.BUDGET.route) { BudgetScreen(viewModels.budget) }
+                    composable(Destination.TAX_REPORT.route) {
+                        TaxReportScreen(viewModels.taxReport)
+                    }
+                    composable(Destination.TAX_CLASSIFICATIONS.route) {
+                        TaxClassificationsScreen(viewModels.taxClassifications)
+                    }
+                    composable(Destination.TAX_RATES.route) {
+                        TaxRatesScreen(viewModels.taxRates)
+                    }
                     composable(Destination.ADMIN_DATA.route) {
                         AdminDataScreen(viewModels.adminData)
                     }

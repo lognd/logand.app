@@ -12,6 +12,7 @@ import app.logand.core.model.ChangeId
 import app.logand.core.model.ConsumeBomRequest
 import app.logand.core.model.CreateBomRequest
 import app.logand.core.model.CreatedId
+import app.logand.core.model.CustomerAddressRequest
 import app.logand.core.model.CustomerDetail
 import app.logand.core.model.CustomerListItem
 import app.logand.core.model.InsertRowRequest
@@ -26,7 +27,13 @@ import app.logand.core.model.LogFileInfo
 import app.logand.core.model.ManualPaymentRequest
 import app.logand.core.model.PaymentProofSummary
 import app.logand.core.model.RefundRequest
+import app.logand.core.model.StripeTaxReconcile
 import app.logand.core.model.TableColumn
+import app.logand.core.model.TaxClassification
+import app.logand.core.model.TaxClassificationOverrideRequest
+import app.logand.core.model.TaxReport
+import app.logand.core.model.TaxRule
+import app.logand.core.model.TaxRuleCreateRequest
 import app.logand.core.model.UpdateRowRequest
 import app.logand.core.model.VersionInfo
 import app.logand.core.model.ResetPasswordRequest
@@ -53,7 +60,7 @@ private val JSON_MEDIA_TYPE = "application/json".toMediaType()
 // Every request/response shape below is copy-derived from the real
 // backend route signatures (never guessed) -- see api/invoices.py,
 // api/admin_users.py, api/inventory.py, api/bom.py, api/budget.py,
-// api/admin_data.py, api/admin_logs.py, api/admin_version.py.
+// api/admin_data.py, api/admin_logs.py, api/admin_version.py, api/tax.py.
 class AdminApi internal constructor(private val plumbing: HttpPlumbing) {
 
     // -- invoices ----------------------------------------------------------
@@ -145,6 +152,23 @@ class AdminApi internal constructor(private val plumbing: HttpPlumbing) {
         request(method = "GET", path = "/api/admin/invoices/$invoiceId/pdf").decodeBytes()
     }
 
+    // On the invoices router (/api/admin/invoices), not the tax one --
+    // matches api/invoices.py::get_tax_report exactly (declared before
+    // GET /{invoice_id} on the backend so "tax-report" is never swallowed
+    // as a literal invoice_id).
+    suspend fun getTaxReport(
+        fromDate: String,
+        toDate: String,
+        currency: String = "usd",
+    ): ApiResult<TaxReport> = with(plumbing) {
+        val url = urlBuilder("/api/admin/invoices/tax-report").apply {
+            addQueryParameter("from_date", fromDate)
+            addQueryParameter("to_date", toDate)
+            addQueryParameter("currency", currency)
+        }.build()
+        request(method = "GET", url = url).decode(TaxReport.serializer())
+    }
+
     suspend fun listPaymentProofs(invoiceId: String): ApiResult<List<PaymentProofSummary>> =
         with(plumbing) {
             request(method = "GET", path = "/api/admin/invoices/$invoiceId/payment-proof")
@@ -192,6 +216,35 @@ class AdminApi internal constructor(private val plumbing: HttpPlumbing) {
                 body = body,
             ).decodeUnit()
         }
+
+    // Replaces the customer's whole destination address (feeds the tax
+    // engine's destination-jurisdiction lookup, docs/design/16-sales-tax.md
+    // Phase 6) -- a null field clears it rather than leaving it as-is,
+    // matching api/admin_users.py::AddressInput exactly.
+    suspend fun updateCustomerAddress(
+        userId: String,
+        addressLine1: String? = null,
+        addressCity: String? = null,
+        addressState: String? = null,
+        addressPostalCode: String? = null,
+        addressCountry: String? = null,
+    ): ApiResult<CustomerDetail> = with(plumbing) {
+        val body = json.encodeToString(
+            CustomerAddressRequest.serializer(),
+            CustomerAddressRequest(
+                address_line1 = addressLine1,
+                address_city = addressCity,
+                address_state = addressState,
+                address_postal_code = addressPostalCode,
+                address_country = addressCountry,
+            ),
+        ).toRequestBody(JSON_MEDIA_TYPE)
+        request(
+            method = "PUT",
+            path = "/api/admin/customers/$userId/address",
+            body = body,
+        ).decode(CustomerDetail.serializer())
+    }
 
     // -- inventory -----------------------------------------------------------
 
@@ -489,6 +542,77 @@ class AdminApi internal constructor(private val plumbing: HttpPlumbing) {
     // HttpPlumbing.decodeBytes's own doc comment.
     suspend fun downloadLogFile(name: String): ApiResult<ByteArray> = with(plumbing) {
         request(method = "GET", path = "/api/admin/logs/files/$name").decodeBytes()
+    }
+
+    // -- tax (docs/design/16-sales-tax.md) --------------------------------------
+
+    // status=pending shows only what needs a human decision; omit for
+    // every classification regardless of review state.
+    suspend fun listTaxClassifications(status: String? = null): ApiResult<List<TaxClassification>> =
+        with(plumbing) {
+            val url = urlBuilder("/api/admin/tax/classifications").apply {
+                status?.let { addQueryParameter("status", it) }
+            }.build()
+            request(method = "GET", url = url).decode(ListSerializer(TaxClassification.serializer()))
+        }
+
+    // `key` (the normalized item key) may contain spaces/punctuation --
+    // always sent as an encoded path segment via addPathSegment, never
+    // interpolated raw, so callers never have to remember to encode it
+    // themselves (same concern as frontend/src/api/tax.ts's own comment).
+    suspend fun confirmTaxClassification(key: String): ApiResult<TaxClassification> = with(plumbing) {
+        val url = urlBuilder("/api/admin/tax/classifications")
+            .addPathSegment(key)
+            .addPathSegment("confirm")
+            .build()
+        request(method = "POST", url = url).decode(TaxClassification.serializer())
+    }
+
+    // Confirming/overriding a tax classification changes financial
+    // records -- the UI must require an explicit confirm step before
+    // calling this, never a single tap.
+    suspend fun overrideTaxClassification(
+        key: String,
+        category: String,
+        taxable: Boolean,
+        htsCode: String? = null,
+    ): ApiResult<TaxClassification> = with(plumbing) {
+        val url = urlBuilder("/api/admin/tax/classifications")
+            .addPathSegment(key)
+            .addPathSegment("override")
+            .build()
+        val body = json.encodeToString(
+            TaxClassificationOverrideRequest.serializer(),
+            TaxClassificationOverrideRequest(category, taxable, htsCode),
+        ).toRequestBody(JSON_MEDIA_TYPE)
+        request(method = "POST", url = url, body = body).decode(TaxClassification.serializer())
+    }
+
+    // Stripe's own recorded tax figures for [fromDate, toDate) -- a
+    // cross-check against build_tax_report's own figures for the same
+    // range, only covering Stripe-processed payments. Best-effort on the
+    // backend: an unconfigured Stripe account or any failure returns
+    // zeros, never a 5xx.
+    suspend fun getStripeReconcile(fromDate: String, toDate: String): ApiResult<StripeTaxReconcile> =
+        with(plumbing) {
+            val url = urlBuilder("/api/admin/tax/stripe-reconcile").apply {
+                addQueryParameter("from_date", fromDate)
+                addQueryParameter("to_date", toDate)
+            }.build()
+            request(method = "GET", url = url).decode(StripeTaxReconcile.serializer())
+        }
+
+    suspend fun listTaxRules(): ApiResult<List<TaxRule>> = with(plumbing) {
+        request(method = "GET", path = "/api/admin/tax/rules").decode(ListSerializer(TaxRule.serializer()))
+    }
+
+    // Requires a government-source citation_url -- the backend rejects
+    // anything else with a 400 (migration 0027_tax_rule_citation); the
+    // caller's UI must validate this is non-blank before ever invoking
+    // this method.
+    suspend fun addTaxRule(input: TaxRuleCreateRequest): ApiResult<TaxRule> = with(plumbing) {
+        val body = json.encodeToString(TaxRuleCreateRequest.serializer(), input).toRequestBody(JSON_MEDIA_TYPE)
+        request(method = "POST", path = "/api/admin/tax/rules", body = body).decode(TaxRule.serializer())
     }
 
     // -- version ---------------------------------------------------------------
