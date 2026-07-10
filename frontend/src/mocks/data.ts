@@ -44,9 +44,17 @@ export interface MockPayment {
   refunds?: MockRefund[];
 }
 
-export interface MockInvoiceDetail extends Invoice {
-  customer_id: string;
+// customer_id/subtotal/tax_amount/needs_review* are all now part of the
+// real Invoice shape (see api/invoices.ts) -- kept optional here so the
+// mock fixtures below don't each have to spell out a zero-tax, not-flagged
+// default; toListShape (mocks/handlers.ts) fills them in.
+export interface MockInvoiceDetail
+  extends Omit<Invoice, "subtotal" | "tax_amount" | "needs_review" | "needs_review_reason"> {
   is_recurring: boolean;
+  subtotal?: string;
+  tax_amount?: string;
+  needs_review?: boolean;
+  needs_review_reason?: string | null;
   line_items: MockInvoiceLineItem[];
   payments: MockPayment[];
 }
@@ -70,6 +78,10 @@ export const invoices: MockInvoiceDetail[] = [
     due_date: "2026-07-15",
     paid_at: null,
     is_recurring: false,
+    // Exercises the "needs tax review" badge + review-first send path in
+    // local/MSW dev without touching a real backend.
+    needs_review: true,
+    needs_review_reason: "1 line item(s) have tax that has not been confirmed yet",
     line_items: [
       { id: "li-1", description: "Design mockups", quantity: "1", unit_price: "300.00", unit: null },
       { id: "li-2", description: "Revisions", quantity: "3", unit_price: "50.00", unit: "revision" },

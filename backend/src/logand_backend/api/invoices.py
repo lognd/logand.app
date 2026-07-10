@@ -45,6 +45,7 @@ from logand_backend.domain.notifications.notify import (
 )
 from logand_backend.domain.payments.currency import quantize_to_currency
 from logand_backend.domain.storage.factory import get_storage_backend
+from logand_backend.errors import InvoiceError
 from logand_backend.logging import get_logger
 
 _log = get_logger(__name__)
@@ -111,6 +112,10 @@ def _invoice_summary(invoice: Invoice) -> dict:
         "due_date": invoice.due_date.isoformat() if invoice.due_date else None,
         "is_recurring": invoice.is_recurring,
         "paid_at": invoice.paid_at.isoformat() if invoice.paid_at else None,
+        # Surfaced so the admin UI can show a "needs tax review" badge and
+        # walk the owner through it before an irreversible send.
+        "needs_review": invoice.needs_review,
+        "needs_review_reason": invoice.needs_review_reason,
     }
 
 
@@ -191,11 +196,29 @@ async def create(
 @router.post("/{invoice_id}/send")
 async def send(
     invoice_id: UUID,
+    acknowledge_review: bool = False,
     _admin: SessionInfo = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, str]:
-    result = await send_invoice(db, invoice_id)
+    """`acknowledge_review=true` is the admin's explicit, informed override
+    of the "tax needs review" guard -- without it, sending an invoice whose
+    tax is flagged unreviewed 409s (NeedsReview) so the owner is walked
+    through reviewing first rather than silently freezing bad tax."""
+    result = await send_invoice(db, invoice_id, acknowledge_review=acknowledge_review)
     if result.is_err:
+        # Surface the invoice's own needs_review_reason (not the generic
+        # variant prose) so the UI can lead with the concrete reason.
+        if result.danger_err is InvoiceError.NeedsReview:
+            flagged = await db.get(Invoice, invoice_id)
+            reason = (
+                flagged.needs_review_reason
+                if flagged is not None and flagged.needs_review_reason
+                else InvoiceError.NeedsReview.value
+            )
+            raise HTTPException(
+                status_code=409,
+                detail={"detail": reason, "code": "InvoiceError.NeedsReview"},
+            )
         raise to_http_exception(result.danger_err)
     invoice = await db.get(Invoice, invoice_id)
     if invoice is not None:
@@ -264,10 +287,12 @@ async def get_tax_report(
     _admin: SessionInfo = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Tax-filing breakdown over [from_date, to_date): sales by category, tax
-    collected by jurisdiction + type, and which jurisdictions you must file
-    for. Also declared before GET /{invoice_id} (see get_stats). See
-    docs/design/16-sales-tax.md."""
+    """Tax-filing breakdown over the INCLUSIVE range [from_date, to_date] --
+    both endpoints are calendar days and the whole to_date day is covered, so
+    filing "Jan 1 to Jan 31" includes everything created on Jan 31 (M1). Gives
+    sales by category, tax collected by jurisdiction + type, and which
+    jurisdictions you must file for. Also declared before GET /{invoice_id}
+    (see get_stats). See docs/design/16-sales-tax.md."""
     from datetime import datetime, time, timezone
 
     report = await build_tax_report(

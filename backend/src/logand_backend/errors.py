@@ -59,6 +59,10 @@ class InvoiceError(ErrorSet):
     InvalidState = "invoice is not in a state that allows this operation"
     AmountMismatch = "client-supplied amount does not match server-computed total"
     PaymentPending = "a payment is still being reviewed for this invoice; please wait"
+    NeedsReview = (
+        "invoice has tax flagged for review; confirm the tax classification or "
+        "acknowledge the review before sending"
+    )
 
 
 class RefundError(ErrorSet):

@@ -234,16 +234,41 @@ async def create_invoice(
 
 
 async def send_invoice(
-    db: AsyncSession, invoice_id: UUID
+    db: AsyncSession, invoice_id: UUID, acknowledge_review: bool = False
 ) -> Result[None, InvoiceError]:
     """draft -> sent. Once sent, line items are frozen (docs/design/04) --
     enforce that here, not just in the API layer, since domain functions
-    are the only thing that should be trusted to hold this invariant."""
+    are the only thing that should be trusted to hold this invariant.
+
+    Sending FREEZES the line items irreversibly, so it must not happen
+    while the invoice's tax is still flagged unreviewed
+    (Invoice.needs_review, set by domain/invoices/tax/apply.py). When the
+    invoice needs review, this refuses with InvoiceError.NeedsReview unless
+    the caller passes acknowledge_review=True -- an explicit, informed
+    override the admin makes after being walked through the consequences,
+    never a silent default. See flag_invoice_needs_review."""
     invoice = await lock_invoice_for_update(db, invoice_id)
     if invoice is None:
         return Err(InvoiceError.NotFound)
     if invoice.status != "draft":
         return Err(InvoiceError.InvalidState)
+    if invoice.needs_review and not acknowledge_review:
+        _log.info(
+            "send blocked: invoice tax needs review and was not acknowledged",
+            extra={
+                "invoice_id": str(invoice_id),
+                "needs_review_reason": invoice.needs_review_reason,
+            },
+        )
+        return Err(InvoiceError.NeedsReview)
+    if invoice.needs_review and acknowledge_review:
+        _log.warning(
+            "send proceeding despite unreviewed tax: admin acknowledged review",
+            extra={
+                "invoice_id": str(invoice_id),
+                "needs_review_reason": invoice.needs_review_reason,
+            },
+        )
     # NOTE: "freezing" line items is enforced by never exposing a line-item
     # mutation path for non-draft invoices in api/invoices.py -- there is no
     # separate frozen flag on InvoiceLineItem to maintain here.

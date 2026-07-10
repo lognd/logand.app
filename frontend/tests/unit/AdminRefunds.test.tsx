@@ -1,5 +1,6 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AdminInvoices } from "../../src/app/routes/admin/Invoices";
@@ -13,12 +14,17 @@ import type { Invoice, InvoiceDetail, InvoiceStats } from "../../src/api/invoice
 
 const paidInvoice: Invoice = {
   id: "inv-1",
+  customer_id: "cust-1",
   status: "paid",
   amount_total: "100.00",
+  subtotal: "100.00",
+  tax_amount: "0.00",
   currency: "usd",
   memo: "widget order",
   due_date: "2026-07-01",
   paid_at: "2026-07-02T00:00:00Z",
+  needs_review: false,
+  needs_review_reason: null,
 };
 
 const paidInvoiceDetail: InvoiceDetail = {
@@ -50,7 +56,11 @@ function renderPage(ui: React.ReactElement) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
-  return render(<QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>);
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter>{ui}</MemoryRouter>
+    </QueryClientProvider>,
+  );
 }
 
 describe("AdminInvoices refund UI (integration)", () => {

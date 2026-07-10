@@ -35,6 +35,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.logand.core.model.InvoicePayment
 import app.logand.core.model.InvoiceSummary
+import app.logand.mobile.ui.theme.AccentOrange
 import app.logand.mobile.ui.theme.AccentRed
 import app.logand.mobile.ui.theme.SpacingMedium
 import app.logand.mobile.ui.theme.SpacingSmall
@@ -99,7 +100,7 @@ fun InvoicesScreen(viewModel: InvoicesViewModel) {
                             isExpanded = uiState.selectedInvoiceId == invoice.id,
                             isDownloadingPdf = uiState.downloadingPdfInvoiceId == invoice.id,
                             onToggleExpand = { viewModel.toggleDetail(invoice.id) },
-                            onSend = { viewModel.sendInvoice(invoice.id) },
+                            onSend = { viewModel.requestSend(invoice) },
                             onVoid = { viewModel.voidInvoice(invoice.id) },
                             onDownloadPdf = {
                                 viewModel.downloadInvoicePdf(invoice.id) { bytes ->
@@ -137,6 +138,114 @@ fun InvoicesScreen(viewModel: InvoicesViewModel) {
             onCreated = { showCreateDialog = false },
         )
     }
+
+    uiState.pendingSend?.let { pending ->
+        SendConfirmationDialog(
+            invoice = pending,
+            isSending = uiState.isSubmitting,
+            errorMessage = uiState.errorMessage,
+            onConfirm = { acknowledgeReview ->
+                viewModel.confirmSend(pending.id, acknowledgeReview)
+            },
+            onDismiss = { viewModel.cancelSend() },
+        )
+    }
+}
+
+// The pre-send confirmation shown for EVERY send -- mirrors the web app's
+// SendConfirmation (Invoices.tsx). Shows the total the customer will be
+// charged and a plain freeze note; for a flagged invoice it leads with the
+// tax-review reason and demotes the send to a de-emphasized "Send anyway"
+// that acknowledges the review, so the phone cannot bypass the guard.
+@Composable
+private fun SendConfirmationDialog(
+    invoice: InvoiceSummary,
+    isSending: Boolean,
+    errorMessage: String?,
+    onConfirm: (acknowledgeReview: Boolean) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Send this invoice?") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(SpacingSmall)) {
+                if (invoice.needs_review) {
+                    NeedsReviewBadge()
+                    Text(
+                        (invoice.needs_review_reason
+                            ?: "Some line items have tax that has not been confirmed yet.") +
+                            " Sending freezes these amounts, so confirm the tax first.",
+                        color = AccentOrange,
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+                Text(
+                    "Total charged: ${invoice.amount_total} ${invoice.currency.uppercase()}",
+                    style = MaterialTheme.typography.bodyLarge,
+                )
+                Text(
+                    "Sending emails the customer and freezes the line items -- this " +
+                        "cannot be undone.",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                errorMessage?.let {
+                    Text(it, color = AccentRed, style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onConfirm(invoice.needs_review) },
+                enabled = !isSending,
+                // De-emphasized (outlined) when flagged so "Send anyway" reads
+                // as the secondary path behind reviewing the tax first.
+                colors = if (invoice.needs_review) {
+                    ButtonDefaults.outlinedButtonColors()
+                } else {
+                    ButtonDefaults.buttonColors()
+                },
+                modifier = Modifier.semantics {
+                    contentDescription = if (invoice.needs_review) {
+                        "send invoice ${invoice.id} anyway"
+                    } else {
+                        "confirm send invoice ${invoice.id}"
+                    }
+                },
+            ) {
+                Text(
+                    if (isSending) {
+                        "Sending..."
+                    } else if (invoice.needs_review) {
+                        "Send anyway"
+                    } else {
+                        "Confirm and send"
+                    },
+                )
+            }
+        },
+        dismissButton = {
+            Button(onClick = onDismiss) {
+                Text(if (invoice.needs_review) "Review tax first" else "Cancel")
+            }
+        },
+    )
+}
+
+// The amber "Needs tax review" badge -- shown on a flagged invoice row and
+// led with in the send confirmation. AccentOrange is the design system's
+// warning color (theme/Color.kt).
+@Composable
+private fun NeedsReviewBadge() {
+    Text(
+        "Needs tax review",
+        color = AccentOrange,
+        style = MaterialTheme.typography.labelMedium,
+        modifier = Modifier.semantics {
+            contentDescription = "needs tax review"
+        },
+    )
 }
 
 @Composable
@@ -163,6 +272,9 @@ private fun InvoiceRow(
                     "${invoice.status} -- ${invoice.amount_total} ${invoice.currency.uppercase()}",
                     style = MaterialTheme.typography.bodyLarge,
                 )
+                if (invoice.needs_review) {
+                    NeedsReviewBadge()
+                }
                 Text(
                     listOfNotNull(
                         invoice.due_date?.let { "due $it" },

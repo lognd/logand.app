@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError } from "../../../api/client";
 import { formatMajorUnits, stepFor } from "../../../lib/currency";
 import { getBomCostBreakdown, listBoms } from "../../../api/bom";
-import { listCustomers } from "../../../api/customers";
+import { getCustomerDetail, listCustomers } from "../../../api/customers";
 import {
   type CreateInvoiceLineItem,
   type Invoice,
@@ -942,8 +943,185 @@ function CreateInvoiceForm({ onCreated }: { onCreated: () => void }) {
   );
 }
 
+// Where an admin goes to confirm the flagged tax classifications before an
+// irreversible send -- see App.tsx's /admin/tax/classifications route
+// (AdminTaxClassifications).
+const TAX_REVIEW_ROUTE = "/admin/tax/classifications";
+
+// The amber "needs tax review" badge shown on any flagged invoice in the
+// list and led with in the send confirmation. accent-orange is the design
+// system's warning color (tokens.css) -- never a hardcoded hex.
+function NeedsReviewBadge() {
+  return (
+    <span
+      role="status"
+      className="rounded bg-accent-orange/10 px-2 py-0.5 text-sm text-accent-orange"
+    >
+      Needs tax review
+    </span>
+  );
+}
+
+// The pre-send confirmation shown for EVERY send (docs "walk the person
+// through"): who it's going to, the subtotal/tax/total the customer will
+// be charged, and a plain note that sending freezes the line items and
+// emails them. For a flagged invoice it leads with the review reason and
+// makes "Review tax first" the primary action, demoting the send to a
+// de-emphasized "Send anyway" that acknowledges the review.
+function SendConfirmation({
+  invoice,
+  isSending,
+  sendError,
+  onConfirm,
+  onReviewTax,
+  onCancel,
+}: {
+  invoice: Invoice;
+  isSending: boolean;
+  sendError: unknown;
+  onConfirm: (acknowledgeReview: boolean) => void;
+  onReviewTax: () => void;
+  onCancel: () => void;
+}) {
+  // Resolve the real recipient (email + account state) for this invoice --
+  // getCustomerDetail always resolves by id, unlike the capped list search,
+  // so the owner reliably sees exactly who is about to be charged.
+  const recipientQuery = useQuery({
+    queryKey: ["admin", "customers", invoice.customer_id, "detail"],
+    queryFn: () => getCustomerDetail(invoice.customer_id),
+  });
+  const recipient = recipientQuery.data;
+  // "contact" = admin invoiced an email with no account; "unverified" =
+  // registered but has not proven inbox control (docs/design/17). Either
+  // way they can't see/pay online yet and get a claim link.
+  const noAccountYet =
+    recipient?.account_state === "contact" ||
+    recipient?.account_state === "unverified";
+  const currency = invoice.currency.toUpperCase();
+
+  // A NeedsReview 409 can still fire if the flag changed between list load
+  // and send -- surface its concrete reason, never a generic error.
+  const needsReviewError =
+    sendError instanceof ApiError && sendError.code === "InvoiceError.NeedsReview";
+  const genericError = sendError instanceof Error && !needsReviewError;
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="send-confirm-title"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+    >
+      <div className="flex w-full max-w-lg flex-col gap-4 rounded border border-border bg-bg-primary p-6">
+        <h2 id="send-confirm-title" className="text-xl text-fg-primary">
+          Send this invoice?
+        </h2>
+
+        {invoice.needs_review && (
+          <div className="flex flex-col gap-2 rounded border border-accent-orange/40 bg-accent-orange/10 p-3">
+            <NeedsReviewBadge />
+            <p className="text-base text-fg-primary">
+              {invoice.needs_review_reason ??
+                "Some line items have tax that has not been confirmed yet."}{" "}
+              Sending freezes these amounts, so it is best to confirm the tax
+              classification first.
+            </p>
+          </div>
+        )}
+
+        <dl className="flex flex-col gap-1 text-base text-fg-primary">
+          <div className="flex justify-between gap-4">
+            <dt className="text-fg-muted">Going to</dt>
+            <dd className="text-right">
+              {recipientQuery.isLoading
+                ? "Loading..."
+                : (recipient?.email ?? "unknown recipient")}
+              {noAccountYet && (
+                <span className="block text-sm text-fg-muted">
+                  No account yet -- they will get a claim link to view and pay it.
+                </span>
+              )}
+            </dd>
+          </div>
+          <div className="flex justify-between gap-4">
+            <dt className="text-fg-muted">Subtotal</dt>
+            <dd>
+              {invoice.subtotal} {currency}
+            </dd>
+          </div>
+          <div className="flex justify-between gap-4">
+            <dt className="text-fg-muted">Tax</dt>
+            <dd>
+              {invoice.tax_amount} {currency}
+            </dd>
+          </div>
+          <div className="flex justify-between gap-4 border-t border-border pt-1 text-lg">
+            <dt>Total charged</dt>
+            <dd>
+              {invoice.amount_total} {currency}
+            </dd>
+          </div>
+        </dl>
+
+        <p className="text-sm text-fg-muted">
+          Sending emails the customer and freezes the line items -- this cannot
+          be undone.
+        </p>
+
+        {needsReviewError && (
+          <p role="alert" className="text-base text-accent-orange">
+            {(sendError as ApiError).message}
+          </p>
+        )}
+        {genericError && (
+          <p role="alert" className="text-base text-accent-red">
+            Could not send the invoice. Please try again.
+          </p>
+        )}
+
+        <div className="flex flex-wrap gap-2">
+          {invoice.needs_review ? (
+            <>
+              <button
+                type="button"
+                onClick={onReviewTax}
+                className={`${BUTTON_CLASS} border-accent-orange text-accent-orange`}
+              >
+                Review tax first
+              </button>
+              <button
+                type="button"
+                disabled={isSending}
+                onClick={() => onConfirm(true)}
+                aria-label={`Send invoice ${invoice.id} anyway`}
+                className="min-h-11 rounded px-3 py-2 text-sm text-fg-muted underline underline-offset-2 hover:text-fg-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-orange disabled:opacity-50"
+              >
+                {isSending ? "Sending..." : "Send anyway"}
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              disabled={isSending}
+              onClick={() => onConfirm(false)}
+              aria-label={`Confirm send invoice ${invoice.id}`}
+              className={BUTTON_CLASS}
+            >
+              {isSending ? "Sending..." : "Confirm and send"}
+            </button>
+          )}
+          <button type="button" onClick={onCancel} className={BUTTON_CLASS}>
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function AdminInvoices() {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const {
     data: invoices,
     isLoading,
@@ -953,9 +1131,26 @@ export function AdminInvoices() {
     queryFn: listAdminInvoices,
   });
 
+  // The invoice whose send is awaiting explicit confirmation -- the Send
+  // button opens this instead of firing immediately, so the owner always
+  // sees exactly what is about to happen before the irreversible send.
+  const [confirming, setConfirming] = useState<Invoice | null>(null);
+
   const invalidate = () =>
     queryClient.invalidateQueries({ queryKey: ["admin", "invoices"] });
-  const sendMutation = useMutation({ mutationFn: sendInvoice, onSuccess: invalidate });
+  const sendMutation = useMutation({
+    mutationFn: ({
+      id,
+      acknowledgeReview,
+    }: {
+      id: string;
+      acknowledgeReview?: boolean;
+    }) => sendInvoice(id, acknowledgeReview),
+    onSuccess: () => {
+      invalidate();
+      setConfirming(null);
+    },
+  });
   const voidMutation = useMutation({ mutationFn: voidInvoice, onSuccess: invalidate });
   const pdfMutation = useMutation({
     mutationFn: (id: string) => openInvoicePdf(`/api/admin/invoices/${id}/pdf`),
@@ -990,7 +1185,12 @@ export function AdminInvoices() {
             <tbody>
               {invoices.map((invoice) => (
                 <tr key={invoice.id} className="border-b border-border">
-                  <td className="p-2">{invoice.status}</td>
+                  <td className="p-2">
+                    <div className="flex flex-col gap-1">
+                      <span>{invoice.status}</span>
+                      {invoice.needs_review && <NeedsReviewBadge />}
+                    </div>
+                  </td>
                   <td className="p-2">
                     {invoice.amount_total} {invoice.currency.toUpperCase()}
                   </td>
@@ -1005,7 +1205,12 @@ export function AdminInvoices() {
                     <button
                       type="button"
                       disabled={invoice.status !== "draft"}
-                      onClick={() => sendMutation.mutate(invoice.id)}
+                      onClick={() => {
+                        // Open the confirmation instead of sending outright --
+                        // the owner confirms after seeing recipient + totals.
+                        sendMutation.reset();
+                        setConfirming(invoice);
+                      }}
                       aria-label={`Send invoice ${invoice.id}`}
                       className={BUTTON_CLASS}
                     >
@@ -1056,6 +1261,21 @@ export function AdminInvoices() {
             </tbody>
           </table>
         </div>
+      )}
+      {confirming && (
+        <SendConfirmation
+          invoice={confirming}
+          isSending={sendMutation.isPending}
+          sendError={sendMutation.isError ? sendMutation.error : null}
+          onConfirm={(acknowledgeReview) =>
+            sendMutation.mutate({ id: confirming.id, acknowledgeReview })
+          }
+          onReviewTax={() => navigate(TAX_REVIEW_ROUTE)}
+          onCancel={() => {
+            sendMutation.reset();
+            setConfirming(null);
+          }}
+        />
       )}
     </main>
   );

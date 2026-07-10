@@ -37,6 +37,9 @@ _STATUS_MAP: dict[ErrorSet, int] = {
     InvoiceError.InvalidState: 409,
     InvoiceError.AmountMismatch: 422,
     InvoiceError.PaymentPending: 409,
+    # 409 -- a state conflict (tax not yet reviewed), overridable by an
+    # explicit acknowledge_review from the admin. See domain send_invoice.
+    InvoiceError.NeedsReview: 409,
     RefundError.PaymentNotFound: 404,
     RefundError.PaymentNotRefundable: 409,
     RefundError.AmountExceedsBalance: 422,

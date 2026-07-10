@@ -1,5 +1,6 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AdminInvoices } from "../../src/app/routes/admin/Invoices";
@@ -12,12 +13,25 @@ import type { Invoice } from "../../src/api/invoices";
 
 const draftInvoice: Invoice = {
   id: "inv-1",
+  customer_id: "cust-1",
   status: "draft",
   amount_total: "100.00",
+  subtotal: "100.00",
+  tax_amount: "0.00",
   currency: "usd",
   memo: "first invoice",
   due_date: "2026-07-01",
   paid_at: null,
+  needs_review: false,
+  needs_review_reason: null,
+};
+
+// A minimal getCustomerDetail response for the pre-send confirmation's
+// recipient lookup (only email + account_state are read).
+const recipientDetail = {
+  id: "cust-1",
+  email: "customer@example.com",
+  account_state: "active",
 };
 
 function jsonResponse(body: unknown): Response {
@@ -33,7 +47,9 @@ function renderPage() {
   });
   return render(
     <QueryClientProvider client={queryClient}>
-      <AdminInvoices />
+      <MemoryRouter>
+        <AdminInvoices />
+      </MemoryRouter>
     </QueryClientProvider>,
   );
 }
@@ -65,31 +81,130 @@ describe("AdminInvoices (integration)", () => {
     );
   });
 
-  it("clicking Send calls POST /send through the real api module and refreshes the list", async () => {
-    const sentInvoice: Invoice = { ...draftInvoice, status: "sent" };
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(jsonResponse([draftInvoice]))
-      .mockResolvedValueOnce(jsonResponse(sentInvoice))
-      .mockResolvedValueOnce(jsonResponse([sentInvoice]));
+  it("Send opens a confirmation showing recipient and totals BEFORE any send call", async () => {
+    const fetchMock = vi.fn((url: string) => {
+      if (url.startsWith("/api/admin/customers/")) {
+        return Promise.resolve(jsonResponse(recipientDetail));
+      }
+      return Promise.resolve(jsonResponse([draftInvoice]));
+    });
     vi.stubGlobal("fetch", fetchMock);
     document.cookie = "csrf_token=test-csrf";
 
     const user = userEvent.setup();
     renderPage();
 
-    const sendButton = await screen.findByRole("button", {
-      name: `Send invoice ${draftInvoice.id}`,
+    await user.click(
+      await screen.findByRole("button", { name: `Send invoice ${draftInvoice.id}` }),
+    );
+
+    // The confirmation dialog is shown with the recipient + total, and NO
+    // send request has fired yet.
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    expect(await screen.findByText("customer@example.com")).toBeInTheDocument();
+    expect(screen.getByText(/Total charged/)).toBeInTheDocument();
+    expect(
+      fetchMock.mock.calls.some(([u]) => String(u).endsWith("/send")),
+    ).toBe(false);
+  });
+
+  it("confirming a normal send calls POST /send (no acknowledge) and refreshes", async () => {
+    const sentInvoice: Invoice = { ...draftInvoice, status: "sent" };
+    let sent = false;
+    const fetchMock = vi.fn((url: string) => {
+      if (url.startsWith("/api/admin/customers/")) {
+        return Promise.resolve(jsonResponse(recipientDetail));
+      }
+      if (String(url).includes("/send")) {
+        sent = true;
+        return Promise.resolve(jsonResponse(sentInvoice));
+      }
+      return Promise.resolve(jsonResponse(sent ? [sentInvoice] : [draftInvoice]));
     });
-    await user.click(sendButton);
+    vi.stubGlobal("fetch", fetchMock);
+    document.cookie = "csrf_token=test-csrf";
+
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(
+      await screen.findByRole("button", { name: `Send invoice ${draftInvoice.id}` }),
+    );
+    await user.click(
+      await screen.findByRole("button", {
+        name: `Confirm send invoice ${draftInvoice.id}`,
+      }),
+    );
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith(
+      const sendCall = fetchMock.mock.calls.find(([u]) =>
+        String(u).includes("/send"),
+      );
+      expect(sendCall).toBeDefined();
+      // A clean invoice sends without the acknowledge_review override.
+      expect(String(sendCall![0])).toBe(
         `/api/admin/invoices/${draftInvoice.id}/send`,
-        expect.objectContaining({ method: "POST" }),
       );
     });
     expect(await screen.findByText("sent")).toBeInTheDocument();
+  });
+
+  it("a flagged invoice shows the review-first path and Send anyway passes acknowledge_review", async () => {
+    const flaggedInvoice: Invoice = {
+      ...draftInvoice,
+      needs_review: true,
+      needs_review_reason: "1 line item(s) have tax that has not been confirmed yet",
+    };
+    const sentInvoice: Invoice = { ...flaggedInvoice, status: "sent" };
+    let sent = false;
+    const fetchMock = vi.fn((url: string) => {
+      if (url.startsWith("/api/admin/customers/")) {
+        return Promise.resolve(jsonResponse(recipientDetail));
+      }
+      if (String(url).includes("/send")) {
+        sent = true;
+        return Promise.resolve(jsonResponse(sentInvoice));
+      }
+      return Promise.resolve(jsonResponse(sent ? [sentInvoice] : [flaggedInvoice]));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    document.cookie = "csrf_token=test-csrf";
+
+    const user = userEvent.setup();
+    renderPage();
+
+    // The badge is visible on the flagged row in the list.
+    expect(await screen.findAllByText("Needs tax review")).not.toHaveLength(0);
+
+    await user.click(
+      await screen.findByRole("button", { name: `Send invoice ${flaggedInvoice.id}` }),
+    );
+
+    // The confirmation leads with the reason and offers a "Review tax
+    // first" primary plus a de-emphasized "Send anyway".
+    expect(
+      await screen.findByText(/tax that has not been confirmed yet/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Review tax first" }),
+    ).toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole("button", {
+        name: `Send invoice ${flaggedInvoice.id} anyway`,
+      }),
+    );
+
+    await waitFor(() => {
+      const sendCall = fetchMock.mock.calls.find(([u]) =>
+        String(u).includes("/send"),
+      );
+      expect(sendCall).toBeDefined();
+      // "Send anyway" acknowledges the review via the query param.
+      expect(String(sendCall![0])).toBe(
+        `/api/admin/invoices/${flaggedInvoice.id}/send?acknowledge_review=true`,
+      );
+    });
   });
 
   it("creating an invoice sends customer_id/memo as query params and a bare line-items array body", async () => {

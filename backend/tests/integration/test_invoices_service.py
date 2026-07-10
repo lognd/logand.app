@@ -158,6 +158,55 @@ async def test_send_invoice_not_found(db_session) -> None:
     assert result.danger_err == InvoiceError.NotFound
 
 
+async def test_send_invoice_blocked_when_needs_review(db_session, make_user) -> None:
+    """An unreviewed-tax invoice must not freeze on an accidental send."""
+    customer = await make_user(role="customer")
+    invoice_id = (await create_invoice(db_session, customer.id, [])).danger_ok
+    invoice = await db_session.get(Invoice, invoice_id)
+    invoice.needs_review = True
+    invoice.needs_review_reason = "1 line item(s) have unconfirmed tax"
+    await db_session.flush()
+
+    result = await send_invoice(db_session, invoice_id)
+
+    assert result.is_err
+    assert result.danger_err == InvoiceError.NeedsReview
+    await db_session.refresh(invoice)
+    assert invoice.status == "draft"
+
+
+async def test_send_invoice_needs_review_override_succeeds(
+    db_session, make_user
+) -> None:
+    """An explicit acknowledge_review lets an informed admin send anyway."""
+    customer = await make_user(role="customer")
+    invoice_id = (await create_invoice(db_session, customer.id, [])).danger_ok
+    invoice = await db_session.get(Invoice, invoice_id)
+    invoice.needs_review = True
+    invoice.needs_review_reason = "1 line item(s) have unconfirmed tax"
+    await db_session.flush()
+
+    result = await send_invoice(db_session, invoice_id, acknowledge_review=True)
+
+    assert result.is_ok
+    await db_session.refresh(invoice)
+    assert invoice.status == "sent"
+
+
+async def test_send_invoice_clean_unaffected_by_acknowledge_flag(
+    db_session, make_user
+) -> None:
+    """A non-flagged invoice sends normally regardless of the flag."""
+    customer = await make_user(role="customer")
+    invoice_id = (await create_invoice(db_session, customer.id, [])).danger_ok
+
+    result = await send_invoice(db_session, invoice_id)
+
+    assert result.is_ok
+    invoice = await db_session.get(Invoice, invoice_id)
+    assert invoice.status == "sent"
+
+
 async def test_void_invoice_from_sent(db_session, make_user) -> None:
     customer = await make_user(role="customer")
     invoice_id = (await create_invoice(db_session, customer.id, [])).danger_ok

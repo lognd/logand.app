@@ -111,8 +111,20 @@ class AdminApi internal constructor(private val plumbing: HttpPlumbing) {
         request(method = "POST", url = url, body = body).decode(CreatedId.serializer())
     }
 
-    suspend fun sendInvoice(invoiceId: String): ApiResult<Unit> = with(plumbing) {
-        request(method = "POST", path = "/api/admin/invoices/$invoiceId/send").decodeUnit()
+    // `acknowledgeReview` is the admin's explicit, informed override of the
+    // backend's "tax needs review" guard -- when true it adds
+    // ?acknowledge_review=true so a flagged invoice sends anyway. Omitted
+    // (false) for a normal send, which 409s (InvoiceError.NeedsReview) on a
+    // flagged invoice so the admin is walked through reviewing first. See
+    // api/invoices.py's send route and domain send_invoice.
+    suspend fun sendInvoice(
+        invoiceId: String,
+        acknowledgeReview: Boolean = false,
+    ): ApiResult<Unit> = with(plumbing) {
+        val url = urlBuilder("/api/admin/invoices/$invoiceId/send").apply {
+            if (acknowledgeReview) addQueryParameter("acknowledge_review", "true")
+        }.build()
+        request(method = "POST", url = url).decodeUnit()
     }
 
     suspend fun voidInvoice(invoiceId: String): ApiResult<Unit> = with(plumbing) {

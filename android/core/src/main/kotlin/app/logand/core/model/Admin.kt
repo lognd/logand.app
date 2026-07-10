@@ -60,6 +60,13 @@ data class InvoiceSummary(
     val due_date: String?,
     val is_recurring: Boolean,
     val paid_at: String?,
+    // True when a taxable line's tax classification has not been human-
+    // confirmed (backend Invoice.needs_review, set by tax/apply.py).
+    // Sending freezes the line items irreversibly, so the UI badges this
+    // and guards the send. Defaulted so an older backend payload without
+    // the field still decodes.
+    val needs_review: Boolean = false,
+    val needs_review_reason: String? = null,
 )
 
 // GET /api/admin/invoices/{id} -- summary fields plus line_items/payments.
@@ -74,6 +81,8 @@ data class InvoiceDetail(
     val due_date: String?,
     val is_recurring: Boolean,
     val paid_at: String?,
+    val needs_review: Boolean = false,
+    val needs_review_reason: String? = null,
     val line_items: List<InvoiceLineItem>,
     val payments: List<InvoicePayment>,
 )

@@ -179,8 +179,25 @@ function requireRole(role: Exclude<Role, null>): HttpResponse<DefaultBodyType> |
 }
 
 function toListShape(inv: MockInvoiceDetail): Invoice {
-  const { id, status, amount_total, currency, memo, due_date, paid_at } = inv;
-  return { id, status, amount_total, currency, memo, due_date, paid_at };
+  const { id, customer_id, status, amount_total, currency, memo, due_date, paid_at } =
+    inv;
+  // Mock fixtures carry no tax, so subtotal defaults to the full total and
+  // tax_amount to zero; needs_review defaults to not-flagged unless a
+  // fixture opts in (see mocks/data.ts).
+  return {
+    id,
+    customer_id,
+    status,
+    amount_total,
+    subtotal: inv.subtotal ?? amount_total,
+    tax_amount: inv.tax_amount ?? "0.00",
+    currency,
+    memo,
+    due_date,
+    paid_at,
+    needs_review: inv.needs_review ?? false,
+    needs_review_reason: inv.needs_review_reason ?? null,
+  };
 }
 
 const INVOICE_STATUSES = ["draft", "sent", "paid", "overdue", "void", "refunded"] as const;

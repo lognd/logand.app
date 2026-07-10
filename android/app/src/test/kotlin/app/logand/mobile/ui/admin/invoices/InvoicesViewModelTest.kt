@@ -126,17 +126,98 @@ class InvoicesViewModelTest {
         assertTrue(!recorded.path!!.contains("customer_id="))
     }
 
+    private fun invoiceSummary(
+        id: String = "inv-1",
+        needsReview: Boolean = false,
+        reason: String? = null,
+    ) = app.logand.core.model.InvoiceSummary(
+        id = id,
+        customer_id = "cust-1",
+        status = "draft",
+        amount_total = "100.00",
+        currency = "usd",
+        memo = null,
+        due_date = null,
+        is_recurring = false,
+        paid_at = null,
+        needs_review = needsReview,
+        needs_review_reason = reason,
+    )
+
     @Test
-    fun `sendInvoice reloads the list on success`() = runBlocking {
-        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"status":"ok"}"""))
-        server.enqueue(MockResponse().setResponseCode(200).setBody("[]"))
+    fun `requestSend stages the confirmation without any network call`() = runBlocking {
+        viewModel.requestSend(invoiceSummary())
 
-        viewModel.sendInvoice("inv-1")
+        assertEquals("inv-1", viewModel.uiState.value.pendingSend?.id)
+        assertEquals(0, server.requestCount)
+    }
 
-        val first = server.takeRequest(2, java.util.concurrent.TimeUnit.SECONDS)
-        val second = server.takeRequest(2, java.util.concurrent.TimeUnit.SECONDS)
-        assertEquals("POST", first?.method)
-        assertEquals("GET", second?.method)
+    @Test
+    fun `confirmSend of a clean invoice sends without acknowledge_review and reloads`() =
+        runBlocking {
+            server.enqueue(MockResponse().setResponseCode(200).setBody("""{"status":"ok"}"""))
+            server.enqueue(MockResponse().setResponseCode(200).setBody("[]"))
+
+            viewModel.confirmSend("inv-1", acknowledgeReview = false)
+
+            val first = server.takeRequest(2, java.util.concurrent.TimeUnit.SECONDS)
+            val second = server.takeRequest(2, java.util.concurrent.TimeUnit.SECONDS)
+            assertEquals("POST", first?.method)
+            assertTrue(!first!!.path!!.contains("acknowledge_review"))
+            assertEquals("GET", second?.method)
+            awaitState { it.pendingSend == null && !it.isSubmitting }
+        }
+
+    @Test
+    fun `confirmSend with acknowledgeReview adds the acknowledge_review query param`() =
+        runBlocking {
+            server.enqueue(MockResponse().setResponseCode(200).setBody("""{"status":"ok"}"""))
+            server.enqueue(MockResponse().setResponseCode(200).setBody("[]"))
+
+            viewModel.confirmSend("inv-1", acknowledgeReview = true)
+
+            val first = server.takeRequest(2, java.util.concurrent.TimeUnit.SECONDS)
+            assertEquals("POST", first?.method)
+            assertTrue(first!!.path!!.contains("acknowledge_review=true"))
+        }
+
+    @Test
+    fun `confirmSend surfaces a NeedsReview 409 reason and keeps the dialog open`() = runBlocking {
+        viewModel.requestSend(invoiceSummary(needsReview = true, reason = "tax not confirmed"))
+        server.enqueue(
+            MockResponse().setResponseCode(409).setBody(
+                """{"detail":{"detail":"1 line item(s) have unconfirmed tax",""" +
+                    """"code":"InvoiceError.NeedsReview"}}""",
+            ),
+        )
+
+        viewModel.confirmSend("inv-1", acknowledgeReview = false)
+        awaitState { !it.isSubmitting }
+
+        assertEquals(
+            "1 line item(s) have unconfirmed tax",
+            viewModel.uiState.value.errorMessage,
+        )
+        // Dialog stays open so the admin can review or explicitly send anyway.
+        assertEquals("inv-1", viewModel.uiState.value.pendingSend?.id)
+    }
+
+    @Test
+    fun `load decodes the needs_review flag on a summary`() = runBlocking {
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """[{"id":"inv-1","customer_id":"cust-1","status":"draft",""" +
+                    """"amount_total":"100.00","currency":"usd","memo":null,""" +
+                    """"due_date":null,"is_recurring":false,"paid_at":null,""" +
+                    """"needs_review":true,"needs_review_reason":"tax not confirmed"}]"""
+            )
+        )
+
+        viewModel.load()
+        awaitState { !it.isLoading }
+
+        assertTrue(viewModel.uiState.value.invoices[0].needs_review)
+        assertEquals("tax not confirmed", viewModel.uiState.value.invoices[0].needs_review_reason)
     }
 
     @Test

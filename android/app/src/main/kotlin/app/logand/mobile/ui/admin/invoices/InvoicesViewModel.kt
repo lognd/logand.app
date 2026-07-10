@@ -73,6 +73,11 @@ data class InvoicesUiState(
     // the web app's pdfMutation.variables === invoice.id check.
     val downloadingPdfInvoiceId: String? = null,
     val downloadingProofId: String? = null,
+    // The invoice whose send is awaiting explicit confirmation -- the Send
+    // action stages this instead of firing immediately, so the admin always
+    // sees the total (and, if flagged, the tax-review reason) and cannot
+    // bypass the guard the phone must mirror. Null when no dialog is open.
+    val pendingSend: InvoiceSummary? = null,
 )
 
 // Drives the admin Invoices screen: list/create/send/void invoices,
@@ -192,12 +197,35 @@ class InvoicesViewModel(private val apiClient: () -> ApiClient) : ViewModel() {
         }
     }
 
-    fun sendInvoice(invoiceId: String) {
+    // Stages the pre-send confirmation instead of sending outright -- the
+    // dialog shows the total and (if flagged) the tax-review reason before
+    // the irreversible send.
+    fun requestSend(invoice: InvoiceSummary) {
+        _uiState.update { it.copy(pendingSend = invoice, errorMessage = null) }
+    }
+
+    fun cancelSend() {
+        _uiState.update { it.copy(pendingSend = null) }
+    }
+
+    // `acknowledgeReview` is the admin's explicit override of the tax-review
+    // guard, passed through to the backend as ?acknowledge_review=true (see
+    // AdminApi.sendInvoice). A NeedsReview 409 keeps the dialog open with
+    // the backend's concrete reason rather than silently dismissing.
+    fun confirmSend(invoiceId: String, acknowledgeReview: Boolean = false) {
+        _uiState.update { it.copy(isSubmitting = true, errorMessage = null) }
         viewModelScope.launch {
-            when (val result = apiClient().admin.sendInvoice(invoiceId)) {
-                is ApiResult.Success -> load()
-                is ApiResult.HttpError -> _uiState.update { it.copy(errorMessage = result.message) }
+            when (val result = apiClient().admin.sendInvoice(invoiceId, acknowledgeReview)) {
+                is ApiResult.Success -> {
+                    _uiState.update { it.copy(isSubmitting = false, pendingSend = null) }
+                    load()
+                }
+                is ApiResult.HttpError -> _uiState.update { it.copy(
+                    isSubmitting = false,
+                    errorMessage = result.message,
+                ) }
                 is ApiResult.NetworkError -> _uiState.update { it.copy(
+                    isSubmitting = false,
                     errorMessage = "Could not reach the server. Check your connection.",
                 ) }
             }

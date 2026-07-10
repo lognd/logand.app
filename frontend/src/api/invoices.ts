@@ -29,6 +29,10 @@ export interface CreateInvoiceLineItem {
 // backend without anyone having noticed yet.
 export interface Invoice {
   id: string;
+  // Who this invoice bills -- used by the admin list to resolve the
+  // recipient's email/account-state (via listCustomers) for the pre-send
+  // confirmation, so the owner sees exactly who is about to be charged.
+  customer_id: string;
   // "refunded" added alongside admin refund support (see
   // domain/invoices/refunds.py::refund_payment) -- set only once total
   // refunds across every payment on the invoice cover the full
@@ -36,6 +40,12 @@ export interface Invoice {
   // invoice leaves the invoice "paid".
   status: "draft" | "sent" | "paid" | "overdue" | "void" | "refunded";
   amount_total: string;
+  // subtotal (amount_total minus tax) and tax_amount, both currency-
+  // quantized decimal strings from _invoice_summary -- surfaced so the
+  // pre-send confirmation can show the subtotal + tax breakdown + total
+  // the customer will actually be charged.
+  subtotal: string;
+  tax_amount: string;
   currency: string;
   memo: string | null;
   due_date: string | null;
@@ -43,6 +53,15 @@ export interface Invoice {
   // db/models/invoices.py::Invoice.paid_at's own doc comment) -- null
   // for anything not yet paid.
   paid_at: string | null;
+  // True when a taxable line's tax classification has not been
+  // human-confirmed (set by domain/invoices/tax/apply.py). Sending
+  // FREEZES the line items irreversibly, so the admin UI leads with this
+  // and blocks an accidental send of unreviewed tax -- see sendInvoice's
+  // acknowledgeReview override.
+  needs_review: boolean;
+  // Plain-language reason for the flag (e.g. "1 line item(s) have tax that
+  // has not been confirmed yet"); null when needs_review is false.
+  needs_review_reason: string | null;
 }
 
 // One (partial or full) refund issued against a payment -- matches
@@ -177,8 +196,15 @@ export async function openInvoicePdf(path: string): Promise<void> {
   window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
-export function sendInvoice(id: string): Promise<Invoice> {
-  return apiPost<Invoice>(`/api/admin/invoices/${id}/send`);
+// `acknowledgeReview` is the admin's explicit, informed override of the
+// backend's "tax needs review" guard -- when true it adds
+// ?acknowledge_review=true so a flagged invoice sends anyway (see
+// api/invoices.py's send route and domain send_invoice). Omitted/false for
+// a normal send, which 409s (InvoiceError.NeedsReview) on a flagged
+// invoice so the owner is walked through reviewing first.
+export function sendInvoice(id: string, acknowledgeReview?: boolean): Promise<Invoice> {
+  const query = acknowledgeReview ? "?acknowledge_review=true" : "";
+  return apiPost<Invoice>(`/api/admin/invoices/${id}/send${query}`);
 }
 
 export function voidInvoice(id: string): Promise<Invoice> {
