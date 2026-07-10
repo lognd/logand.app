@@ -16,6 +16,18 @@ import { BUTTON_CLASS, INPUT_CLASS, LABEL_CLASS } from "../../../styles/a11y";
 // 401 from something in front of the app).
 const GENERIC_LOGIN_ERROR = "Login failed. Check your email and password.";
 
+// docs/design/16: unlike InvalidCredentials, EmailNotVerified is safe to
+// disclose distinctly -- reaching it already requires knowing the correct
+// password, so it does not participate in login's account-existence
+// oracle (see backend/src/logand_backend/errors.py's own comment on
+// AuthError.EmailNotVerified). Matched on the stable `code`, never on
+// message prose.
+const EMAIL_NOT_VERIFIED_CODE = "AuthError.EmailNotVerified";
+
+function isEmailNotVerified(error: unknown): boolean {
+  return error instanceof ApiError && error.code === EMAIL_NOT_VERIFIED_CODE;
+}
+
 function loginErrorMessage(error: unknown): string {
   if (error instanceof RateLimitedError) {
     return `Too many attempts. Try again at ${formatRetryAt(error.retryAfterSeconds)}.`;
@@ -93,6 +105,17 @@ export function Login() {
         {mutation.isError && (
           <p role="alert" className="text-base text-accent-red">
             {loginErrorMessage(mutation.error)}
+            {isEmailNotVerified(mutation.error) && (
+              <>
+                {" "}
+                <a
+                  href={`/verify-email?email=${encodeURIComponent(email)}`}
+                  className="text-accent-aqua underline underline-offset-2"
+                >
+                  Resend verification email
+                </a>
+              </>
+            )}
           </p>
         )}
       </form>

@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "react-router-dom";
+import { useMutation } from "@tanstack/react-query";
 import { register } from "../../../api/auth";
+import { RateLimitedError } from "../../../api/client";
+import { formatRetryAt } from "../../../lib/time";
 import { BUTTON_CLASS, INPUT_CLASS, LABEL_CLASS } from "../../../styles/a11y";
 
 // Mirrors backend/src/logand_backend/api/auth.py's RegisterRequest password
@@ -15,19 +16,18 @@ const MIN_PASSWORD_LENGTH = 8;
 // role field here, by design (see docs/design/02 and the backend's
 // register() domain function: role is hardcoded server-side, never taken
 // from the request).
+//
+// docs/design/16: registration no longer logs the visitor in -- POST
+// /api/auth/register now returns 202 and mints a "verify" token emailed to
+// the address, and the resulting account cannot log in until that link is
+// clicked (email_verified_at IS NULL blocks login with a distinct error,
+// see Login.tsx). There is no session to invalidate/redirect on here any
+// more; success just means "check your email."
 export function Register() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const navigate = useNavigate();
-  const queryClient = useQueryClient();
   const mutation = useMutation({
     mutationFn: () => register(email, password),
-    onSuccess: async () => {
-      // Registration logs the user in immediately, same as login -- see
-      // Login.tsx's identical post-success handling.
-      await queryClient.invalidateQueries({ queryKey: ["me"] });
-      navigate("/");
-    },
   });
 
   const tooShort = password.length > 0 && password.length < MIN_PASSWORD_LENGTH;
@@ -35,64 +35,74 @@ export function Register() {
   return (
     <main className="mx-auto w-full max-w-md px-4 py-8">
       <h1 className="mb-6 text-2xl text-fg-primary">Register</h1>
-      <form
-        className="flex flex-col gap-4"
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (tooShort) return;
-          mutation.mutate();
-        }}
-      >
-        <div>
-          <label htmlFor="email" className={LABEL_CLASS}>
-            Email
-          </label>
-          <input
-            id="email"
-            type="email"
-            autoComplete="username"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            required
-            className={INPUT_CLASS}
-          />
-        </div>
-
-        <div>
-          <label htmlFor="password" className={LABEL_CLASS}>
-            Password
-          </label>
-          <input
-            id="password"
-            type="password"
-            autoComplete="new-password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-            minLength={MIN_PASSWORD_LENGTH}
-            aria-describedby="password-hint"
-            className={INPUT_CLASS}
-          />
-          <p id="password-hint" className="mt-1 text-base text-fg-muted">
-            At least {MIN_PASSWORD_LENGTH} characters.
-          </p>
-        </div>
-
-        <button
-          type="submit"
-          disabled={mutation.isPending || tooShort}
-          className={BUTTON_CLASS}
+      {mutation.isSuccess ? (
+        <p className="text-base text-fg-primary">
+          Check your email for a link to verify your account before logging
+          in.
+        </p>
+      ) : (
+        <form
+          className="flex flex-col gap-4"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (tooShort) return;
+            mutation.mutate();
+          }}
         >
-          {mutation.isPending ? "Creating account..." : "Create account"}
-        </button>
+          <div>
+            <label htmlFor="email" className={LABEL_CLASS}>
+              Email
+            </label>
+            <input
+              id="email"
+              type="email"
+              autoComplete="username"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+              className={INPUT_CLASS}
+            />
+          </div>
 
-        {mutation.isError && (
-          <p role="alert" className="text-base text-accent-red">
-            Registration failed. That email may already be in use, or try again
-            shortly if you've made several attempts (rate limited).
-          </p>
-        )}
-      </form>
+          <div>
+            <label htmlFor="password" className={LABEL_CLASS}>
+              Password
+            </label>
+            <input
+              id="password"
+              type="password"
+              autoComplete="new-password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+              minLength={MIN_PASSWORD_LENGTH}
+              aria-describedby="password-hint"
+              className={INPUT_CLASS}
+            />
+            <p id="password-hint" className="mt-1 text-base text-fg-muted">
+              At least {MIN_PASSWORD_LENGTH} characters.
+            </p>
+          </div>
+
+          <button
+            type="submit"
+            disabled={mutation.isPending || tooShort}
+            className={BUTTON_CLASS}
+          >
+            {mutation.isPending ? "Creating account..." : "Create account"}
+          </button>
+
+          {mutation.isError && (
+            <p role="alert" className="text-base text-accent-red">
+              {mutation.error instanceof RateLimitedError
+                ? `Too many attempts. Try again at ${formatRetryAt(
+                    mutation.error.retryAfterSeconds,
+                  )}.`
+                : "Registration failed. That email may already be in use."}
+            </p>
+          )}
+        </form>
+      )}
       <p className="mt-4 text-base text-fg-primary">
         Already have an account?{" "}
         <a href="/login" className="text-accent-aqua underline underline-offset-2">

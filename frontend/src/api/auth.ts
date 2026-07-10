@@ -54,3 +54,51 @@ export function confirmPasswordReset(
     new_password: newPassword,
   });
 }
+
+// Redeems a 'verify' token minted by register() (docs/design/16). 204 on
+// success; a 400 with code "AuthError.EmailVerificationTokenInvalid" means
+// the token is invalid, expired, or already used.
+export function verifyEmail(token: string): Promise<void> {
+  return apiPost<void>("/api/auth/verify-email", { token });
+}
+
+// ALWAYS resolves 202 regardless of whether the email has a pending
+// registration -- same no-oracle contract as requestPasswordReset above
+// (see domain/auth/email_verification.py::request_verification_resend's
+// own doc comment). Callers must show the identical confirmation message
+// on every resolution, never branch UI on this having "found" anything.
+export function resendVerification(email: string): Promise<{ status: string }> {
+  return apiPost<{ status: string }>("/api/auth/resend-verification", { email });
+}
+
+// Just enough to preview an invoice-claim link before a password is set
+// (docs/design/16's ClaimPreviewInvoice) -- amount_total is a decimal
+// string (already quantized to the invoice's currency server-side), never
+// a number, so it round-trips through JSON without float rounding.
+export interface ClaimPreviewInvoice {
+  id: string;
+  status: string;
+  amount_total: string;
+  currency: string;
+  due_date: string | null;
+}
+
+export interface ClaimPreview {
+  email: string;
+  invoices: ClaimPreviewInvoice[];
+}
+
+// Read-only -- never redeems the token (see get_claim_preview's own doc
+// comment). Safe to call repeatedly (e.g. on remount) without burning the
+// one-time claim token.
+export function getClaimPreview(token: string): Promise<ClaimPreview> {
+  return apiGet<ClaimPreview>(`/api/auth/claim?token=${encodeURIComponent(token)}`);
+}
+
+// Redeems a 'claim' token: sets password AND marks the row's email
+// verified in one step (docs/design/16) -- clicking the link is itself
+// proof of inbox control, so there is no second verify round-trip after
+// this succeeds.
+export function confirmClaim(token: string, password: string): Promise<void> {
+  return apiPost<void>("/api/auth/claim", { token, password });
+}

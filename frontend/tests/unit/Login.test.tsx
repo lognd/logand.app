@@ -85,6 +85,30 @@ describe("Login", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(/try again at/i);
   });
 
+  it("shows a distinct message and resend link when the email is unverified", async () => {
+    vi.spyOn(authApi, "login").mockRejectedValue(
+      new ApiError(
+        "please verify your email before logging in",
+        "AuthError.EmailNotVerified",
+      ),
+    );
+    const user = userEvent.setup();
+    renderWithClient();
+
+    await user.type(screen.getByLabelText("Email"), "unverified@example.com");
+    await user.type(screen.getByLabelText("Password"), "the-real-password");
+    await user.click(screen.getByRole("button", { name: "Log in" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "please verify your email before logging in",
+    );
+    const resendLink = screen.getByRole("link", { name: "Resend verification email" });
+    expect(resendLink).toHaveAttribute(
+      "href",
+      "/verify-email?email=unverified%40example.com",
+    );
+  });
+
   it("links to the forgot-password page", () => {
     renderWithClient();
     expect(screen.getByRole("link", { name: "Forgot your password?" })).toHaveAttribute(
