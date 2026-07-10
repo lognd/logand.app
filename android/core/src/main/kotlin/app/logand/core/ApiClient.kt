@@ -5,36 +5,27 @@ import app.logand.core.model.LoginRequest
 import app.logand.core.model.Me
 import app.logand.core.model.MileageEntry
 import app.logand.core.model.Receipt
-import java.io.IOException
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import kotlinx.serialization.KSerializer
-import kotlinx.serialization.SerializationException
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
-import okhttp3.HttpUrl
-import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 
-private const val CSRF_COOKIE_NAME = "csrf_token"
-private const val CSRF_HEADER_NAME = "X-CSRF-Token"
 private val JSON_MEDIA_TYPE = "application/json".toMediaType()
-private val BODY_REQUIRED_METHODS = setOf("POST", "PUT", "PATCH")
-private val EMPTY_BODY = "".toRequestBody(null)
 
 // One client, talking to one stable REST API contract (see
 // docs/design/14-mileage-receipts-documents.md's "API stability" section
 // -- this class IS the abstraction layer a future automated tool would
 // also hook into). Every request/response shape here is deliberately
 // copy-derived from the real backend route signatures, not guessed --
-// see api/mileage.py and api/receipts.py.
+// see api/mileage.py and api/receipts.py. The admin surface (invoices,
+// customers, inventory, BOM, budget, raw-data browser, logs, version --
+// see api/invoices.py, api/admin_users.py, api/inventory.py, api/bom.py,
+// api/budget.py, api/admin_data.py, api/admin_logs.py,
+// api/admin_version.py) lives on AdminApi instead of growing this class
+// unboundedly; both share the SAME HttpPlumbing instance (one cookie jar,
+// one OkHttp client, one onUnauthorized hook) via the `admin` property.
 class ApiClient(
     baseUrl: String,
     private val cookieJar: SessionCookieJar = SessionCookieJar(),
@@ -57,22 +48,27 @@ class ApiClient(
     // to know about that policy individually.
     private val onUnauthorized: (() -> Unit)? = null,
 ) {
-    private val baseUrl = baseUrl.trimEnd('/')
-    private val json = Json { ignoreUnknownKeys = true }
+    private val plumbing = HttpPlumbing(baseUrl, cookieJar, httpClient, onUnauthorized)
+    private val json: Json get() = plumbing.json
+
+    // The full admin API surface -- see AdminApi's own doc comment.
+    val admin: AdminApi = AdminApi(plumbing)
 
     // -- auth ----------------------------------------------------------
 
     suspend fun login(email: String, password: String): ApiResult<Unit> =
-        request(
-            method = "POST",
-            path = "/api/auth/login",
-            body = json.encodeToString(LoginRequest.serializer(), LoginRequest(email, password))
-                .toRequestBody(JSON_MEDIA_TYPE),
-            // login()'s own 401 means "wrong credentials," not "an
-            // existing session expired" -- firing onUnauthorized here
-            // would couple a bad-password attempt to global session
-            // teardown (see L2). Every other call's 401 still fires it.
-        ).decodeUnit(notifyOn401 = false)
+        with(plumbing) {
+            request(
+                method = "POST",
+                path = "/api/auth/login",
+                body = json.encodeToString(LoginRequest.serializer(), LoginRequest(email, password))
+                    .toRequestBody(JSON_MEDIA_TYPE),
+                // login()'s own 401 means "wrong credentials," not "an
+                // existing session expired" -- firing onUnauthorized here
+                // would couple a bad-password attempt to global session
+                // teardown (see L2). Every other call's 401 still fires it.
+            ).decodeUnit(notifyOn401 = false)
+        }
 
     suspend fun logout(): ApiResult<Unit> {
         // Same rationale as login(): logout()'s own 401 means the
@@ -81,7 +77,9 @@ class ApiClient(
         // -- logout() below unconditionally clears the cookie jar
         // itself. Without this, an already-expired session's logout
         // would double-fire onUnauthorized teardown (L3).
-        val result = request(method = "POST", path = "/api/auth/logout").decodeUnit(notifyOn401 = false)
+        val result = with(plumbing) {
+            request(method = "POST", path = "/api/auth/logout").decodeUnit(notifyOn401 = false)
+        }
         // Clear local cookies regardless of the server call's outcome --
         // even if the network drops mid-logout, the app should not go on
         // acting as if it's still authenticated.
@@ -90,7 +88,7 @@ class ApiClient(
     }
 
     suspend fun me(): ApiResult<Me> =
-        request(method = "GET", path = "/api/me").decode(Me.serializer())
+        with(plumbing) { request(method = "GET", path = "/api/me").decode(Me.serializer()) }
 
     // -- mileage ---------------------------------------------------------
 
@@ -99,16 +97,14 @@ class ApiClient(
         business: Boolean? = null,
         dateFrom: String? = null,
         dateTo: String? = null,
-    ): ApiResult<List<MileageEntry>> {
+    ): ApiResult<List<MileageEntry>> = with(plumbing) {
         val url = urlBuilder("/api/admin/mileage").apply {
             vehicle?.let { addQueryParameter("vehicle", it) }
             business?.let { addQueryParameter("business", it.toString()) }
             dateFrom?.let { addQueryParameter("date_from", it) }
             dateTo?.let { addQueryParameter("date_to", it) }
         }.build()
-        return request(method = "GET", url = url).decode(
-            ListSerializer(MileageEntry.serializer())
-        )
+        request(method = "GET", url = url).decode(ListSerializer(MileageEntry.serializer()))
     }
 
     // start/end odometer are the pair; `distance` is the raw-value form.
@@ -125,7 +121,7 @@ class ApiClient(
         purpose: String? = null,
         business: Boolean = true,
         memo: String? = null,
-    ): ApiResult<CreatedId> {
+    ): ApiResult<CreatedId> = with(plumbing) {
         val url = urlBuilder("/api/admin/mileage").apply {
             addQueryParameter("vehicle", vehicle)
             addQueryParameter("occurred_on", occurredOn)
@@ -136,11 +132,11 @@ class ApiClient(
             addQueryParameter("business", business.toString())
             memo?.let { addQueryParameter("memo", it) }
         }.build()
-        return request(method = "POST", url = url).decode(CreatedId.serializer())
+        request(method = "POST", url = url).decode(CreatedId.serializer())
     }
 
     suspend fun deleteMileageEntry(id: String): ApiResult<Unit> =
-        request(method = "DELETE", path = "/api/admin/mileage/$id").decodeUnit()
+        with(plumbing) { request(method = "DELETE", path = "/api/admin/mileage/$id").decodeUnit() }
 
     // -- receipts --------------------------------------------------------
 
@@ -149,16 +145,14 @@ class ApiClient(
         category: String? = null,
         dateFrom: String? = null,
         dateTo: String? = null,
-    ): ApiResult<List<Receipt>> {
+    ): ApiResult<List<Receipt>> = with(plumbing) {
         val url = urlBuilder("/api/admin/receipts").apply {
             reconciled?.let { addQueryParameter("reconciled", it.toString()) }
             category?.let { addQueryParameter("category", it) }
             dateFrom?.let { addQueryParameter("date_from", it) }
             dateTo?.let { addQueryParameter("date_to", it) }
         }.build()
-        return request(method = "GET", url = url).decode(
-            ListSerializer(Receipt.serializer())
-        )
+        request(method = "GET", url = url).decode(ListSerializer(Receipt.serializer()))
     }
 
     // The ONLY required argument here is the photo itself -- matches
@@ -172,7 +166,7 @@ class ApiClient(
         category: String? = null,
         occurredOn: String? = null,
         note: String? = null,
-    ): ApiResult<CreatedId> {
+    ): ApiResult<CreatedId> = with(plumbing) {
         val url = urlBuilder("/api/admin/receipts").apply {
             vendor?.let { addQueryParameter("vendor", it) }
             amount?.let { addQueryParameter("amount", it) }
@@ -188,94 +182,17 @@ class ApiClient(
                 fileBytes.toRequestBody(mimeType.toMediaType()),
             )
             .build()
-        return request(method = "POST", url = url, body = body).decode(CreatedId.serializer())
+        request(method = "POST", url = url, body = body).decode(CreatedId.serializer())
     }
 
-    suspend fun reconcileReceipt(receiptId: String, budgetEntryId: String): ApiResult<Unit> {
-        val url = urlBuilder("/api/admin/receipts/$receiptId/reconcile")
-            .addQueryParameter("budget_entry_id", budgetEntryId)
-            .build()
-        return request(method = "POST", url = url).decodeUnit()
-    }
+    suspend fun reconcileReceipt(receiptId: String, budgetEntryId: String): ApiResult<Unit> =
+        with(plumbing) {
+            val url = urlBuilder("/api/admin/receipts/$receiptId/reconcile")
+                .addQueryParameter("budget_entry_id", budgetEntryId)
+                .build()
+            request(method = "POST", url = url).decodeUnit()
+        }
 
     suspend fun deleteReceipt(id: String): ApiResult<Unit> =
-        request(method = "DELETE", path = "/api/admin/receipts/$id").decodeUnit()
-
-    // -- plumbing ----------------------------------------------------------
-
-    private fun urlBuilder(path: String) = "$baseUrl$path".toHttpUrl().newBuilder()
-
-    private suspend fun request(
-        method: String,
-        path: String? = null,
-        url: HttpUrl? = null,
-        body: RequestBody? = null,
-    ): RawResponse = withContext(Dispatchers.IO) {
-        val resolvedUrl = url ?: "$baseUrl$path".toHttpUrl()
-        // OkHttp requires a non-null body for POST/PUT/PATCH -- routes
-        // like /api/auth/logout and /send/void-style POSTs (see
-        // api/invoices.py's own `@router.post` bodyless actions) are
-        // real, valid, bodyless POSTs on the backend, so this can't just
-        // require every caller to remember to pass an empty body.
-        val effectiveBody = body ?: if (method in BODY_REQUIRED_METHODS) EMPTY_BODY else null
-        val builder = Request.Builder().url(resolvedUrl).method(method, effectiveBody)
-        // CSRF header only matters for mutating methods -- api/app.py's
-        // verify_csrf skips GET/HEAD/OPTIONS entirely, same as this.
-        if (method != "GET" && method != "HEAD") {
-            cookieJar.value(CSRF_COOKIE_NAME)?.let { builder.header(CSRF_HEADER_NAME, it) }
-        }
-        val request = builder.build()
-        try {
-            httpClient.newCall(request).execute().use { response ->
-                RawResponse(response.code, response.body?.string().orEmpty())
-            }
-        } catch (e: IOException) {
-            RawResponse(statusCode = -1, bodyText = "", networkError = e)
-        }
-    }
-
-    private data class RawResponse(
-        val statusCode: Int,
-        val bodyText: String,
-        val networkError: IOException? = null,
-    )
-
-    private fun <T> RawResponse.decode(
-        serializer: KSerializer<T>,
-        notifyOn401: Boolean = true,
-    ): ApiResult<T> {
-        networkError?.let { return ApiResult.NetworkError(it) }
-        if (statusCode == 401 && notifyOn401) onUnauthorized?.invoke()
-        if (statusCode !in 200..299) return ApiResult.HttpError(statusCode, errorDetail(bodyText))
-        return try {
-            ApiResult.Success(json.decodeFromString(serializer, bodyText))
-        } catch (e: SerializationException) {
-            ApiResult.HttpError(statusCode, "malformed response body: ${e.message}")
-        }
-    }
-
-    private fun RawResponse.decodeUnit(notifyOn401: Boolean = true): ApiResult<Unit> {
-        networkError?.let { return ApiResult.NetworkError(it) }
-        if (statusCode == 401 && notifyOn401) onUnauthorized?.invoke()
-        if (statusCode !in 200..299) return ApiResult.HttpError(statusCode, errorDetail(bodyText))
-        return ApiResult.Success(Unit)
-    }
-
-    // Backend's HTTPException serializes as either {"detail": "..."} (flat,
-    // e.g. 401 from auth deps, bare-string HTTPExceptions) or, since commit
-    // 77bae7e (see api/errors.py::to_http_exception), a nested
-    // {"detail": {"detail": "...", "code": "..."}} for domain errors. Falls
-    // back to the raw body if neither shape is there (a 5xx from something
-    // upstream of FastAPI, say), rather than silently swallowing it.
-    private fun errorDetail(bodyText: String): String =
-        try {
-            val obj = json.decodeFromString(JsonObject.serializer(), bodyText)
-            when (val detail = obj["detail"]) {
-                is JsonPrimitive -> detail.content
-                is JsonObject -> (detail["detail"] as? JsonPrimitive)?.content ?: bodyText
-                else -> bodyText
-            }
-        } catch (e: SerializationException) {
-            bodyText
-        }
+        with(plumbing) { request(method = "DELETE", path = "/api/admin/receipts/$id").decodeUnit() }
 }
