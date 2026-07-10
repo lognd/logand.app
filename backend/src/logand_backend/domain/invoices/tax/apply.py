@@ -24,7 +24,10 @@ from logand_backend.db.models.invoices import (
     InvoiceLineItemTax,
 )
 from logand_backend.db.models.users import User
-from logand_backend.domain.invoices.service import recompute_amount_total
+from logand_backend.domain.invoices.service import (
+    flag_invoice_needs_review,
+    recompute_amount_total,
+)
 from logand_backend.domain.invoices.tax import categorizer
 from logand_backend.logging import get_logger
 
@@ -100,41 +103,72 @@ async def apply_auto_tax(db: AsyncSession, cfg: AppConfig, invoice_id: UUID) -> 
         destination_jurisdiction=destination_jurisdiction,
         extra_jurisdictions=[_CUSTOMS_JURISDICTION],
     )
-    if not pricing:
-        return
+    # NB: an EMPTY `pricing` is not a no-op here. When the categorizer is
+    # configured but Claude fails/rate-limits, no line resolves and pricing is
+    # empty -- every line is then unresolved and must gate the invoice behind
+    # review (M3), not silently pass through with zero tax and no signal.
+    pricing_by_index = {p.line_index: p for p in pricing}
 
-    line_by_index = dict(enumerate(line_items))
-    wrote_any = False
-    for p in pricing:
-        line_item = line_by_index.get(p.line_index)
-        if line_item is None:
-            continue
-        line_item.taxable = p.taxable
-        line_item.tax_category = p.category
-        # Replace only this line's OWN auto rows -- never a hand-entered
-        # (auto=False) charge, see module docstring.
-        await db.execute(
-            delete(InvoiceLineItemTax).where(
-                InvoiceLineItemTax.line_item_id == line_item.id,
-                InvoiceLineItemTax.auto.is_(True),
-            )
-        )
-        for charge in p.charges:
-            db.add(
-                InvoiceLineItemTax(
-                    line_item_id=line_item.id,
-                    tax_type=charge.tax_type,
-                    jurisdiction=charge.jurisdiction,
-                    rate=charge.rate,
-                    auto=True,
+    # Only a CONFIRMED/OVERRIDDEN classification auto-charges money. A pending
+    # (model-only, not human-confirmed) classification -- or a line the
+    # categorizer never resolved at all (rate-limit/error/unconfigured rule) --
+    # must NOT be auto-charged and instead gates the invoice behind human
+    # review. This makes the review workflow actually hold back money and makes
+    # a categorizer outage fail CLOSED-with-a-signal instead of silently
+    # under-collecting. See M2/M3 in docs/design/16-sales-tax.md.
+    #
+    # The charge mutations run in a SAVEPOINT (db.begin_nested) so a mid-loop
+    # failure rolls back its own partial writes atomically -- the request's own
+    # exception handler (api/invoices.py::create) may still commit the invoice,
+    # and it must never persist half a line's charges against a stale
+    # tax_amount/amount_total (L2).
+    review_needed = 0
+    async with db.begin_nested():
+        for index, line_item in enumerate(line_items):
+            p = pricing_by_index.get(index)
+            confirmed = p is not None and not p.pending
+            # Always clear this line's OWN auto rows first -- never a hand-
+            # entered (auto=False) charge -- so a re-run (or a formerly-charged
+            # line that is now pending/unresolved) never leaves a stale auto
+            # charge behind. See module docstring.
+            await db.execute(
+                delete(InvoiceLineItemTax).where(
+                    InvoiceLineItemTax.line_item_id == line_item.id,
+                    InvoiceLineItemTax.auto.is_(True),
                 )
             )
-        wrote_any = True
-
-    await db.flush()
-    if wrote_any:
+            if not confirmed:
+                # Pending or unresolved -> charge nothing, flag for review.
+                review_needed += 1
+                continue
+            line_item.taxable = p.taxable
+            line_item.tax_category = p.category
+            for charge in p.charges:
+                db.add(
+                    InvoiceLineItemTax(
+                        line_item_id=line_item.id,
+                        tax_type=charge.tax_type,
+                        jurisdiction=charge.jurisdiction,
+                        rate=charge.rate,
+                        auto=True,
+                    )
+                )
+        await db.flush()
         await recompute_amount_total(db, invoice_id)
+
+    if review_needed:
+        invoice = await db.get(Invoice, invoice_id)
+        if invoice is not None:
+            await flag_invoice_needs_review(
+                db,
+                invoice,
+                f"{review_needed} line item(s) need tax review",
+            )
     _log.info(
         "apply_auto_tax: applied categorizer to invoice",
-        extra={"invoice_id": str(invoice_id), "lines_priced": len(pricing)},
+        extra={
+            "invoice_id": str(invoice_id),
+            "lines_priced": len(pricing),
+            "review_needed": review_needed,
+        },
     )

@@ -53,9 +53,10 @@ export function AdminTaxReport() {
     <main className="mx-auto w-full max-w-4xl px-4 py-8">
       <h1 className="mb-2 text-2xl text-fg-primary">Tax report (admin)</h1>
       <p className="mb-6 text-base text-fg-muted">
-        Sales and tax collected over a date range, broken down for filing. Figures
-        are computed from real invoices and reconcile exactly with what customers
-        were charged. This is an aid for filing, not tax advice.
+        Sales and tax collected over a date range, broken down for filing. Both
+        the From and To dates are inclusive -- the whole To day is covered.
+        Figures are computed from real invoices and reconcile exactly with what
+        customers were charged. This is an aid for filing, not tax advice.
       </p>
 
       <form

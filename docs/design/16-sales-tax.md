@@ -87,6 +87,36 @@ destination sourcing (Phase 3 chooses which rows/rates to attach), BOM
 independent taxation (each line has its own rows), and import duty
 (`tax_type=import_duty`) exactly like sales tax.
 
+### Sales-tax sourcing (single-source, destination-preferred)
+
+A line can owe several DIFFERENT taxes at once (import duty AND use tax AND
+sales tax), and those stack. But it must never carry TWO `sales` charges: the
+origin state's sales tax AND the destination state's sales tax summed on one
+line would over-collect (e.g. origin TN 7% + destination FL 6% on a $100 line
+= $13.00 of "sales" tax on a single sale). So `sales` tax is **single-source**:
+a line carries at most ONE charge of `tax_type = sales`. Every other tax type
+(`import_duty`, `use`, ...) still stacks normally across jurisdictions.
+
+The one sales jurisdiction is chosen **destination-preferred**:
+
+1. If the customer's DESTINATION jurisdiction (their `address_state`) has a
+   configured `sales` rule for the line's category, use the DESTINATION rate.
+2. Otherwise, if the ORIGIN jurisdiction (`tax_origin_state`) has a `sales`
+   rule, use the ORIGIN rate.
+3. Otherwise, no sales charge.
+
+Presence of a configured rule -- not its rate -- decides the source: a
+destination with an explicit 0% rule sources the (zero) charge and does not
+fall through to origin.
+
+**This is a deliberate simplification of US tax law, not a model of it.**
+Real sales-tax sourcing (origin- vs destination-based) genuinely varies by
+state and by whether the seller has nexus in the destination state. This app
+encodes ONE rule -- single jurisdiction per line, destination-preferred -- and
+does NOT attempt to encode per-state origin/destination rules. The operator
+MUST confirm this rule matches their own nexus and registration obligations
+with an accountant before relying on the charged amounts or the filing report.
+
 ### Per-invoice (denormalized rollups + jurisdiction snapshot)
 
 - `tax_amount: Numeric(14,3)` (default `0`) -- sum of the per-line tax
@@ -180,6 +210,23 @@ per-line figures shown on the PDF/email always sum to the stored rollups
      skill and a current model (e.g. Sonnet 5); own pass, own review. The
      charge rows it produces are exactly the `invoice_line_item_taxes` rows
      Phase 1 defines, so this bolts on with no schema change.
+
+## Review gating: unconfirmed tax never auto-charges (M2/M3)
+
+`apply_auto_tax` only ever auto-charges a line whose classification is
+human-`confirmed` or `overridden`. A `pending` (model-classified, not yet
+confirmed) line -- or a line the categorizer never resolved because Claude
+rate-limited/errored while a key IS configured -- is charged NOTHING and the
+invoice is flagged via `flag_invoice_needs_review` ("N line item(s) need tax
+review"). This makes the human review workflow actually hold back money and
+makes a categorizer outage fail CLOSED-with-a-signal instead of silently
+under-collecting. A genuinely tax-free CONFIRMED line (`taxable=false`,
+confirmed) does not raise the flag -- only an unresolved/unconfirmed line
+does. The charge writes run inside a savepoint (`db.begin_nested`) so a
+mid-loop failure can never leave partial charge rows against a stale
+`tax_amount`/`amount_total` (L2). An UNCONFIGURED deployment (no Claude key)
+stays a pure no-op: auto-tax is not expected there, so no review flag is
+raised and admins enter charges by hand as before.
 
 ## BOM interaction (open, Phase 3+)
 

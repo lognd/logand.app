@@ -79,6 +79,13 @@ class CategorizerResult(BaseModel):
     decisions: list[LineTaxDecision]
 
 
+# Sales tax is SINGLE-SOURCE per line (see docs/design/16-sales-tax.md "Sales-
+# tax sourcing"): a line carries at most ONE `sales` charge, destination-
+# preferred then origin. Every OTHER tax_type (import_duty, use, ...) still
+# stacks normally across jurisdictions.
+_SALES_TAX_TYPE = "sales"
+
+
 @dataclass(frozen=True)
 class TaxCharge:
     tax_type: str
@@ -304,6 +311,43 @@ async def _load_rate_index(db: AsyncSession, jurisdictions: list[str], at: datet
     return _load_rate_index_from_rules(list(rules))
 
 
+def _resolve_sales_charge(
+    resolve,
+    origin_jurisdiction: str,
+    destination_jurisdiction: str | None,
+    category: str,
+) -> TaxCharge | None:
+    """Pick the ONE `sales` charge for a line -- single-source, destination-
+    preferred (docs/design/16-sales-tax.md "Sales-tax sourcing").
+
+    US sales-tax sourcing genuinely varies by state and nexus (origin- vs
+    destination-based); this app deliberately encodes ONE simplified rule
+    rather than per-state law: if the customer's destination jurisdiction has
+    a configured `sales` rule for the category, that jurisdiction sources the
+    charge; otherwise the seller's origin jurisdiction does; otherwise there
+    is no sales charge. The OPERATOR must confirm this matches their real
+    nexus/registration obligations with an accountant.
+
+    Presence of a configured `sales` rule -- not its rate -- decides sourcing:
+    a destination with a 0% rule still sources the (zero) charge here and does
+    not fall through to origin.
+    """
+    for jurisdiction in (destination_jurisdiction, origin_jurisdiction):
+        if not jurisdiction:
+            continue
+        for tax_type, rate in resolve(jurisdiction, category):
+            if tax_type != _SALES_TAX_TYPE:
+                continue
+            # This jurisdiction is the single source; a 0 rate means a
+            # configured-but-untaxed sale, still no fall-through to origin.
+            if rate > 0:
+                return TaxCharge(
+                    tax_type=_SALES_TAX_TYPE, jurisdiction=jurisdiction, rate=rate
+                )
+            return None
+    return None
+
+
 def _all_jurisdictions(
     origin_jurisdiction: str,
     destination_jurisdiction: str | None,
@@ -407,12 +451,27 @@ async def categorize_and_price(
             continue  # still unclassified (unconfigured / deferred) -> no charges
         charges: list[TaxCharge] = []
         if row.taxable:
+            # Non-sales taxes (import_duty, use, ...) stack across EVERY
+            # jurisdiction. Sales tax is single-source and handled separately
+            # below so a line can never carry two `sales` charges (e.g. an
+            # origin-state AND a destination-state sales charge summing).
             for jur in jurisdictions:
                 for tax_type, rate in resolve(jur, row.category):
+                    if tax_type == _SALES_TAX_TYPE:
+                        continue
                     if rate > 0:
                         charges.append(
                             TaxCharge(tax_type=tax_type, jurisdiction=jur, rate=rate)
                         )
+            # The single sales charge -- destination-preferred, else origin.
+            sales_charge = _resolve_sales_charge(
+                resolve,
+                origin_jurisdiction,
+                destination_jurisdiction,
+                row.category,
+            )
+            if sales_charge is not None:
+                charges.append(sales_charge)
         pricing.append(
             LinePricing(
                 line_index=li.index,

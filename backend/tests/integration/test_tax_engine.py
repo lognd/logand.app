@@ -237,6 +237,208 @@ async def test_build_tax_report_aggregates_by_jurisdiction_and_category(
     assert report.by_category[0].category == "tangible-goods"
 
 
+async def test_sales_single_source_destination_preferred_never_double_charges(
+    db_session, make_user, monkeypatch
+) -> None:
+    from logand_backend.domain.invoices.tax import classification_store
+
+    # H1 at the pricing level: BOTH origin TN 7% and destination FL 6% sales
+    # rules exist. A $100 taxable line must resolve to EXACTLY ONE sales charge
+    # (destination FL 6%), never both summed (which would be 13%).
+    await _seed(db_session, "US-TN", "sales", "*", "0.07")
+    await _seed(db_session, "US-FL", "sales", "*", "0.06")
+    cfg = AppConfig(anthropic_api_key="sk-test-fake")
+    admin = await make_user(role="admin")
+
+    await classification_store.override(
+        db_session,
+        classification_store.normalize_key("Widget"),
+        category="*",
+        taxable=True,
+        hts_code=None,
+        admin_id=admin.id,
+    )
+
+    async def boom(*_a, **_k):
+        raise AssertionError("Claude was called for an overridden item")
+
+    monkeypatch.setattr(categorizer, "_call_claude", boom)
+    pricing = await categorizer.categorize_and_price(
+        db_session,
+        cfg,
+        lines=[categorizer.LineInput(index=0, description="Widget")],
+        origin_jurisdiction="US-TN",
+        destination_jurisdiction="US-FL",
+    )
+    sales = [c for c in pricing[0].charges if c.tax_type == "sales"]
+    assert len(sales) == 1
+    assert (sales[0].jurisdiction, sales[0].rate) == ("US-FL", Decimal("0.06"))
+
+
+async def test_sales_single_source_falls_back_to_origin(
+    db_session, make_user, monkeypatch
+) -> None:
+    from logand_backend.domain.invoices.tax import classification_store
+
+    # H1: only the origin TN rule exists; an FL customer has no destination
+    # rule, so the ONE sales charge falls back to origin TN 7%.
+    await _seed(db_session, "US-TN", "sales", "*", "0.07")
+    cfg = AppConfig(anthropic_api_key="sk-test-fake")
+    admin = await make_user(role="admin")
+
+    await classification_store.override(
+        db_session,
+        classification_store.normalize_key("Widget"),
+        category="*",
+        taxable=True,
+        hts_code=None,
+        admin_id=admin.id,
+    )
+
+    async def boom(*_a, **_k):
+        raise AssertionError("Claude was called for an overridden item")
+
+    monkeypatch.setattr(categorizer, "_call_claude", boom)
+    pricing = await categorizer.categorize_and_price(
+        db_session,
+        cfg,
+        lines=[categorizer.LineInput(index=0, description="Widget")],
+        origin_jurisdiction="US-TN",
+        destination_jurisdiction="US-FL",
+    )
+    sales = [c for c in pricing[0].charges if c.tax_type == "sales"]
+    assert len(sales) == 1
+    assert (sales[0].jurisdiction, sales[0].rate) == ("US-TN", Decimal("0.07"))
+
+
+async def test_build_tax_report_includes_the_whole_to_date_day(
+    db_session, make_user
+) -> None:
+    # M1: an invoice created at 14:00 on the to_date must be INCLUDED (the
+    # end of the range covers the whole to_date calendar day).
+    from datetime import datetime, time, timezone
+
+    from logand_backend.domain.invoices.service import (
+        LineItemInput,
+        LineItemTaxInput,
+        create_invoice,
+        send_invoice,
+    )
+    from logand_backend.domain.invoices.tax.report import build_tax_report
+
+    customer = await make_user(role="customer")
+    inv_id = (
+        await create_invoice(
+            db_session,
+            customer.id,
+            [
+                LineItemInput(
+                    description="Widget",
+                    unit_price=Decimal("100.00"),
+                    tax_category="tangible-goods",
+                    taxes=[
+                        LineItemTaxInput(
+                            tax_type="sales",
+                            jurisdiction="US-TN",
+                            rate=Decimal("0.07"),
+                        )
+                    ],
+                )
+            ],
+            tax_origin_state="TN",
+        )
+    ).danger_ok
+    await send_invoice(db_session, inv_id)
+
+    # Pin created_at to 14:00 on Jan 31 -- the last day of the filing range.
+    from logand_backend.db.models.invoices import Invoice
+
+    invoice = await db_session.get(Invoice, inv_id)
+    invoice.created_at = datetime(2026, 1, 31, 14, 0, tzinfo=timezone.utc)
+    await db_session.flush()
+
+    report = await build_tax_report(
+        db_session,
+        from_date=datetime.combine(
+            datetime(2026, 1, 1).date(), time.min, tzinfo=timezone.utc
+        ),
+        to_date=datetime.combine(
+            datetime(2026, 1, 31).date(), time.min, tzinfo=timezone.utc
+        ),
+    )
+    assert report.invoice_count == 1
+    assert report.total_tax_collected == Decimal("7.00")
+
+
+async def test_build_tax_report_nets_partial_refund_from_tax(
+    db_session, make_user
+) -> None:
+    # L1: a partial refund leaves the invoice "paid", so its tax must be netted
+    # out of total_tax_collected proportionally. A $100 + $7 tax invoice half-
+    # refunded ($53.50) nets 3.50 of tax back -> 3.50 collected.
+    from datetime import datetime, timedelta, timezone
+
+    from logand_backend.db.models.invoices import Payment, Refund
+    from logand_backend.domain.invoices.service import (
+        LineItemInput,
+        LineItemTaxInput,
+        create_invoice,
+        send_invoice,
+    )
+    from logand_backend.domain.invoices.tax.report import build_tax_report
+
+    admin = await make_user(role="admin")
+    customer = await make_user(role="customer")
+    inv_id = (
+        await create_invoice(
+            db_session,
+            customer.id,
+            [
+                LineItemInput(
+                    description="Widget",
+                    unit_price=Decimal("100.00"),
+                    tax_category="tangible-goods",
+                    taxes=[
+                        LineItemTaxInput(
+                            tax_type="sales",
+                            jurisdiction="US-TN",
+                            rate=Decimal("0.07"),
+                        )
+                    ],
+                )
+            ],
+            tax_origin_state="TN",
+        )
+    ).danger_ok
+    await send_invoice(db_session, inv_id)
+
+    payment = Payment(
+        invoice_id=inv_id,
+        method="stripe",
+        amount=Decimal("107.00"),
+        status="partially_refunded",
+    )
+    db_session.add(payment)
+    await db_session.flush()
+    db_session.add(
+        Refund(
+            payment_id=payment.id,
+            invoice_id=inv_id,
+            amount=Decimal("53.50"),
+            status="succeeded",
+            recorded_by=admin.id,
+        )
+    )
+    await db_session.flush()
+
+    now = datetime.now(timezone.utc)
+    report = await build_tax_report(
+        db_session, from_date=now - timedelta(days=1), to_date=now + timedelta(days=1)
+    )
+    # Gross tax was 7.00; half refunded -> 3.50 net.
+    assert report.total_tax_collected == Decimal("3.50")
+
+
 async def test_confirmed_item_is_not_reclassified(
     db_session, make_user, monkeypatch
 ) -> None:
