@@ -67,12 +67,80 @@ const PROJECTS: Project[] = [
     githubRepos: [{ owner: "lognd", repo: "logand.app" }],
   },
   {
+    title: "Head TA: Advanced Programming Fundamentals",
+    period: "Aug 2025 - Present",
+    description:
+      "As Head TA of UF's Advanced Programming Fundamentals, I authored the exams and nearly all of the course content: 60+ modules, each with around 4 activities and an assignment. Grading that much material by hand doesn't scale, so I also built the tooling behind it. lograder is a Python autograder library built around a composable Input/Check/Mixin/Build/Test pipeline, with Gradescope-compatible scoring. aprog-public holds the public course problem sets I maintain (Python/C++/Jinja).",
+    slides: [{ alt: "Selfie with a fellow TA during an exam", src: media("head-ta-selfie.jpg") }],
+    githubRepos: [
+      { owner: "lognd", repo: "lograder" },
+      { owner: "lognd", repo: "aprog-public" },
+    ],
+  },
+  {
     title: "Malmberg: Self-Hosted Photo & Video Wall",
     period: "Jun 2026",
     description:
       "Built for a friend whose photo library had outgrown what cloud storage could hold onto affordably: decades of photos deserve a real home, not a subscription. A low-power Linux/ZFS server holds the actual library; Raspberry Pi displays auto-discover it over LAN, pair with a quick 6-digit PIN, and cross-fade through it with an EXIF-derived, reverse-geocoded overlay. If the server ever drops offline, the displays fall back to a local cache instead of just going blank.",
-    slides: [{ alt: "Malmberg display wall" }],
+    slides: [
+        { alt: "Malmberg display demo", src: media("malmberg-display-demo.jpg") },
+        { alt: "First Malmberg dashboard demo", src: media("malmberg-dashboard-demo.png") },
+        { alt: "Second Malmberg dashboard demo", src: media("malmberg-dashboard-demo-2.png") },
+        { alt: "Malmberg display electronics", src: media("malmberg-display-electronics.jpg") },
+        { alt: "Malmberg server electronics", src: media("malmberg-server-electronics.jpg") }
+    ],
     githubRepos: [{ owner: "lognd", repo: "malmberg" }],
+  },
+  {
+    title: "STPONE: Coreless Paper Winder Electronics",
+    period: "May 2026",
+    description:
+      "Built for Sand Key Services, LLC. to replace decades of manual switching and measuring on their coreless paper-winder machine with real electronics: designed the PCB and wrote the ATmega32U4 firmware from the interrupt vectors up. More is in the works.",
+    slides: [
+      {
+        alt: "STPONE electronics demo",
+        videoSrc: media("stpone-electronics-demo.mp4"),
+        poster: media("stpone-electronics-demo-poster.jpg"),
+      },
+      { alt: "STPONE PCB design", src: media("stpone-pcb-design.png") },
+      { alt: "STPONE electronic schematic", src: media("stpone-electronic-schematic.png") },
+      {
+        alt: "STPONE soldering timelapse",
+        videoSrc: media("stpone-soldering-timelapse.mp4"),
+        poster: media("stpone-soldering-timelapse-poster.jpg"),
+      },
+    ],
+    githubRepos: [{ owner: "lognd", repo: "stpone" }],
+  },
+  {
+    title: "typani: Result/Option/ErrorSet Library",
+    period: "Jun 2026",
+    description:
+      "I kept writing the same Result/Option boilerplate across projects, so I pulled it out into its own library: Rust/Zig-style explicit error handling for Python, Result, Option, and ErrorSet types instead of bare exceptions you have to trace back to find. It's what this site's own FastAPI backend is built on, and it's small enough that adopting it doesn't mean signing up for a whole framework.",
+    slides: [
+      {
+        alt: "A real typani Result/Option session",
+        element: (
+          <TerminalWindow
+            title="python3: typani"
+            lines={[
+              { kind: "prompt", text: ">>> from typani import Ok, Err, Some, Nothing" },
+              { kind: "prompt", text: ">>> divide(10, 2)" },
+              { kind: "out", text: "Ok(5.0)" },
+              { kind: "prompt", text: ">>> divide(10, 0)" },
+              { kind: "out", text: "Err(division by zero)" },
+              { kind: "prompt", text: ">>> r1.map(lambda x: x * 2)" },
+              { kind: "out", text: "Ok(10.0)" },
+              { kind: "prompt", text: ">>> r2.map_err(str.upper)" },
+              { kind: "out", text: "Err(DIVISION BY ZERO)" },
+              { kind: "prompt", text: ">>> first_positive([-3, -1, 0, 4, 7])" },
+              { kind: "out", text: "Some(4)" },
+            ]}
+          />
+        ),
+      },
+    ],
+    githubRepos: [{ owner: "lognd", repo: "typani" }],
   },
   {
     title: "frob: Agentic Dev Workflow CLI",
@@ -114,57 +182,6 @@ const PROJECTS: Project[] = [
     githubRepos: [{ owner: "lognd", repo: "frob" }],
   },
   {
-    title: "typani: Result/Option/ErrorSet Library",
-    period: "Jun 2026",
-    description:
-      "I kept writing the same Result/Option boilerplate across projects, so I pulled it out into its own library: Rust/Zig-style explicit error handling for Python, Result, Option, and ErrorSet types instead of bare exceptions you have to trace back to find. It's what this site's own FastAPI backend is built on, and it's small enough that adopting it doesn't mean signing up for a whole framework.",
-    slides: [
-      {
-        alt: "A real typani Result/Option session",
-        element: (
-          <TerminalWindow
-            title="python3: typani"
-            lines={[
-              { kind: "prompt", text: ">>> from typani import Ok, Err, Some, Nothing" },
-              { kind: "prompt", text: ">>> divide(10, 2)" },
-              { kind: "out", text: "Ok(5.0)" },
-              { kind: "prompt", text: ">>> divide(10, 0)" },
-              { kind: "out", text: "Err(division by zero)" },
-              { kind: "prompt", text: ">>> r1.map(lambda x: x * 2)" },
-              { kind: "out", text: "Ok(10.0)" },
-              { kind: "prompt", text: ">>> r2.map_err(str.upper)" },
-              { kind: "out", text: "Err(DIVISION BY ZERO)" },
-              { kind: "prompt", text: ">>> first_positive([-3, -1, 0, 4, 7])" },
-              { kind: "out", text: "Some(4)" },
-            ]}
-          />
-        ),
-      },
-    ],
-    githubRepos: [{ owner: "lognd", repo: "typani" }],
-  },
-  {
-    title: "STPONE: Coreless Paper Winder Electronics",
-    period: "May 2026",
-    description:
-      "Built for Sand Key Services, LLC. to replace decades of manual switching and measuring on their coreless paper-winder machine with real electronics: designed the PCB and wrote the ATmega32U4 firmware from the interrupt vectors up. More is in the works.",
-    slides: [
-      {
-        alt: "STPONE electronics demo",
-        videoSrc: media("stpone-electronics-demo.mp4"),
-        poster: media("stpone-electronics-demo-poster.jpg"),
-      },
-      { alt: "STPONE PCB design", src: media("stpone-pcb-design.png") },
-      { alt: "STPONE electronic schematic", src: media("stpone-electronic-schematic.png") },
-      {
-        alt: "STPONE soldering timelapse",
-        videoSrc: media("stpone-soldering-timelapse.mp4"),
-        poster: media("stpone-soldering-timelapse-poster.jpg"),
-      },
-    ],
-    githubRepos: [{ owner: "lognd", repo: "stpone" }],
-  },
-  {
     title: "Finite Element Analysis: Torque Arm Optimization",
     period: "Apr 2026",
     description:
@@ -203,17 +220,6 @@ const PROJECTS: Project[] = [
       "As part of the Avionics and GNC team on Florida Rocket Lab (FRL), I co-authored an AIAA paper deriving the full 6-DOF nonlinear equations of motion for Skipper, a mono-propelled VTOL vehicle steered by a 2-DOF gimbaled thrust vector. Linearized the dynamics into a state-space model and designed an LQR controller (solved via the Continuous Algebraic Riccati Equation) with automatic gain scheduling: the controller re-linearizes around a new base point whenever the linear and nonlinear state predictions diverge past tolerance, rather than relying on pre-flight lookup tables. Validated in Simulink against constant crosswind disturbances and 3D reference-tracking.",
     slides: [{ alt: "AIAA student presentation", src: media("aiaa-student-presentation.jpg") }],
     links: [{ label: "Paper (AIAA ARC)", href: "https://arc.aiaa.org/doi/10.2514/6.2025-99754" }],
-  },
-  {
-    title: "Head TA: Advanced Programming Fundamentals",
-    period: "Aug 2025 - Present",
-    description:
-      "As Head TA of UF's Advanced Programming Fundamentals, I authored the exams and nearly all of the course content: 60+ modules, each with around 4 activities and an assignment. Grading that much material by hand doesn't scale, so I also built the tooling behind it. lograder is a Python autograder library built around a composable Input/Check/Mixin/Build/Test pipeline, with Gradescope-compatible scoring. aprog-public holds the public course problem sets I maintain (Python/C++/Jinja).",
-    slides: [{ alt: "Selfie with a fellow TA during an exam", src: media("head-ta-selfie.jpg") }],
-    githubRepos: [
-      { owner: "lognd", repo: "lograder" },
-      { owner: "lognd", repo: "aprog-public" },
-    ],
   },
   {
     title: "Oops, All Collisions!: Collision-Detection Engine",

@@ -78,3 +78,6 @@ backend/.env
 # Editor / OS
 .idea/
 .DS_Store
+
+# Private business planning (growth engine, outreach strategy) -- never public
+/plans/
