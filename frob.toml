@@ -1,0 +1,56 @@
+check_base = "main"
+
+[graph]
+# node_modules/** is excluded by default. The rest are build outputs and
+# generated artifacts, never hand-edited:
+#   frontend/dist/            -- vite build output (already gitignored)
+#   frontend/coverage/        -- vitest --coverage report
+#   frontend/test-results/    -- playwright run artifacts
+#   frontend/playwright-report/ -- playwright html report
+#   frontend/src/types/api.generated.ts -- openapi-typescript codegen
+#     (`npm run types`), regenerated from backend/openapi.json
+#   frontend/src/ascii/pkg/   -- wasm-pack output (wasm-ascii `make build`)
+#   wasm-ascii/target/        -- cargo build output
+#   wasm-ascii/pkg/           -- wasm-pack output (root copy)
+#   android/**/build/         -- gradle build output
+exclude = [
+    "frontend/dist/**",
+    "frontend/coverage/**",
+    "frontend/test-results/**",
+    "frontend/playwright-report/**",
+    "frontend/src/types/api.generated.ts",
+    "frontend/src/ascii/pkg/**",
+    "wasm-ascii/target/**",
+    "wasm-ascii/pkg/**",
+    "android/**/build/**",
+]
+
+[gates.severity]
+# Legacy-adoption baseline: snapshot-wide obligations warn on the
+# un-annotated legacy surface while annotation coverage grows; diff-scoped
+# and drift rules stay hard errors.
+COV001 = "warn"
+TEST001 = "warn"
+TEST002 = "warn"
+TEST003 = "warn"
+TEST005 = "warn"
+TEST006 = "warn"
+
+[testing]
+min_unit_cases = 1
+min_integration = 1
+unit_branch_cov = 90
+module_line_cov = 85
+system_line_cov = 80
+
+[[test.runner]]
+language = "python"
+command = ["uv", "run", "pytest", "-q", "{ids}"]
+all_command = ["uv", "run", "pytest", "-q"]
+cwd = "backend"
+
+[[test.runner]]
+language = "typescript"
+command = ["npx", "vitest", "run", "{files}"]
+all_command = ["npx", "vitest", "run"]
+cwd = "frontend"
