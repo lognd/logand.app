@@ -17,6 +17,8 @@ scope:
 - frontend/src/**
 evidence: []
 attachments: []
+acceptance: []
+threat: null
 ```
 ## Context
 
@@ -54,6 +56,8 @@ scope:
 - wasm-ascii/src/**
 evidence: []
 attachments: []
+acceptance: []
+threat: null
 ```
 ## Context
 
@@ -93,6 +97,8 @@ scope:
 - wasm-ascii/src/**
 evidence: []
 attachments: []
+acceptance: []
+threat: null
 ```
 ## Context
 
@@ -116,3 +122,43 @@ truly own no real public interface.
 ## Done report
 
 (fill in on close)
+
+<!-- ticket:T-0004 -->
+```yaml
+id: T-0004
+title: Audit tenant/owner-scoping on backend/scheduler SQL queries (CWE-639)
+state: queued
+kind: security
+origin: human
+created: '2026-07-18'
+blocked_by: []
+parent: null
+scope:
+- backend/src/logand_backend/domain/**
+- backend/src/logand_backend/db/**
+evidence: []
+attachments: []
+acceptance: []
+threat: elevation-of-privilege
+```
+strata pilot (design/logand-app.strata) declared backend/scheduler's real may "sql" capability, which drags in a CWE-639 (misused dynamic ORM condition / authz-scoping bypass) obligation under the web-performance-baseline/reliability-baseline/web-quality-security-baseline audit views. This pass verified query PARAMETERIZATION only (no raw string-built SQL under backend/src/logand_backend/db/** or domain/**, confirmed by grep for f-string/.format/% interpolation feeding execute/text calls -- none found). It did NOT verify that every customer-facing query correctly scopes rows to the authenticated user/tenant (the actual CWE-639 concern: could one authenticated user's request read/modify another's rows via an unscoped or attacker-influenced filter). Left deliberately undischarged in the strata model rather than assumed away without evidence -- see design/logand-app.strata's own comment at the CWE-639 claim site. Close by walking every query under domain/** that filters by an id derived from request input and confirming it also filters by the authenticated principal, then add either a real fix or a properly-evidenced assume in the strata file.
+
+<!-- ticket:T-0005 -->
+```yaml
+id: T-0005
+title: 'Close strata wiring follow-ups: android client_storage scan, frob:tests edges
+  for design flows'
+state: queued
+kind: docs
+origin: human
+created: '2026-07-18'
+blocked_by: []
+parent: null
+scope:
+- design/logand-app.strata
+evidence: []
+attachments: []
+acceptance: []
+threat: null
+```
+Tracks two deferred items from the strata pilot wiring (design/logand-app.strata, docs/design/18-strata-system-model.md): (1) android's local storage (DataStore/SharedPreferences) was not verified against the client_storage capability -- Kotlin capability scanning was out of scope for the pilot's time budget, see the frob:todo T-0005 anchor on the android node. (2) every flow/boundary symbol in design/logand-app.strata reports TEST001 (no frob:tests unit edge) -- design constructs are not code and have no direct unit test the way a function does; decide whether frob:tests should accept a convention-based match against a system/integration test exercising that flow (e.g. f_backend_stripe -> backend/tests/system/test_stripe_webhooks.py) or whether TEST001 should stay warn-severity for design/**.strata files the way legacy code TEST001 warnings are handled in frob.toml today. Close by either wiring frob:tests edges to the real system tests that already exercise each flow, or by documenting the intentional gap.

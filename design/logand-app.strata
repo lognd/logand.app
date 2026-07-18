@@ -1,0 +1,456 @@
+// logand-app.strata -- the logand.app web system, modeled honestly from
+// the real deployed topology (docker-compose.yml, Caddyfile) and the real
+// code (backend/src/logand_backend/**, frontend/src/**, wasm-ascii/src/**,
+// android/app/src/**). This is the strata pilot for a WEB stack (T-0109
+// obligation catalog wiring, sibling-repos-rollout), chosen specifically
+// to stress fetch_url/client_storage/html_render/net capability territory
+// that a python-library pilot never exercises.
+//
+// Sources read to build this model (all real, no hypothetical topology):
+//   - Caddyfile: the real reverse-proxy edge -- /api/* -> backend:8000,
+//     everything else -> static frontend/dist with SPA fallback.
+//   - docker-compose.yml: production service topology (caddy, backend,
+//     postgres, redis, scheduler, backup, migrate).
+//   - backend/src/logand_backend/domain/storage/r2.py: Cloudflare R2
+//     (S3-compatible) object storage, boto3 client.
+//   - backend/src/logand_backend/domain/payments/providers/paypal.py,
+//     backend/src/logand_backend/domain/invoices/tax/stripe_reconcile.py:
+//     real outbound HTTPS calls to PayPal and Stripe.
+//   - backend/src/logand_backend/domain/notifications/mailer.py: real
+//     smtplib/httpx outbound mail (SMTP + Gmail API paths).
+//   - frontend/src/api/client.ts: the ONLY module in the frontend allowed
+//     to call fetch() against the backend (per its own header comment and
+//     docs/design/07); reads the non-HttpOnly CSRF cookie via
+//     document.cookie.
+//   - frontend/src/lib/logging.ts: localStorage-backed crash-log ring
+//     buffer (client_storage).
+//   - frontend/src/app/routes/public/GithubRepoCard.tsx: a real
+//     client-side fetch() straight to api.github.com (a genuine
+//     browser-to-third-party edge, not proxied through the backend).
+//   - frontend/src/app/routes/public/{Contact,Projects,Landing}.tsx:
+//     dangerouslySetInnerHTML usage (html_render sink).
+//   - frontend/src/ascii/{fallback.ts,AsciiCanvas.tsx}: the wasm-ascii
+//     component consumed in-browser (no network edge of its own -- pure
+//     compute, loaded as a same-origin static asset).
+//   - android/app/src/main/kotlin/.../data/ServerSettingsRepository.kt and
+//     the BOM/AdminLogs viewmodels: a real native Kotlin client hitting
+//     the same backend REST API as the web frontend, not a stub.
+//
+// frob:doc docs/design/18-strata-system-model.md#what-this-is
+// frob:ticket T-0005
+module logand_app
+
+// -- trust lattice notes --------------------------------------------------
+// Built-in core lattice used as-is: foreign < authenticated < trusted.
+// "authenticated" models a logged-in browser session (still user-supplied
+// input, never to be treated as trusted); "trusted" is server-side code
+// and the infrastructure it directly controls.
+
+// -- nodes ------------------------------------------------------------
+
+// The browser tab running the SPA. Untrusted input source for everything
+// it sends; also a capability-bearing node in its own right (it renders
+// HTML, it stores data, it fetches third-party JSON, it holds a wasm
+// compute module).
+// frob:doc docs/design/18-strata-system-model.md#what-this-is
+// frob:ticket T-0005
+node browser : foreign {
+    clearance Internal;
+    code "frontend/src/**";
+    // fetch(): frontend/src/api/client.ts (backend calls) AND
+    // frontend/src/app/routes/public/GithubRepoCard.tsx (third-party call).
+    may "fetch_url";
+    // localStorage: frontend/src/lib/logging.ts (crash-log ring buffer),
+    // frontend/src/api/client.ts (document.cookie CSRF token read).
+    may "client_storage";
+    // dangerouslySetInnerHTML: Contact.tsx, Projects.tsx, Landing.tsx.
+    may "html_render";
+}
+
+// The wasm-ascii component: a pure-compute Rust->wasm module loaded as a
+// same-origin static asset and invoked in-process by the browser (no
+// independent network/storage capability of its own -- confirmed by
+// reading wasm-ascii/src/{lib,ramp,rasterize}.rs, which do no I/O). Kept
+// as its own node (not folded into `browser`) because it has its own
+// `code` glob and its own build/release lifecycle (wasm-ascii/Makefile),
+// matching frob.strata's own "separate node when independently owned"
+// precedent.
+// frob:doc docs/design/18-strata-system-model.md#what-this-is
+// frob:ticket T-0005
+node wasm_ascii : foreign {
+    clearance Internal;
+    code "wasm-ascii/src/**";
+}
+
+// The native Android client: a real Kotlin app (49 source files, not a
+// stub) hitting the same backend REST API as the browser SPA (see
+// ServerSettingsRepository.kt, BomViewModel.kt, AdminLogsViewModel.kt).
+// Modeled at foreign trust like the browser -- it is just as much
+// user-controlled, off-server input as a browser tab.
+// frob:doc docs/design/18-strata-system-model.md#what-this-is
+// frob:ticket T-0005
+node android : foreign {
+    clearance Internal;
+    code "android/app/src/main/kotlin/**";
+    may "fetch_url";
+    // Deferred (frob:todo T-0005): android's own local storage (DataStore/
+    // SharedPreferences) was not verified against client_storage sinks in
+    // this pass -- Kotlin capability scanning is out of scope for this
+    // pilot's time budget. Left undeclared rather than guessed; see the
+    // FROB GAPS section of the wiring report.
+    // frob:todo T-0005
+}
+
+// Caddy: the one real reverse-proxy edge (Caddyfile). Terminates TLS,
+// routes /api/* to backend, serves the static SPA build for everything
+// else with try_files SPA fallback. This is the actual browser<->server
+// trust boundary site.
+// frob:doc docs/design/18-strata-system-model.md#what-this-is
+// frob:ticket T-0005
+node edge : trusted {
+    clearance Internal;
+    // No code= glob: Caddyfile is config, not a source tree frob can
+    // bind_code against (single file, not a package). Declared `managed`
+    // is not yet implemented surface syntax (see FROB GAPS); left as a
+    // plain node with no code binding instead of a false code glob.
+    may "net";
+}
+
+// The FastAPI backend (backend/src/logand_backend/app/app.py entrypoint).
+// frob:doc docs/design/18-strata-system-model.md#what-this-is
+// frob:ticket T-0005
+node backend : trusted {
+    clearance Pii;
+    code "backend/src/logand_backend/app/**" "backend/src/logand_backend/api/**"
+        "backend/src/logand_backend/domain/**" "backend/src/logand_backend/auth/**"
+        "backend/src/logand_backend/db/**";
+    may "net";
+    may "fs";
+    // sql: sqlalchemy/asyncpg usage under backend/src/logand_backend/db/**
+    // and domain/**.
+    may "sql";
+    // exec: domain/invoices/pdf/renderer.py:266, subprocess.run(["latexmk",
+    // ...]) -- a fixed argv list with a tempfile-generated path, never
+    // request-supplied bytes.
+    may "exec";
+    // env: app/config.py, api/admin_version.py, db/migrations/env.py all
+    // read os.environ for configuration.
+    may "env";
+    // NOTE: `frob sys audit` also reports 'eval' observed on this node
+    // (api/_uploads.py, auth/emails.py, domain/invoices/tax/
+    // classification_store.py). Verified by hand: every hit is
+    // `re.compile(...)`, a regex compile, not a dynamic-eval sink -- the
+    // same self-match class frob's own T-0151 fix addressed for
+    // src/frob/gates/**, evidently not (yet) covering this repo's call
+    // sites. Deliberately NOT declared `may "eval"` here (that would be
+    // gaming the audit to force a false green); see FROB GAPS in the
+    // wiring report.
+}
+
+// The recurring-invoice scheduler (scripts/scheduler.py) -- same backend
+// image, different command (docker-compose.yml), same code tree, so
+// modeled as a separate node sharing backend's code glob rather than a
+// duplicate glob declaration would need (frob.strata's own precedent for
+// same-code-different-lifecycle processes, e.g. the vet/registry split).
+// frob:doc docs/design/18-strata-system-model.md#what-this-is
+// frob:ticket T-0005
+node scheduler : trusted {
+    clearance Pii;
+    code "backend/src/logand_backend/scripts/**";
+    may "net";
+    may "fs";
+    may "sql";
+    // env: scripts/health_check.py reads os.environ for probe config.
+    may "env";
+    // NOTE: `frob sys audit` also reports 'eval' on this node
+    // (scripts/fetch_tax_rules.py) -- same re.compile() self-match false
+    // positive as backend's own note above; not declared, see FROB GAPS.
+}
+
+// Postgres (docker-compose.yml `postgres` service) -- primary datastore.
+// frob:doc docs/design/18-strata-system-model.md#what-this-is
+// frob:ticket T-0005
+store postgres : trusted {
+    clearance Pii;
+    engine postgres;
+}
+
+// Redis (docker-compose.yml `redis` service) -- cache/queue substrate
+// (rate-limiting and session-adjacent state; not modeled as a `cache of`
+// construct because no single source-of-truth node was verified for it
+// in this pass -- see FROB GAPS).
+// frob:doc docs/design/18-strata-system-model.md#what-this-is
+// frob:ticket T-0005
+store redis_store : trusted {
+    clearance Internal;
+}
+
+// Cloudflare R2 (S3-compatible object storage; backend/src/logand_backend/
+// domain/storage/r2.py). A real third-party-hosted but org-controlled
+// store -- modeled `trusted`, not `foreign`, since it holds our own data
+// under our own credentials (the CWE-798 concern is the credential itself,
+// modeled as backend's `secret` below), matching frob.strata's own
+// registry-vs-tickets_ledger trust split reasoning.
+// frob:doc docs/design/18-strata-system-model.md#what-this-is
+// frob:ticket T-0005
+store object_storage : trusted {
+    clearance Pii;
+    engine s3_compatible;
+}
+
+// Stripe: real outbound HTTPS (tax reconciliation, invoice payments).
+// Genuinely foreign -- a third party we do not control.
+// frob:doc docs/design/18-strata-system-model.md#what-this-is
+// frob:ticket T-0005
+node stripe : foreign {
+    clearance Public;
+}
+
+// PayPal: real outbound HTTPS (payments/providers/paypal.py).
+// frob:doc docs/design/18-strata-system-model.md#what-this-is
+// frob:ticket T-0005
+node paypal : foreign {
+    clearance Public;
+}
+
+// Outbound mail relay (SMTP + Gmail API paths in
+// domain/notifications/mailer.py). Modeled as one foreign node -- the
+// mailer module abstracts over both real transports behind one interface,
+// and neither transport is independently reachable from anywhere else in
+// this model.
+// frob:doc docs/design/18-strata-system-model.md#what-this-is
+// frob:ticket T-0005
+node mail_relay : foreign {
+    clearance Public;
+}
+
+// GitHub's public REST API: frontend/src/app/routes/public/
+// GithubRepoCard.tsx fetches api.github.com directly from the browser,
+// NOT proxied through backend -- a genuine browser-to-third-party edge
+// this model would be dishonest to omit or to route through `edge`.
+// frob:doc docs/design/18-strata-system-model.md#what-this-is
+// frob:ticket T-0005
+node github_api : foreign {
+    clearance Public;
+}
+
+// -- flows --------------------------------------------------------------
+
+// Browser -> edge: every /api/* call from the SPA (frontend/src/api/
+// client.ts is the sole fetch() call site for this path per its own
+// header comment).
+// frob:doc docs/design/18-strata-system-model.md#what-this-is
+// frob:ticket T-0005
+flow f_browser_edge : browser -> edge { label Pii; }
+
+// Android -> edge: the native client's REST calls (ServerSettingsRepository
+// et al.), same backend API surface as the browser.
+// frob:doc docs/design/18-strata-system-model.md#what-this-is
+// frob:ticket T-0005
+flow f_android_edge : android -> edge { label Pii; }
+
+// edge -> backend: Caddyfile's `handle /api/* { reverse_proxy backend:8000 }`.
+// frob:doc docs/design/18-strata-system-model.md#what-this-is
+// frob:ticket T-0005
+flow f_edge_backend : edge -> backend { label Pii; }
+
+// Static SPA asset serving: edge serves frontend/dist directly (no
+// frontend container in prod, per docker-compose.yml's own header
+// comment) -- modeled as edge -> browser since this is where the SPA
+// bundle (including wasm_ascii's compiled artifact) is actually delivered
+// from.
+// frob:doc docs/design/18-strata-system-model.md#what-this-is
+// frob:ticket T-0005
+flow f_edge_browser_assets : edge -> browser { label Public; }
+
+// backend -> postgres: the primary datastore path (SQLAlchemy/asyncpg
+// under db/**).
+// frob:doc docs/design/18-strata-system-model.md#what-this-is
+// frob:ticket T-0005
+flow f_backend_postgres : backend -> postgres { label Pii; }
+
+// backend -> redis: rate-limiting/cache reads+writes.
+// frob:doc docs/design/18-strata-system-model.md#what-this-is
+// frob:ticket T-0005
+flow f_backend_redis : backend -> redis_store { label Internal; }
+
+// backend -> object_storage: uploaded receipts/invoices/documents
+// (domain/storage/r2.py), STORAGE_BACKEND=r2 path.
+// frob:doc docs/design/18-strata-system-model.md#what-this-is
+// frob:ticket T-0005
+flow f_backend_storage : backend -> object_storage { label Pii; }
+
+// backend -> stripe: tax reconciliation (stripe_reconcile.py) and invoice
+// payment processing.
+// frob:doc docs/design/18-strata-system-model.md#what-this-is
+// frob:ticket T-0005
+flow f_backend_stripe : backend -> stripe { label Internal; }
+
+// backend -> paypal: payment provider calls (payments/providers/paypal.py).
+// frob:doc docs/design/18-strata-system-model.md#what-this-is
+// frob:ticket T-0005
+flow f_backend_paypal : backend -> paypal { label Internal; }
+
+// backend -> mail_relay: transactional email (invoices, verification,
+// notifications) via domain/notifications/mailer.py.
+// frob:doc docs/design/18-strata-system-model.md#what-this-is
+// frob:ticket T-0005
+flow f_backend_mail : backend -> mail_relay { label Pii; }
+
+// scheduler -> postgres: recurring-invoice generation reads/writes the
+// same primary datastore (domain/invoices/recurrence.py).
+// frob:doc docs/design/18-strata-system-model.md#what-this-is
+// frob:ticket T-0005
+flow f_scheduler_postgres : scheduler -> postgres { label Pii; }
+
+// scheduler -> mail_relay: recurring invoices are sent by the same mailer
+// module.
+// frob:doc docs/design/18-strata-system-model.md#what-this-is
+// frob:ticket T-0005
+flow f_scheduler_mail : scheduler -> mail_relay { label Pii; }
+
+// browser -> github_api: the direct client-side fetch in
+// GithubRepoCard.tsx -- deliberately NOT routed through edge/backend,
+// modeled as its own edge to keep this model honest about where the
+// browser->third-party trust crossing actually happens.
+// frob:doc docs/design/18-strata-system-model.md#what-this-is
+// frob:ticket T-0005
+flow f_browser_github : browser -> github_api { label Public; }
+
+// wasm_ascii is loaded and invoked in-process by the browser (same-origin
+// static asset, no network call of its own -- see wasm_ascii node comment)
+// so this is a same-node, zero-trust-crossing invocation edge, not a
+// network flow. No `f_browser_wasm` flow is declared: `f_edge_browser_
+// assets` already covers the one real crossing (edge serving the compiled
+// artifact to the browser); an in-process function call inside one already
+// trusted-together boundary (browser tab) is not a strata flow (frob.
+// strata's own precedent: intra-node calls are not modeled as flows).
+
+// -- boundaries -----------------------------------------------------------
+
+// The one real endorsement site on the browser<->server edge: backend's
+// request validation (pydantic models on every FastAPI route under
+// backend/src/logand_backend/api/**) is what turns untrusted browser
+// input into data the rest of the backend trusts. Modeled on
+// f_edge_backend (not f_browser_edge) because edge itself does no
+// validation -- it is a dumb reverse proxy (Caddyfile has no request
+// body schema, only a max_size cap).
+// frob:doc docs/design/18-strata-system-model.md#what-this-is
+// frob:ticket T-0005
+boundary b_backend_validate endorse f_edge_backend : foreign -> trusted when "pydantic_request_validation"
+
+// -- claims -----------------------------------------------------------
+
+// 1. Browser cannot reach postgres directly -- every path from the
+// browser to the primary datastore must cross backend's own validation
+// boundary first. This is the single most important trust-boundary claim
+// for this topology (the whole point of not exposing postgres's port in
+// docker-compose.yml, which correctly declares no postgres port mapping
+// in prod, unlike docker-compose.dev.yml's dev-only 5432 exposure).
+// frob:doc docs/design/18-strata-system-model.md#what-this-is
+// frob:ticket T-0005
+assert c_browser_no_direct_db noflow browser -> postgres
+
+// 2. Stripe (a third party) cannot reach the internal object store --
+// nothing in this model ever sends storage-bound data toward Stripe, and
+// no flow exists from stripe back into anything. Verifies the payment
+// integration is a one-way outbound call, not a two-way data channel that
+// could leak stored documents to a third party.
+// frob:doc docs/design/18-strata-system-model.md#what-this-is
+// frob:ticket T-0005
+assert c_stripe_no_storage_reach noflow stripe -> object_storage
+
+// 3. github_api (fetched directly by the browser, unauthenticated,
+// unvalidated by backend) cannot reach postgres. This is the honest
+// counterpart to claim 1: github_api enters the model at the browser, and
+// the browser itself cannot reach postgres, so this composes for free --
+// asserted explicitly anyway because it is the one claim that would catch
+// a future change routing GithubRepoCard's fetch through backend without
+// adding a validation boundary.
+// frob:doc docs/design/18-strata-system-model.md#what-this-is
+// frob:ticket T-0005
+assert c_github_no_db_reach noflow github_api -> postgres
+
+// -- assumptions (capability-driven obligations, honestly discharged) ----
+
+// browser's `may "html_render"` (dangerouslySetInnerHTML in Contact.tsx,
+// Projects.tsx, Landing.tsx) drags in a CWE-79/116 XSS obligation
+// (docs/strata/threat.md#capabilities-drag-in-obligations). Not asserted
+// PROVED because the closure has no sanitization-boundary vocabulary yet
+// (no `endorse`/`declassify` construct exists for "sanitized before
+// render" the way b_backend_validate exists for request validation) --
+// honestly ASSUMED instead of forcing a false green. The actual mitigating
+// fact (verified by reading all three call sites): every
+// dangerouslySetInnerHTML use renders a compile-time-constant JSX/string
+// literal authored in this repo, never foreign_data.innerHTML -- no
+// browser-controlled or backend-relayed string reaches these sinks today.
+// frob:doc docs/design/18-strata-system-model.md#known-gaps-not-gamed-away
+assume "weakness:CWE-79:browser" noflow browser -> browser owner logan review "2026-10-15"
+
+// browser's `may "client_storage"` (localStorage in lib/logging.ts,
+// document.cookie CSRF read in api/client.ts) drags in a CWE-922/312
+// obligation. Verified: lib/logging.ts stores only its own crash-log ring
+// buffer (stack traces, timestamps -- no Pii/Secret-labeled application
+// data); api/client.ts only READS the non-HttpOnly CSRF cookie (by design
+// per docs/design/02-auth-and-security.md -- the session cookie itself is
+// HttpOnly and never touched from JS). No Secret- or Pii-labeled value is
+// ever written to localStorage or a JS-readable cookie.
+// frob:doc docs/design/18-strata-system-model.md#known-gaps-not-gamed-away
+assume "weakness:CWE-922:browser" noflow browser -> browser owner logan review "2026-10-15"
+
+// browser's `may "fetch_url"` drags in a CWE-918 (SSRF) obligation. SSRF
+// is a server-side-fetch concern (the server, not the browser, being
+// tricked into fetching an attacker-chosen internal URL); the browser's
+// own fetch targets (backend's own origin, and the hardcoded
+// api.github.com literal in GithubRepoCard.tsx) are both compile-time
+// constants, never influenced by page content or query params -- so this
+// is discharged as an honest non-applicability, not a hedge.
+// frob:doc docs/design/18-strata-system-model.md#known-gaps-not-gamed-away
+assume "weakness:CWE-918:browser" noflow browser -> browser owner logan review "2026-10-15"
+
+// android's `may "fetch_url"` drags in the same CWE-918 obligation. The
+// only fetch target verified (ServerSettingsRepository.kt et al.) is the
+// app's own configured backend base URL, never a value derived from
+// received data.
+// frob:doc docs/design/18-strata-system-model.md#known-gaps-not-gamed-away
+assume "weakness:CWE-918:android" noflow android -> android owner logan review "2026-10-15"
+
+// backend's `may "sql"` (SQLAlchemy ORM under db/** and domain/**) drags
+// in CWE-89 (SQL injection). Verified: no raw string-built SQL exists
+// under backend/src/logand_backend/db/** or domain/** (grepped for
+// f-string/`.format`/`%` interpolation feeding `text(...)`/execute calls
+// -- none found); every query goes through the ORM's parameterized query
+// builder.
+// frob:doc docs/design/18-strata-system-model.md#known-gaps-not-gamed-away
+assume "weakness:CWE-89:backend" noflow browser -> backend owner logan review "2026-10-15"
+
+// backend's `may "exec"` (domain/invoices/pdf/renderer.py:266,
+// subprocess.run(["latexmk", ...])) drags in CWE-78. Verified: the argv
+// list is a fixed literal ("latexmk", "-pdf", "-interaction=nonstopmode",
+// "-halt-on-error", an "-output-directory=" flag built from a
+// tempfile.TemporaryDirectory path, and a tex_path also built from that
+// same tempfile dir) -- no element of the argv list is built from
+// request/browser-supplied bytes; invoice template DATA is rendered
+// through Jinja into the .tex file content, never into the subprocess
+// argv itself.
+// frob:doc docs/design/18-strata-system-model.md#known-gaps-not-gamed-away
+assume "weakness:CWE-78:backend" noflow browser -> backend owner logan review "2026-10-15"
+
+// scheduler's `may "sql"` -- same ORM-only verification as backend above
+// (scheduler shares the same db layer, backend/src/logand_backend/db/**,
+// just invoked from a different entrypoint). scheduler in fact has no
+// declared inbound flow from browser at all (it is a background loop, not
+// an HTTP-facing node), so this claim body is conservative on purpose.
+// frob:doc docs/design/18-strata-system-model.md#known-gaps-not-gamed-away
+assume "weakness:CWE-89:scheduler" noflow browser -> scheduler owner logan review "2026-10-15"
+
+// backend/scheduler's `may "sql"` also drags in CWE-639 (misused dynamic
+// ORM condition / authz-scoping bypass via a query predicate an attacker
+// can influence). This is a genuinely OPEN item, not falsely discharged:
+// this pass verified query PARAMETERIZATION (CWE-89) but did NOT audit
+// every query for tenant/owner-scoping correctness (whether every
+// customer-facing query filters by the authenticated user's own id) --
+// that is a real, separate authz review this model does not claim to
+// have done. Left UNDISCHARGED deliberately; filed as a real ticket
+// (logand.app tickets.md) rather than assumed away here.
+// frob:doc docs/design/18-strata-system-model.md#known-gaps-not-gamed-away

@@ -28,6 +28,7 @@ the doc and ask the human, don't silently pick one.
 | File storage (evidence/receipts/documents), local vs. R2 vs. NAS | [13-storage-abstraction.md](13-storage-abstraction.md) |
 | Mileage tracking, quick-capture receipts, documents/CAD tracking, the Android client's API contract | [14-mileage-receipts-documents.md](14-mileage-receipts-documents.md) |
 | The generic admin data browser/audit log, or logging on any platform (backend/frontend/Android) | [15-admin-tools-and-observability.md](15-admin-tools-and-observability.md) |
+| The strata system model (`design/logand-app.strata`), trust boundaries, capability audit | [18-strata-system-model.md](18-strata-system-model.md) |
 
 **Every component is required to have unit, integration, and end-to-end
 system tests -- backend and frontend both.** [12-testing-strategy.md](12-testing-strategy.md)
