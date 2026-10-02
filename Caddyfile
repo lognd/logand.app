@@ -1,6 +1,21 @@
 {$SITE_DOMAIN:logand.app, logandapp.com} {
 	encode gzip
 
+	# Registration temporarily disabled (2026-08-04): bots were feeding
+	# harvested addresses into /api/auth/register to spray verification
+	# emails at victims. resend-verification is blocked too since it can
+	# re-trigger sends for the pending junk registrations. Delete these
+	# two handle blocks (and this comment) to re-enable.
+	handle /api/auth/register {
+		header Content-Type application/json
+		respond `{"detail":"Registration is temporarily disabled."}` 503
+	}
+
+	handle /api/auth/resend-verification {
+		header Content-Type application/json
+		respond `{"detail":"Registration is temporarily disabled."}` 503
+	}
+
 	handle /api/* {
 		request_body {
 			max_size 25MB
@@ -13,4 +28,10 @@
 		try_files {path} /index.html
 		file_server
 	}
+}
+
+# www.* has A records pointing here but was never named in a site block, so
+# Caddy had no cert for it and TLS handshakes failed. Redirect to the apex.
+www.logand.app, www.logandapp.com {
+	redir https://{labels.1}.{labels.0}{uri} permanent
 }
